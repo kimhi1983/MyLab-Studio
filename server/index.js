@@ -296,6 +296,32 @@ app.get('/api/products', async (req, res) => {
   }
 })
 
+// ─── 제품 자동완성 검색 (반드시 :id 라우트 위에 위치) ───
+app.get('/api/products/autocomplete', async (req, res) => {
+  try {
+    const { q, limit = 10 } = req.query
+    if (!q || q.trim().length === 0) {
+      return res.json({ items: [] })
+    }
+
+    let idx = 1
+    const params = [`%${q.trim()}%`]
+    const dataQuery = `
+      SELECT id, brand_name, product_name, product_name_local, category, subcategory,
+        product_type, target_skin_type, ph_value, notable_claims, image_url, data_quality_grade
+      FROM product_master
+      WHERE (brand_name ILIKE $${idx} OR product_name ILIKE $${idx} OR product_name_local ILIKE $${idx})
+      ORDER BY brand_name, product_name
+      LIMIT $${idx + 1}`
+    params.push(parseInt(limit))
+
+    const { rows } = await pool.query(dataQuery, params)
+    res.json({ items: rows })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 제품 상세 (전성분 포함) ───
 app.get('/api/products/:id', async (req, res) => {
   try {
@@ -973,13 +999,194 @@ ${ingredientList}
   }
 })
 
-// ─── 카피 처방 (역처방, Gemini) ───
+// ─── Phase 분류 상수 (DB 역산용) ───
+const PHASE_MAP = {
+  A_WATER: ['Water', 'Aqua', 'Glycerin', 'Butylene Glycol', 'Propanediol', 'Betaine', 'Hyaluronic Acid', 'Panthenol', 'Allantoin', 'Trehalose'],
+  B_OIL:   ['Dimethicone', 'Cyclopentasiloxane', 'Squalane', 'Jojoba', 'Cetyl', 'Stearyl', 'Cetearyl', 'Caprylic', 'Shea Butter', 'Beeswax', 'Isopropyl', 'Mineral Oil', 'Petrolatum'],
+  C_ACTIVE: ['Niacinamide', 'Retinol', 'Ascorbic', 'Tocopherol', 'Peptide', 'Adenosine', 'Arbutin', 'Centella', 'Madecassoside', 'Ceramide', 'Collagen', 'Resveratrol'],
+  D_PRESERV: ['Phenoxyethanol', 'Ethylhexylglycerin', 'Chlorphenesin', '1,2-Hexanediol', 'Caprylyl Glycol', 'Fragrance', 'Parfum', 'CI ', 'Disodium EDTA', 'Citric Acid'],
+}
+
+function assignPhaseFromMap(inciName) {
+  const name = inciName || ''
+  for (const keyword of PHASE_MAP.D_PRESERV) {
+    if (name.toLowerCase().includes(keyword.toLowerCase())) return 'D'
+  }
+  for (const keyword of PHASE_MAP.C_ACTIVE) {
+    if (name.toLowerCase().includes(keyword.toLowerCase())) return 'C'
+  }
+  for (const keyword of PHASE_MAP.B_OIL) {
+    if (name.toLowerCase().includes(keyword.toLowerCase())) return 'B'
+  }
+  for (const keyword of PHASE_MAP.A_WATER) {
+    if (name.toLowerCase().includes(keyword.toLowerCase())) return 'A'
+  }
+  return 'A'
+}
+
+// 배합비 역산 알고리즘 (전성분 순서 기반)
+function reverseCalcPercentages(inciList, regMaxMap) {
+  const n = inciList.length
+  if (n === 0) return []
+
+  // 임계점: 상위 60%는 1% 이상, 하위 40%는 1% 미만
+  const highBoundary = Math.ceil(n * 0.6)
+
+  // 첫 번째 원료 (보통 Water) 비율: 성분 수에 따라 50-70%
+  const firstPct = Math.min(70, Math.max(50, 80 - n * 0.5))
+
+  // 나머지 성분 (1% 이상 구간)
+  const highCount = highBoundary - 1 // Water 제외
+  const lowCount = n - highBoundary
+
+  // 1% 이상 구간: 합산 = (100 - firstPct - lowCount * 0.5)
+  // 점차 감소하는 등비수열 근사
+  const highTotal = 100 - firstPct - (lowCount > 0 ? lowCount * 0.4 : 0)
+  const lowPct = lowCount > 0 ? 0.4 : 0
+
+  const percentages = []
+
+  // 첫 번째 (Water)
+  percentages.push(parseFloat(firstPct.toFixed(2)))
+
+  // 1% 이상 원료 (인덱스 1 ~ highBoundary-1)
+  if (highCount > 0) {
+    // 점감률 계산: 첫 비율부터 1%까지 등비 감소
+    const ratio = highCount > 1 ? Math.pow(1 / (highTotal / highCount), 1 / (highCount - 1)) : 1
+    let remaining = highTotal
+    for (let i = 0; i < highCount; i++) {
+      const share = highCount > 1
+        ? highTotal * Math.pow(ratio, i) / (Array.from({ length: highCount }, (_, k) => Math.pow(ratio, k)).reduce((s, v) => s + v, 0))
+        : highTotal
+      const inci = inciList[i + 1]
+      // 규제 한도 적용
+      let pct = parseFloat(Math.max(1.0, share).toFixed(2))
+      const maxReg = regMaxMap[inci]
+      if (maxReg && pct > maxReg) pct = maxReg
+      percentages.push(pct)
+      remaining -= pct
+    }
+  }
+
+  // 1% 미만 원료 (인덱스 highBoundary ~ n-1)
+  for (let i = highBoundary; i < n; i++) {
+    const inci = inciList[i]
+    let pct = parseFloat(lowPct.toFixed(2))
+    const maxReg = regMaxMap[inci]
+    if (maxReg && pct > maxReg) pct = maxReg
+    percentages.push(pct)
+  }
+
+  // 합계 보정: 합산 오차를 첫번째(Water)에서 흡수
+  const rawSum = percentages.slice(1).reduce((s, v) => s + v, 0)
+  percentages[0] = parseFloat(Math.max(0.01, 100 - rawSum).toFixed(2))
+
+  return percentages
+}
+
+// ─── 카피 처방 (역처방: DB 우선, productId 기반) ───
 app.post('/api/copy-formula', async (req, res) => {
   try {
-    const { productName, targetMarket = 'KR' } = req.body
+    const { productId, productName, targetMarket = 'KR' } = req.body
 
+    // productId가 제공된 경우: DB 기반 역산
+    if (productId) {
+      // 1. product_master에서 제품 + 전성분 조회
+      const { rows: prodRows } = await pool.query(
+        'SELECT id, brand_name, product_name, category, subcategory, product_type, full_ingredients, key_ingredients FROM product_master WHERE id = $1',
+        [productId]
+      )
+      if (!prodRows.length) {
+        return res.status(404).json({ success: false, error: '제품을 찾을 수 없습니다.' })
+      }
+      const product = prodRows[0]
+
+      // 2. full_ingredients 파싱 (쉼표 구분 INCI 목록)
+      const rawIngredients = product.full_ingredients || ''
+      const inciList = rawIngredients
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0)
+
+      if (inciList.length === 0) {
+        return res.status(400).json({ success: false, error: '해당 제품의 전성분 정보가 없습니다.' })
+      }
+
+      // 3. ingredient_master에서 korean_name 매칭 (ILIKE)
+      const { rows: imRows } = await pool.query(
+        'SELECT inci_name, korean_name FROM ingredient_master WHERE inci_name = ANY($1)',
+        [inciList]
+      )
+      const koreanMap = {}
+      for (const r of imRows) koreanMap[r.inci_name.toLowerCase()] = r.korean_name
+
+      // 4. regulation_cache에서 시장별 max_concentration 조회
+      const marketSourceMap = { KR: ['GEMINI_KR', 'MFDS_SEED'], EU: ['GEMINI_EU'], US: ['GEMINI_US'] }
+      const marketSources = marketSourceMap[targetMarket] || marketSourceMap['KR']
+      const { rows: regRows } = await pool.query(
+        'SELECT inci_name, max_concentration FROM regulation_cache WHERE inci_name = ANY($1) AND source = ANY($2)',
+        [inciList, marketSources]
+      )
+      const regMaxMap = {}
+      for (const r of regRows) {
+        if (!r.max_concentration) continue
+        const m = r.max_concentration.match(/([\d.]+)\s*%/)
+        if (m) {
+          const val = parseFloat(m[1])
+          const key = r.inci_name
+          if (!regMaxMap[key] || val < regMaxMap[key]) regMaxMap[key] = val
+        }
+      }
+
+      // 5. 배합비 역산
+      const percentages = reverseCalcPercentages(inciList, regMaxMap)
+
+      // 6. 결과 조립
+      const ingredients = inciList.map((inci, i) => {
+        const phase = assignPhaseFromMap(inci)
+        const type = guessType(inci, {})
+        return {
+          inci_name: inci,
+          korean_name: koreanMap[inci.toLowerCase()] || null,
+          percentage: percentages[i] ?? 0.4,
+          phase,
+          function: guessFunction(inci, {}),
+          type,
+        }
+      })
+
+      // 실제 합계 재계산 및 보정
+      const actualSum = ingredients.reduce((s, i) => s + i.percentage, 0)
+      const totalPct = parseFloat(actualSum.toFixed(2))
+
+      const phases = buildPhaseSummary(
+        ingredients.map(i => ({ ...i, inci_name: i.inci_name }))
+      )
+      const process = buildDefaultProcess(phases)
+
+      return res.json({
+        success: true,
+        data: {
+          description: `[${product.brand_name || ''} ${product.product_name}] DB 기반 역처방. 전성분 ${inciList.length}종, ${targetMarket} 시장 규제 적용.`,
+          ingredients,
+          phases,
+          process,
+          totalPercentage: totalPct,
+          generatedAt: new Date().toISOString(),
+          source: 'db-reverse',
+          sourceProduct: {
+            id: product.id,
+            brand_name: product.brand_name,
+            product_name: product.product_name,
+            category: product.category,
+          },
+        },
+      })
+    }
+
+    // productId 없는 경우: 기존 로직 유지 (productName 기반)
     if (!productName) {
-      return res.status(400).json({ success: false, error: 'productName은 필수입니다.' })
+      return res.status(400).json({ success: false, error: 'productId 또는 productName은 필수입니다.' })
     }
 
     if (!process.env.GEMINI_API_KEY) {

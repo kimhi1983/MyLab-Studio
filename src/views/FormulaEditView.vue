@@ -60,6 +60,24 @@
       </div>
     </div>
 
+    <!-- 새 처방일 때 탭 -->
+    <div v-if="isNew" class="create-tab-header">
+      <button class="create-tab-btn" :class="{ active: activeCreateTab === 'new' }" @click="activeCreateTab = 'new'">
+        직접 작성
+      </button>
+      <button class="create-tab-btn" :class="{ active: activeCreateTab === 'copy' }" @click="activeCreateTab = 'copy'">
+        카피 처방
+      </button>
+    </div>
+
+    <!-- 카피 처방 탭 -->
+    <template v-if="isNew && activeCreateTab === 'copy'">
+      <CopyFormulaView />
+    </template>
+
+    <!-- 기존 새 처방/편집 UI -->
+    <template v-else>
+
     <!-- Basic Info -->
     <div class="form-grid">
       <div class="panel">
@@ -427,6 +445,9 @@
       <router-link to="/formulas" class="btn btn-ghost">취소</router-link>
       <button class="btn btn-primary" @click="onSave">{{ isNew ? '초안으로 저장' : '저장' }}</button>
     </div>
+
+    </template>
+    <!-- /기존 새 처방/편집 UI -->
   </div>
 </template>
 
@@ -440,6 +461,7 @@ import { productCategories, statusStyles } from '../tokens.js'
 import { useExport } from '../composables/useExport.js'
 import StatusChip from '../components/common/StatusChip.vue'
 import IngredientTable from '../components/formula/IngredientTable.vue'
+import CopyFormulaView from './CopyFormulaView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -455,6 +477,7 @@ const isNew = computed(() => route.name === 'formula-new')
 const formula = ref({})
 const newTag = ref('')
 const showVersionPanel = ref(false)
+const activeCreateTab = ref('new')
 
 // AI 자동 채우기
 const aiRequirements = ref('')
@@ -1964,4 +1987,34 @@ async function onAiFill() {
 .batch-name { min-width: 120px; }
 .batch-pct, .batch-g { text-align: right; font-family: var(--font-mono); }
 .batch-target { color: var(--accent); font-weight: 600; }
+
+/* ── 생성 방식 탭 ── */
+.create-tab-header {
+  display: flex;
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  overflow: hidden;
+  width: fit-content;
+  margin-bottom: 16px;
+}
+.create-tab-btn {
+  padding: 10px 24px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.create-tab-btn:last-child { border-right: none; }
+.create-tab-btn:hover { color: var(--text-sub); background: var(--bg); }
+.create-tab-btn.active {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-light);
+}
 </style>
