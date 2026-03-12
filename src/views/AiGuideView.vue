@@ -82,58 +82,7 @@
 
     <!-- ─── 카피 처방 탭 ─── -->
     <template v-if="activeTab === 'copy'">
-      <div class="panel">
-        <div class="panel-header">
-          <div>
-            <span class="section-label">COPY FORMULA</span>
-            <span class="section-title">카피 처방 생성</span>
-          </div>
-        </div>
-        <div class="form-body">
-          <div class="form-group">
-            <label class="form-label">참고 제품명</label>
-            <textarea
-              v-model="copy.productName"
-              class="form-input form-textarea"
-              placeholder="이니스프리 그린티 씨드 크림"
-              rows="3"
-            ></textarea>
-          </div>
-          <div class="form-group">
-            <label class="form-label">시장 선택</label>
-            <div class="market-options">
-              <label
-                v-for="m in markets"
-                :key="m.value"
-                class="market-opt"
-                :class="{ active: copy.market === m.value }"
-              >
-                <input type="radio" :value="m.value" v-model="copy.market" hidden />
-                <span>{{ m.label }}</span>
-              </label>
-            </div>
-          </div>
-          <div class="form-actions">
-            <button class="btn btn-primary btn-lg" @click="onCopyGenerate" :disabled="isCopying">
-              {{ isCopying ? '생성 중...' : '✦ 카피 처방 생성하기' }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 로딩 -->
-      <div v-if="isCopying" class="loading-panel">
-        <div class="loading-box">
-          <div class="spinner"></div>
-          <div class="loading-title">처방 분석 중...</div>
-          <div class="loading-step">{{ copyProgress }}</div>
-        </div>
-      </div>
-
-      <!-- 결과 -->
-      <div v-if="copyResult" style="margin-top: 16px">
-        <AiResultPanel :result="copyResult" @save="onCopySave" @regenerate="onCopyGenerate" />
-      </div>
+      <CopyFormulaView />
     </template>
 
   </div>
@@ -147,6 +96,7 @@ import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
 import { productTypes, productCategories } from '../tokens.js'
 import AiResultPanel from '../components/formula/AiResultPanel.vue'
+import CopyFormulaView from './CopyFormulaView.vue'
 
 const router = useRouter()
 const ingredientStore = useIngredientStore()
@@ -216,57 +166,7 @@ function onSave() {
   router.push('/formulas/' + created.id)
 }
 
-// ─── 카피 처방 ───
-const isCopying = ref(false)
-const copyProgress = ref('')
-const copy = reactive({ productName: '', market: 'KR' })
-const copyResult = ref(null)
-const markets = [
-  { value: 'KR', label: '한국 (KR)' },
-  { value: 'EU', label: '유럽 (EU)' },
-  { value: 'US', label: '미국 (US)' },
-]
-
-async function onCopyGenerate() {
-  if (!copy.productName.trim()) {
-    alert('참고 제품명을 입력하세요')
-    return
-  }
-  isCopying.value = true
-  const steps = ['제품 성분 분석 중...', '유사 원료 매칭 중...', '규제 기준 적용 중...', '처방 생성 중...']
-  for (const step of steps) {
-    copyProgress.value = step
-    await new Promise(r => setTimeout(r, 500 + Math.random() * 400))
-  }
-
-  const res = await api.copyFormula({ productName: copy.productName, market: copy.market })
-  isCopying.value = false
-  copyProgress.value = ''
-
-  if (res) {
-    copyResult.value = res
-  } else {
-    alert('카피 처방 생성 실패: API 서버 연결을 확인하세요 (localhost:3001)')
-  }
-}
-
-function onCopySave() {
-  if (!copyResult.value) return
-  const created = addFormula({
-    title: `카피 — ${copy.productName}`,
-    product_type: copyResult.value._productType || '카피 처방',
-    formula_data: {
-      ingredients: (copyResult.value.ingredients || []).map(i => ({
-        name: i.name, inci: i.inci_name, percentage: i.percentage, function: i.function,
-      })),
-      total_percentage: copyResult.value.totalPercentage,
-      notes: copyResult.value.description,
-    },
-    memo: `카피 처방 (${copy.market})\n참고제품: ${copy.productName}`,
-    tags: ['카피처방', copy.market],
-  })
-  router.push('/formulas/' + created.id)
-}
+// ─── 카피 처방은 CopyFormulaView 컴포넌트로 위임 ───
 
 // ─── 공통 ───
 function formatDate(iso) {
@@ -336,27 +236,6 @@ function formatDate(iso) {
 }
 .form-input:focus { border-color: var(--accent); outline: none; }
 .form-textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
-
-/* ─── 시장 선택 ─── */
-.market-options { display: flex; gap: 8px; }
-.market-opt {
-  padding: 6px 18px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  color: var(--text-sub);
-  transition: all 0.15s;
-  user-select: none;
-}
-.market-opt:hover { background: var(--bg); }
-.market-opt.active {
-  border-color: var(--accent);
-  background: var(--accent-light);
-  color: var(--accent);
-  font-weight: 600;
-}
 
 /* ─── 버튼 ─── */
 .form-actions { margin-top: 8px; display: flex; justify-content: center; }

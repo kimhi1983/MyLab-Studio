@@ -299,21 +299,23 @@ app.get('/api/products', async (req, res) => {
 // ─── 제품 자동완성 검색 (반드시 :id 라우트 위에 위치) ───
 app.get('/api/products/autocomplete', async (req, res) => {
   try {
-    const { q, limit = 10 } = req.query
+    const { q, limit = 20 } = req.query
     if (!q || q.trim().length === 0) {
       return res.json({ items: [] })
     }
 
-    let idx = 1
-    const params = [`%${q.trim()}%`]
+    const params = [`%${q.trim()}%`, parseInt(limit)]
+    // 완제품만 검색: coching_legacy(원료 데이터) 제외, 전성분 있는 데이터 우선
     const dataQuery = `
       SELECT id, brand_name, product_name, product_name_local, category, subcategory,
-        product_type, target_skin_type, ph_value, notable_claims, image_url, data_quality_grade
+        product_type, target_skin_type, ph_value, notable_claims, image_url,
+        data_quality_grade, source,
+        CASE WHEN full_ingredients IS NOT NULL AND full_ingredients != '' THEN 1 ELSE 0 END AS has_ingredients
       FROM product_master
-      WHERE (brand_name ILIKE $${idx} OR product_name ILIKE $${idx} OR product_name_local ILIKE $${idx})
-      ORDER BY brand_name, product_name
-      LIMIT $${idx + 1}`
-    params.push(parseInt(limit))
+      WHERE source != 'coching_legacy'
+        AND (brand_name ILIKE $1 OR product_name ILIKE $1 OR product_name_local ILIKE $1)
+      ORDER BY has_ingredients DESC, data_quality_grade ASC, brand_name, product_name
+      LIMIT $2`
 
     const { rows } = await pool.query(dataQuery, params)
     res.json({ items: rows })

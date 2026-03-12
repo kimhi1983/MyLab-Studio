@@ -175,7 +175,7 @@ export function useAPI() {
   }
 
   return {
-    loading, error,
+    loading, error, fetchJSON,
     getStats,
     getIngredients, getIngredient, getIngredientTypes,
     getRegulations, getRegulationSources,
