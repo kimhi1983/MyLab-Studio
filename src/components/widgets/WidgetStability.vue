@@ -117,10 +117,9 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { useLocalStorage } from '../../composables/useLocalStorage.js'
+import { ref, computed, onMounted } from 'vue'
 
-// ── 시드 데이터 ──────────────────────────────────────────
+// ── 시드 데이터 (API 실패 시 폴백) ───────────────────────
 const SEED_STABILITY = [
   { id: 1, formulaName: '쿠션 파운데이션 21호', condition: '50°C', results: [
     { week: 0, deltaE: 0,   viscChange: 0,    ph: 5.8, appearance: '양호',     result: 'pass' },
@@ -153,8 +152,21 @@ const SEED_STABILITY = [
   ]},
 ]
 
-// ── 로컬스토리지 연동 ────────────────────────────────────
-const stabilityData = useLocalStorage('mylab:stability', SEED_STABILITY)
+// ── DB 연동 ──────────────────────────────────────────────
+const stabilityData = ref(SEED_STABILITY)
+
+onMounted(async () => {
+  try {
+    const res = await fetch('/api/stability')
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json()
+    if (json.data && json.data.length > 0) {
+      stabilityData.value = json.data
+    }
+  } catch {
+    // 폴백: 시드 데이터 유지
+  }
+})
 
 // ── 탭 구성 ──────────────────────────────────────────────
 const selectedFormula = ref('__all__')

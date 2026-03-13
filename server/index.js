@@ -3294,6 +3294,40 @@ app.delete('/api/verify/:id', async (req, res) => {
   }
 })
 
+// ─── 안정성 테스트 (stability_tests) ──────────────────────────────────────
+app.get('/api/stability', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM stability_tests ORDER BY formula_name, condition, week'
+    )
+    // formula_name + condition 기준으로 그룹핑
+    const map = new Map()
+    let nextId = 1
+    for (const row of rows) {
+      const key = `${row.formula_name}__${row.condition}`
+      if (!map.has(key)) {
+        map.set(key, {
+          id: nextId++,
+          formulaName: row.formula_name,
+          condition: row.condition,
+          results: [],
+        })
+      }
+      map.get(key).results.push({
+        week: row.week,
+        deltaE: parseFloat(row.delta_e),
+        viscChange: parseFloat(row.visc_change),
+        ph: row.ph != null ? parseFloat(row.ph) : null,
+        appearance: row.appearance || '',
+        result: row.result || 'pass',
+      })
+    }
+    res.json({ data: [...map.values()] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 서버 시작 ────────────────────────────────────────────────────────────
 const PORT = process.env.API_PORT || 3001
 
