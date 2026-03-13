@@ -7,10 +7,13 @@
     </div>
 
     <nav class="sidebar-nav">
-      <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-item" active-class="active">
-        <span class="nav-icon">{{ item.icon }}</span>
-        <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
-      </router-link>
+      <template v-for="(item, idx) in navItems" :key="item.to || 'sep-' + idx">
+        <div v-if="item.sep" class="sidebar-sep"></div>
+        <router-link v-else :to="item.to" class="nav-item" active-class="active">
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
+        </router-link>
+      </template>
     </nav>
 
     <div class="sidebar-footer">
@@ -36,8 +39,16 @@ const navItems = [
   { to: '/', icon: '◈', label: '대시보드' },
   { to: '/formulas', icon: '⚗', label: '처방 목록' },
   { to: '/formulas/new', icon: '+', label: '처방 생성' },
-  { to: '/journal', icon: '◉', label: '처방 일지' },
   { to: '/projects', icon: '◎', label: '프로젝트' },
+  { sep: true },
+  { to: '/ingredients', icon: '◇', label: '성분 DB' },
+  { to: '/hlb-calc', icon: '⊘', label: 'HLB 계산기' },
+  { sep: true },
+  { to: '/validation', icon: '✓', label: '품질 검증' },
+  { to: '/stability', icon: '◉', label: '안정성' },
+  { sep: true },
+  { to: '/journal', icon: '▤', label: '일지' },
+  { to: '/notes', icon: '▧', label: '연구 노트' },
 ]
 </script>
 
@@ -99,6 +110,11 @@ const navItems = [
   text-align: center;
   font-size: 14px;
   flex-shrink: 0;
+}
+.sidebar-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 12px;
 }
 
 .sidebar-footer {

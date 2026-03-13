@@ -1,16 +1,18 @@
 <template>
   <nav class="nav-bar">
     <div class="nav-tabs">
-      <router-link
-        v-for="item in navItems"
-        :key="item.to"
-        :to="item.to"
-        class="nav-tab"
-        active-class="active"
-        :exact="item.exact"
-      >
-        <span class="tab-label">{{ item.label }}</span>
-      </router-link>
+      <template v-for="(item, idx) in navItems" :key="item.to || 'sep-' + idx">
+        <div v-if="item.sep" class="nav-sep"></div>
+        <router-link
+          v-else
+          :to="item.to"
+          class="nav-tab"
+          active-class="active"
+          :exact="item.exact"
+        >
+          <span class="tab-label">{{ item.label }}</span>
+        </router-link>
+      </template>
       <div class="nav-tools">
         <slot name="tools" />
       </div>
@@ -20,16 +22,24 @@
 
 <script setup>
 const navItems = [
+  // 홈
   { to: '/', label: '대시보드', exact: true },
+  // 처방 관리
   { to: '/formulas', label: '처방 목록', exact: false },
   { to: '/formulas/new', label: '+ 생성', exact: true },
-  { to: '/journal', label: '일지', exact: true },
   { to: '/projects', label: '프로젝트', exact: true },
-  { to: '/stability', label: '안정성', exact: true },
+  { sep: true },
+  // 데이터 · 도구
   { to: '/ingredients', label: '성분 DB', exact: true },
-  { to: '/notes', label: '연구 노트', exact: true },
-  { to: '/validation', label: '품질 검증', exact: true },
   { to: '/hlb-calc', label: 'HLB 계산기', exact: true },
+  { sep: true },
+  // 품질 관리
+  { to: '/validation', label: '품질 검증', exact: true },
+  { to: '/stability', label: '안정성', exact: true },
+  { sep: true },
+  // 기록
+  { to: '/journal', label: '일지', exact: true },
+  { to: '/notes', label: '연구 노트', exact: true },
 ]
 </script>
 
@@ -81,6 +91,15 @@ const navItems = [
   background: var(--bg);
   border-color: var(--border);
   border-bottom: 1px solid var(--bg);
+}
+
+.nav-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+  align-self: center;
+  flex-shrink: 0;
 }
 
 .nav-tab.active::after {
