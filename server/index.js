@@ -289,6 +289,28 @@ app.get('/api/ingredients/:id', async (req, res) => {
   }
 })
 
+// ─── restriction 필드 파싱 헬퍼 (GEMINI_SAFETY_* / coching_legacy JSON 대응) ───
+function parseRestrictionField(restriction) {
+  if (!restriction) return { text: '', ewg_score: null, concerns: null, primary_function: null, reg_status: null }
+  try {
+    const obj = typeof restriction === 'object' ? restriction : JSON.parse(restriction)
+    if (obj && typeof obj === 'object') {
+      const textParts = []
+      if (obj.annex_type) textParts.push(obj.annex_type)
+      if (obj.note && obj.note !== 'null') textParts.push(obj.note)
+      if (obj.status && !obj.annex_type) textParts.push(obj.status === 'banned' ? '금지' : obj.status === 'restricted' ? '제한' : obj.status)
+      return {
+        text: textParts.join(' — ') || '',
+        ewg_score: typeof obj.ewg_score === 'number' ? obj.ewg_score : null,
+        concerns: Array.isArray(obj.concerns) && obj.concerns.length ? obj.concerns : null,
+        primary_function: obj.primary_function || null,
+        reg_status: obj.status || null,
+      }
+    }
+  } catch (_) { /* 일반 텍스트 */ }
+  return { text: restriction, ewg_score: null, concerns: null, primary_function: null, reg_status: null }
+}
+
 // ─── 규제 데이터 (위젯용) ───
 app.get('/api/regulations', async (req, res) => {
   try {
@@ -323,7 +345,17 @@ app.get('/api/regulations', async (req, res) => {
 
     res.json({
       total: parseInt(countRes.rows[0].count),
-      items: dataRes.rows,
+      items: dataRes.rows.map(r => {
+        const parsed = parseRestrictionField(r.restriction)
+        return {
+          ...r,
+          restriction: parsed.text || r.restriction,
+          ewg_score: parsed.ewg_score,
+          concerns: parsed.concerns,
+          primary_function: parsed.primary_function,
+          reg_status: parsed.reg_status,
+        }
+      }),
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -707,23 +739,40 @@ async function matchTemplateFromDb(productType, requirements) {
       matchedCategory = '크림'
     }
 
-    // Step 2: 목적(Purpose) 감지 — productType + requirements 텍스트에서 키워드 매칭
-    const combinedText = (productType + ' ' + (requirements || '')).toLowerCase()
-
-    const { rows: purposeRows } = await pool.query(
-      'SELECT DISTINCT purpose_key, purpose_keywords FROM purpose_ingredient_map'
-    )
+    // Step 2: 목적(Purpose) 감지 — 2단계 전략
     const detectedPurposes = []
-    for (const row of purposeRows) {
-      for (const kw of row.purpose_keywords) {
-        if (combinedText.includes(kw.toLowerCase())) {
-          detectedPurposes.push(row.purpose_key)
-          break
+
+    // 2-1: category_purpose_link 기반 (카테고리 → 목적 자동 매핑, 가장 정확)
+    if (matchedCategory) {
+      const { rows: linkRows } = await pool.query(
+        `SELECT purpose_key FROM category_purpose_link
+         WHERE category_key = $1 ORDER BY weight DESC`,
+        [matchedCategory]
+      )
+      for (const r of linkRows) {
+        if (!detectedPurposes.includes(r.purpose_key)) detectedPurposes.push(r.purpose_key)
+      }
+    }
+
+    // 2-2: formulation_purposes.keywords 기반 (요구사항 텍스트 추가 감지)
+    const reqText = (requirements || '').toLowerCase()
+    if (reqText) {
+      const { rows: fpRows } = await pool.query(
+        `SELECT purpose_key, keywords FROM formulation_purposes WHERE is_active = true ORDER BY priority DESC`
+      )
+      for (const fp of fpRows) {
+        if (!detectedPurposes.includes(fp.purpose_key)) {
+          for (const kw of fp.keywords) {
+            if (reqText.includes(kw.toLowerCase())) {
+              detectedPurposes.push(fp.purpose_key)
+              break
+            }
+          }
         }
       }
     }
 
-    // 방부공통은 항상 감지 목적에 추가 (모든 제형에 방부 필수)
+    // 방부공통은 항상 포함 (모든 제형 필수)
     if (!detectedPurposes.includes('방부공통')) {
       detectedPurposes.push('방부공통')
     }
@@ -1376,6 +1425,7 @@ async function findSmartIngredients(productType, purposes, targetMarket, limit =
           source: 'purpose-gate',
           role: ing.role,
           default_pct: ing.default_pct_int ? ing.default_pct_int / 100 : null,
+          max_pct: ing.max_pct_int ? ing.max_pct_int / 100 : null,
           fn: ing.fn,
         })
         addedIncis.add(ing.inci_name.toLowerCase())
@@ -1444,11 +1494,17 @@ function buildSmartPrompt({ productType, requirements, targetMarket, customIngre
   // 목적별 제약 블록
   let purposeBlock = ''
   if (purposes && purposes.detected.length > 0) {
-    const reqList = purposes.required.map(r => `  - [필수] ${r.inci_name} (${r.korean_name}): ${r.fn}, 권장 ${(r.default_pct_int || 0) / 100}%`).join('\n')
+    const reqList = purposes.required.map(r =>
+      `  - [필수] ${r.inci_name} (${r.korean_name}): ${r.fn}, 배합 ${(r.default_pct_int || 0) / 100}%${r.max_pct_int ? ` (최대 ${r.max_pct_int / 100}%)` : ''}`
+    ).join('\n')
+    const recList = purposes.recommended.slice(0, 12).map(r =>
+      `  - [권장] ${r.inci_name} (${r.korean_name}): ${r.fn}, 배합 ${(r.default_pct_int || 0) / 100}%${r.max_pct_int ? ` (최대 ${r.max_pct_int / 100}%)` : ''}`
+    ).join('\n')
     const forbList = purposes.forbidden.map(f => `  - [금지] ${f.inci_name}: ${f.reason}`).join('\n')
     purposeBlock = `\n\n처방 목적: ${purposes.detected.join(', ')}
 목적별 필수 성분 (반드시 포함):
 ${reqList}
+${recList ? `\n목적별 권장 성분 (가능하면 포함, 배합비 참고):\n${recList}` : ''}
 ${forbList ? `\n목적별 금지 성분 (절대 사용 금지):\n${forbList}` : ''}`
   }
 
@@ -1469,14 +1525,24 @@ ${refs}`
   // 원료 풀 (역할별 그룹핑)
   const grouped = {}
   for (const ing of smartIngredients) {
-    const src = ing.source === 'purpose-gate' ? '★ 목적필수' : ing.source === 'rag-reference' ? '◆ 레퍼런스' : '○ DB보충'
+    let src
+    if (ing.source === 'purpose-gate') {
+      src = ing.role === 'REQUIRED' ? '★ 필수' : '◎ 권장'
+    } else if (ing.source === 'rag-reference') {
+      src = '◆ 레퍼런스'
+    } else {
+      src = '○ DB보충'
+    }
     const key = ing.ingredient_type || 'OTHER'
     if (!grouped[key]) grouped[key] = []
     const regInfo = regulations.find(r => r.inci_name === ing.inci_name)
+    const pctHint = ing.default_pct
+      ? ` [권장 ${ing.default_pct}%${ing.max_pct ? `~최대 ${ing.max_pct}%` : ''}]`
+      : ''
     grouped[key].push(
       `  ${src} ${ing.inci_name} (${ing.korean_name || '—'})` +
-      (ing.default_pct ? ` [참고 ${ing.default_pct}%]` : '') +
-      (regInfo ? ` {최대 ${regInfo.max_concentration}}` : '') +
+      pctHint +
+      (regInfo ? ` {규제한도 ${regInfo.max_concentration}}` : '') +
       (ing.fn ? ` — ${ing.fn}` : '')
     )
   }
@@ -1528,10 +1594,10 @@ ${refs}`
 타겟 시장: ${targetMarket}
 ${purposeBlock}${ragBlock}${compatBlock}${customList}${physSpecBlock}
 
-사용 가능한 원료 풀 (★=목적필수, ◆=실제처방참조, ○=DB보충):
+사용 가능한 원료 풀 (★=목적필수[반드시포함], ◎=목적권장[가능하면포함], ◆=실제처방참조, ○=DB보충):
 ${ingredientBlock}
 
-위 원료 풀에서 선택하여 완전한 처방을 생성하세요. ★표시 원료는 반드시 포함하세요.
+위 원료 풀에서 선택하여 완전한 처방을 생성하세요. ★표시 원료는 반드시 포함, ◎표시 원료는 가능하면 포함하세요.
 
 응답은 반드시 JSON:
 {
@@ -1875,7 +1941,7 @@ app.post('/api/ai-formula', async (req, res) => {
     const allIncis = smartIngredients.map(r => r.inci_name)
     const { rows: regRows } = await pool.query(
       `SELECT inci_name, max_concentration, restriction, source FROM regulation_cache
-       WHERE inci_name = ANY($1) AND source NOT IN ('coching_legacy','gem2_kb','gemini_kb','UNKNOWN')`,
+       WHERE inci_name = ANY($1) AND source NOT IN ('gem2_kb','gemini_kb','UNKNOWN')`,
       [allIncis]
     )
 

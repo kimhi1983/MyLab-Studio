@@ -4,6 +4,7 @@
  */
 
 const SOURCE_MAP = {
+  // 규제 데이터 (지역별)
   MFDS_SEED: '한국', GEMINI_KR: '한국', KR: '한국',
   GEMINI_EU: '유럽', EU: '유럽',
   GEMINI_US: '미국', FDA_SEED: '미국', REG_MONITOR_US: '미국', US: '미국',
@@ -11,6 +12,10 @@ const SOURCE_MAP = {
   GEMINI_CN: '중국', CN: '중국',
   GEMINI_ASEAN: '아세안',
   GEMINI_SAFETY: '안전성', INI_SAFETY: '안전성',
+  // 안전성 평가 데이터 (워크플로우팀 신규 — EWG/CIR 기반)
+  GEMINI_SAFETY_KR: '한국', GEMINI_SAFETY_EU: '유럽',
+  GEMINI_SAFETY_US: '미국', GEMINI_SAFETY_JP: '일본',
+  GEMINI_SAFETY_CN: '중국', GEMINI_SAFETY_ASEAN: '아세안',
 }
 
 // 화면에 노출하면 안 되는 기술 명칭 패턴
