@@ -508,7 +508,29 @@ app.get('/api/knowledge', async (req, res) => {
 // SKILL20260309: Compound Expansion + Precision Arithmetic 엔진
 // ══════════════════════════════════════════════════════════════════
 
-// 복합성분 DB (compound-db)
+// 복합성분 캐시 (DB에서 로드, 미로드 시 하드코딩 폴백)
+let compoundCache = {}
+
+async function loadCompoundCache() {
+  try {
+    const { rows } = await pool.query('SELECT trade_name, supplier, components FROM compound_master')
+    const loaded = {}
+    for (const row of rows) {
+      loaded[row.trade_name] = { supplier: row.supplier, components: row.components }
+    }
+    compoundCache = loaded
+    console.log(`[CompoundCache] ${rows.length}건 로드됨`)
+  } catch (err) {
+    console.error('[CompoundCache] 로드 실패, 하드코딩 DB 사용:', err.message)
+  }
+}
+
+// 복합성분 조회 (DB 우선, 미등록 시 하드코딩 폴백)
+function getCompound(tradeName) {
+  return compoundCache[tradeName] || COMPOUND_DB[tradeName] || null
+}
+
+// 복합성분 하드코딩 폴백 DB
 const COMPOUND_DB = {
   'Bentone Gel MIO':        { supplier: 'Elementis', components: [{ inci: 'Cyclopentasiloxane', fraction: 0.850 }, { inci: 'Disteardimonium Hectorite', fraction: 0.100 }, { inci: 'Propylene Carbonate', fraction: 0.050 }] },
   'Dow Corning 9040':       { supplier: 'Dow', components: [{ inci: 'Cyclomethicone', fraction: 0.900 }, { inci: 'Dimethicone Crosspolymer', fraction: 0.100 }] },
@@ -779,7 +801,7 @@ function expandAndMerge(ingredients) {
   const compoundInfo = []
 
   for (const ing of ingredients) {
-    const compound = COMPOUND_DB[ing.name]
+    const compound = getCompound(ing.name)
     if (compound) {
       // COMPOUND — 전개
       const intVal = ing.pct_int
@@ -915,8 +937,8 @@ app.post('/api/guide-formula', async (req, res) => {
         phase: ing.phase,
         type: ing.type,
         function: ing.fn,
-        is_compound: !!COMPOUND_DB[ing.name],
-        compound_name: COMPOUND_DB[ing.name] ? ing.name : null,
+        is_compound: !!getCompound(ing.name),
+        compound_name: getCompound(ing.name) ? ing.name : null,
         regulations: regMap[ing.inci] || [],
         safety: kbData.ewg_score ? {
           ewg_score: kbData.ewg_score, safety_notes: kbData.safety_notes,
@@ -1136,8 +1158,8 @@ async function buildDbFormula(productType, requirements, targetMarket) {
     phase: ing.phase,
     type: ing.type,
     function: ing.fn,
-    is_compound: !!COMPOUND_DB[ing.name],
-    compound_name: COMPOUND_DB[ing.name] ? ing.name : null,
+    is_compound: !!getCompound(ing.name),
+    compound_name: getCompound(ing.name) ? ing.name : null,
     regulations: [],
     safety: null,
   }))
@@ -2756,14 +2778,14 @@ app.post('/api/check-regulation-limits', async (req, res) => {
       return res.status(400).json({ success: false, error: 'ingredients 배열이 필요합니다.' })
     }
 
-    // 정확 매칭 (대소문자 무시), coching_legacy/gem2_kb 등 제외
+    // 정확 매칭 (대소문자 무시), 저품질 소스 제외
     const inciNames = ingredients.map(i => (i.inci_name || '').toLowerCase()).filter(Boolean)
     const placeholders = inciNames.map((_, idx) => `$${idx + 1}`).join(', ')
     const { rows: regs } = await pool.query(
       `SELECT inci_name, max_concentration, restriction, source
        FROM regulation_cache
        WHERE lower(inci_name) IN (${placeholders})
-         AND source NOT IN ('coching_legacy','gem2_kb','gemini_kb','UNKNOWN')`,
+         AND source NOT IN ('gem2_kb','gemini_kb','UNKNOWN')`,
       inciNames
     )
 
@@ -2813,7 +2835,7 @@ app.post('/api/check-regulation-limits', async (req, res) => {
 
       const sources = Object.keys(bySource)
       const sourceLabel = sources.map(s => {
-        const map = { MFDS_SEED: 'KR', GEMINI_KR: 'KR', GEMINI_EU: 'EU', GEMINI_US: 'US', GEMINI_JP: 'JP', GEMINI_CN: 'CN' }
+        const map = { MFDS_SEED: 'KR', GEMINI_KR: 'KR', GEMINI_EU: 'EU', GEMINI_US: 'US', GEMINI_JP: 'JP', GEMINI_CN: 'CN', coching_legacy: 'EU', FDA_SEED: 'US', REG_MONITOR_US: 'US' }
         return map[s] || s
       }).filter((v, i, a) => a.indexOf(v) === i).join('/')
 
@@ -3559,6 +3581,11 @@ app.get('/api/stability', async (req, res) => {
 const PORT = process.env.API_PORT || 3001
 
 ;(async () => {
+  try {
+    await loadCompoundCache()
+  } catch (err) {
+    console.error('[CompoundCache] 초기화 실패:', err.message)
+  }
   try {
     await initPurposeGateDB()
     console.log('[PurposeGate] DB 초기화 완료')
