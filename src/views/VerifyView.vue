@@ -200,13 +200,13 @@
             </div>
           </div>
 
-          <!-- ⑦⑧ AI 심화 분석 버튼 -->
+          <!-- ⑦⑧ 심화 분석 버튼 -->
           <div class="ai-panel-footer">
             <button class="btn-ai" @click="suggestAlternatives" :disabled="loadingAlt">
-              {{ loadingAlt ? '분석 중...' : '⑦ 대체 성분 제안 (AI)' }}
+              {{ loadingAlt ? '분석 중...' : '⑦ 대체 성분 제안' }}
             </button>
             <button class="btn-ai btn-ai-process" @click="runProcessReview" :disabled="loadingProcess">
-              {{ loadingProcess ? '분석 중...' : '⑧ 공정 리뷰 (AI)' }}
+              {{ loadingProcess ? '분석 중...' : '⑧ 공정 검토' }}
             </button>
           </div>
         </div>
