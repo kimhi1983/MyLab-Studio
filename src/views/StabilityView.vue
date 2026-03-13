@@ -186,6 +186,30 @@
       </template>
     </div>
 
+    <!-- QA 검증 연동 -->
+    <div class="panel qa-link-panel">
+      <div class="panel-header">
+        <div>
+          <span class="section-label">QA LINK</span>
+          <span class="section-title">품질 검증 연동</span>
+        </div>
+        <router-link to="/validation" class="btn-link">품질 검증 →</router-link>
+      </div>
+      <div class="qa-link-body">
+        <div v-for="name in formulaNames" :key="name" class="qa-row">
+          <span class="qa-formula-name">{{ name }}</span>
+          <div class="qa-progress-wrap">
+            <div class="qa-progress-bar">
+              <div class="qa-progress-fill" :style="{ width: getQaProgress(name) + '%' }"></div>
+            </div>
+            <span class="qa-progress-text">{{ getQaProgress(name) }}%</span>
+          </div>
+          <span class="qa-status-chip" :class="getQaStatusClass(name)">{{ getQaStatusLabel(name) }}</span>
+        </div>
+        <div v-if="!formulaNames.length" class="qa-empty">등록된 처방이 없습니다</div>
+      </div>
+    </div>
+
     <!-- 판정 기준 안내 -->
     <div class="panel criteria-panel">
       <div class="panel-header">
@@ -413,6 +437,45 @@ function rowJudgeLabel(week) {
 
 function rowJudgeChipClass(week) {
   return 'chip-' + rowJudge(week)
+}
+
+// ── QA 검증 연동 ──
+function getQaProgress(formulaName) {
+  // formulaStore에서 ID 찾기 → 해당 체크리스트 로드
+  const key = findChecklistKey(formulaName)
+  if (!key) return 0
+  try {
+    const saved = localStorage.getItem(key)
+    if (!saved) return 0
+    const parsed = JSON.parse(saved)
+    const checked = parsed.filter(i => i.checked).length
+    return Math.round((checked / 8) * 100)
+  } catch { return 0 }
+}
+
+function findChecklistKey(formulaName) {
+  // formulaStore에서 title로 매칭
+  try {
+    const raw = localStorage.getItem('mylab:formulas')
+    if (!raw) return null
+    const formulas = JSON.parse(raw)
+    const match = formulas.find(f => f.title === formulaName)
+    return match ? `mylab:checklist:${match.id}` : null
+  } catch { return null }
+}
+
+function getQaStatusClass(formulaName) {
+  const pct = getQaProgress(formulaName)
+  if (pct >= 100) return 'qa-done'
+  if (pct > 0) return 'qa-progress'
+  return 'qa-none'
+}
+
+function getQaStatusLabel(formulaName) {
+  const pct = getQaProgress(formulaName)
+  if (pct >= 100) return '완료'
+  if (pct > 0) return '진행중'
+  return '미시작'
 }
 
 // ── 새 시험 등록 ──
@@ -806,6 +869,43 @@ function addTest() {
 }
 
 .form-input:focus { border-color: var(--accent); }
+
+/* ── QA 연동 ── */
+.qa-link-body { padding: 12px 20px; display: flex; flex-direction: column; gap: 8px; }
+.btn-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+.btn-link:hover { opacity: 0.7; }
+.qa-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+.qa-formula-name { font-size: 13px; font-weight: 600; color: var(--text); min-width: 160px; }
+.qa-progress-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+.qa-progress-bar {
+  flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+}
+.qa-progress-fill {
+  height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s;
+}
+.qa-progress-text {
+  font-size: 11px; font-family: var(--font-mono); font-weight: 600; color: var(--text-sub); min-width: 32px; text-align: right;
+}
+.qa-status-chip {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; white-space: nowrap;
+}
+.qa-done { color: var(--green); background: rgba(58,144,104,0.12); }
+.qa-progress { color: var(--amber); background: rgba(176,120,32,0.12); }
+.qa-none { color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); }
+.qa-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 12px; }
 
 @media (max-width: 640px) {
   .summary-cards { grid-template-columns: repeat(2, 1fr); }

@@ -84,6 +84,46 @@
       </div>
     </div>
 
+    <!-- 안정성 시험 연동 -->
+    <div v-if="stabilityStatus" class="panel stability-link-panel">
+      <div class="panel-header">
+        <div>
+          <span class="section-label">STABILITY LINK</span>
+          <span class="section-title">안정성 시험 현황</span>
+        </div>
+        <router-link to="/stability" class="btn-link">안정성 시험 →</router-link>
+      </div>
+      <div class="stability-link-body">
+        <div class="stab-summary-cards">
+          <div class="stab-mini-card">
+            <div class="stab-mini-val">{{ stabilityStatus.total }}</div>
+            <div class="stab-mini-label">등록 시험</div>
+          </div>
+          <div class="stab-mini-card stab-pass">
+            <div class="stab-mini-val">{{ stabilityStatus.pass }}</div>
+            <div class="stab-mini-label">적합</div>
+          </div>
+          <div class="stab-mini-card stab-warning">
+            <div class="stab-mini-val">{{ stabilityStatus.warning }}</div>
+            <div class="stab-mini-label">주의</div>
+          </div>
+          <div class="stab-mini-card stab-fail">
+            <div class="stab-mini-val">{{ stabilityStatus.fail }}</div>
+            <div class="stab-mini-label">부적합</div>
+          </div>
+        </div>
+        <div v-if="stabilityStatus.items.length" class="stab-detail-list">
+          <div v-for="item in stabilityStatus.items" :key="item.condition" class="stab-detail-row">
+            <span class="stab-cond">{{ item.condition }}</span>
+            <span class="stab-week">W{{ item.lastWeek }}</span>
+            <span class="stab-de" :class="item.deClass">ΔE {{ item.deltaE }}</span>
+            <span class="stab-judge" :class="'judge-' + item.judge">{{ item.judgeLabel }}</span>
+          </div>
+        </div>
+        <div v-else class="stab-empty">이 처방에 등록된 안정성 시험이 없습니다</div>
+      </div>
+    </div>
+
     <!-- 수동 체크리스트 -->
     <div class="panel checklist-panel">
       <div class="panel-header">
@@ -138,6 +178,49 @@ const selectedFormulaId = ref('')
 const isValidating = ref(false)
 const validationResult = ref(null)
 const apiError = ref(false)
+const stabilityStatus = ref(null)
+
+// ─── 안정성 시험 데이터 연동 ───
+function getStabilityData() {
+  try {
+    const raw = localStorage.getItem('mylab:stability')
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function autoJudgeStability(deltaE, viscChange) {
+  const absVisc = Math.abs(viscChange)
+  if (deltaE > 2.0 || absVisc > 15) return 'fail'
+  if (deltaE >= 1.0 || absVisc >= 10) return 'warning'
+  return 'pass'
+}
+
+function loadStabilityStatus(formulaTitle) {
+  if (!formulaTitle) { stabilityStatus.value = null; return }
+  const allStab = getStabilityData()
+  const matched = allStab.filter(d => d.formulaName === formulaTitle)
+  if (!matched.length) {
+    stabilityStatus.value = { total: 0, pass: 0, warning: 0, fail: 0, items: [] }
+    return
+  }
+  let pass = 0, warning = 0, fail = 0
+  const items = matched.map(d => {
+    const last = d.results[d.results.length - 1]
+    const judge = autoJudgeStability(last.deltaE, last.viscChange)
+    if (judge === 'pass') pass++
+    else if (judge === 'warning') warning++
+    else fail++
+    return {
+      condition: d.condition,
+      lastWeek: last.week,
+      deltaE: last.deltaE.toFixed(1),
+      deClass: last.deltaE > 2 ? 'de-red' : last.deltaE >= 1 ? 'de-amber' : 'de-green',
+      judge,
+      judgeLabel: judge === 'pass' ? '적합' : judge === 'warning' ? '주의' : '부적합',
+    }
+  })
+  stabilityStatus.value = { total: matched.length, pass, warning, fail, items }
+}
 
 // ─── 자동 검증 ───
 async function runValidation() {
@@ -157,15 +240,56 @@ async function runValidation() {
   isValidating.value = false
 
   if (res && res.success !== false) {
-    // 서버 응답: { success, data: { checks, passed, ... } }
     validationResult.value = res.data || res
   } else {
-    // API 미연결 시 더미 결과 표시
     apiError.value = true
     validationResult.value = makeDummyResult()
   }
 
+  // 안정성 시험 연동: 해당 처방의 안정성 결과를 검증 항목에 추가
+  loadStabilityStatus(formula?.title)
+  if (stabilityStatus.value && validationResult.value?.checks) {
+    const stab = stabilityStatus.value
+    if (stab.total === 0) {
+      validationResult.value.checks.push({
+        name: '안정성 시험',
+        status: 'warn',
+        message: '등록된 안정성 시험이 없습니다.',
+        detail: '안정성 페이지에서 시험을 등록하세요.',
+      })
+    } else if (stab.fail > 0) {
+      validationResult.value.checks.push({
+        name: '안정성 시험',
+        status: 'fail',
+        message: `${stab.total}건 중 ${stab.fail}건 부적합`,
+        detail: stab.items.filter(i => i.judge === 'fail').map(i => `${i.condition}: ΔE ${i.deltaE}`).join(', '),
+      })
+    } else if (stab.warning > 0) {
+      validationResult.value.checks.push({
+        name: '안정성 시험',
+        status: 'warn',
+        message: `${stab.total}건 중 ${stab.warning}건 주의`,
+        detail: stab.items.filter(i => i.judge === 'warning').map(i => `${i.condition}: ΔE ${i.deltaE}`).join(', '),
+      })
+    } else {
+      validationResult.value.checks.push({
+        name: '안정성 시험',
+        status: 'pass',
+        message: `${stab.total}건 전체 적합`,
+        detail: null,
+      })
+    }
+  }
+
+  // 안정성 시험 등록 여부로 체크리스트 자동 업데이트
   loadChecklist()
+  if (stabilityStatus.value && stabilityStatus.value.total > 0) {
+    const stabItem = checklist.value.find(c => c.id === 5)
+    if (stabItem && !stabItem.checked) {
+      stabItem.checked = true
+      saveChecklist()
+    }
+  }
 }
 
 function makeDummyResult() {
@@ -261,6 +385,7 @@ function resetChecklist() {
 watch(selectedFormulaId, () => {
   validationResult.value = null
   apiError.value = false
+  stabilityStatus.value = null
   loadChecklist()
 })
 
@@ -511,6 +636,64 @@ loadChecklist()
   border-radius: 4px;
   flex-shrink: 0;
 }
+
+/* ─── 안정성 시험 연동 ─── */
+.stability-link-panel { }
+.stability-link-body { padding: 16px 20px; }
+.btn-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+.btn-link:hover { opacity: 0.7; }
+.stab-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.stab-mini-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  text-align: center;
+}
+.stab-mini-val {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.stab-mini-label { font-size: 10px; color: var(--text-dim); margin-top: 1px; }
+.stab-pass .stab-mini-val { color: var(--green); }
+.stab-warning .stab-mini-val { color: var(--amber); }
+.stab-fail .stab-mini-val { color: var(--red); }
+.stab-detail-list { display: flex; flex-direction: column; gap: 4px; }
+.stab-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.stab-cond { font-family: var(--font-mono); font-weight: 600; color: var(--text-sub); min-width: 80px; }
+.stab-week { font-family: var(--font-mono); color: var(--text-dim); min-width: 30px; }
+.stab-de { font-family: var(--font-mono); font-weight: 600; min-width: 50px; }
+.de-green { color: var(--green); }
+.de-amber { color: var(--amber); }
+.de-red { color: var(--red); }
+.stab-judge {
+  font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 4px; margin-left: auto;
+}
+.judge-pass { color: var(--green); background: rgba(58,144,104,0.12); }
+.judge-warning { color: var(--amber); background: rgba(176,120,32,0.12); }
+.judge-fail { color: var(--red); background: rgba(196,78,78,0.12); }
+.stab-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 12px; }
 
 @media (max-width: 1199px) {
   .checks-grid { grid-template-columns: 1fr; }
