@@ -626,6 +626,11 @@ async function matchTemplateFromDb(productType, requirements) {
       }
     }
 
+    // 방부공통은 항상 감지 목적에 추가 (모든 제형에 방부 필수)
+    if (!detectedPurposes.includes('방부공통')) {
+      detectedPurposes.push('방부공통')
+    }
+
     let purposes = null
     if (detectedPurposes.length > 0) {
       const { rows: purposeIngs } = await pool.query(
@@ -636,11 +641,46 @@ async function matchTemplateFromDb(productType, requirements) {
          ORDER BY role, priority DESC`,
         [detectedPurposes]
       )
+
+      // 선크림 분기: 요구사항에 따라 UV 필터 구성 결정
+      let filteredIngs = purposeIngs
+      if (detectedPurposes.includes('자외선차단')) {
+        const reqText = (requirements || '').toLowerCase()
+        const isSensitive = reqText.includes('민감') || reqText.includes('sensitive') ||
+          reqText.includes('무기자차') || reqText.includes('물리적') || reqText.includes('mineral')
+        const isLightweight = reqText.includes('가벼') || reqText.includes('산뜻') ||
+          reqText.includes('light') || reqText.includes('경량') || reqText.includes('데일리')
+
+        if (isSensitive) {
+          // 민감성: 무기자차만 (유기 UV 필터 제외, ZnO/TiO2 고함량 유지)
+          filteredIngs = purposeIngs.filter(i => i.ingredient_type !== 'UV_FILTER_ORGANIC')
+          console.log('[PurposeGate] 선크림 모드: 무기자차 전용 (민감성)')
+        } else if (isLightweight) {
+          // 가벼운: 유기자차 위주 + 무기 소량
+          filteredIngs = purposeIngs.map(i => {
+            if (i.inci_name === 'Zinc Oxide') return { ...i, default_pct_int: 500, role: 'RECOMMENDED' }
+            if (i.inci_name === 'Titanium Dioxide') return { ...i, default_pct_int: 300, role: 'RECOMMENDED' }
+            if (i.ingredient_type === 'UV_FILTER_ORGANIC') return { ...i, role: 'REQUIRED' }
+            return i
+          })
+          console.log('[PurposeGate] 선크림 모드: 유기자차 위주 (경량/산뜻)')
+        } else {
+          // 기본: 하이브리드 (무기 감량 + 유기 추가)
+          filteredIngs = purposeIngs.map(i => {
+            if (i.inci_name === 'Zinc Oxide') return { ...i, default_pct_int: 800 }       // 15% → 8%
+            if (i.inci_name === 'Titanium Dioxide') return { ...i, default_pct_int: 400 } // 7% → 4%
+            if (i.ingredient_type === 'UV_FILTER_ORGANIC') return { ...i, role: 'REQUIRED' }
+            return i
+          })
+          console.log('[PurposeGate] 선크림 모드: 하이브리드 (무기+유기)')
+        }
+      }
+
       purposes = {
-        detected: detectedPurposes,
-        required:    purposeIngs.filter(r => r.role === 'REQUIRED'),
-        recommended: purposeIngs.filter(r => r.role === 'RECOMMENDED'),
-        forbidden:   purposeIngs.filter(r => r.role === 'FORBIDDEN'),
+        detected: detectedPurposes.filter(p => p !== '방부공통'),
+        required:    filteredIngs.filter(r => r.role === 'REQUIRED'),
+        recommended: filteredIngs.filter(r => r.role === 'RECOMMENDED'),
+        forbidden:   filteredIngs.filter(r => r.role === 'FORBIDDEN'),
       }
     }
 
@@ -1313,14 +1353,61 @@ ${ingredientBlock}
 }`
 }
 
+// ─── 필수 시스템 자동 보완 (방부제/유화제 누락 시 삽입) ───
+function validateAndFixIngredients(ingredients, productType) {
+  const fixed = [...ingredients]
+  const additions = []
+  const inciSet = new Set(fixed.map(i => (i.inci_name || '').toLowerCase()))
+
+  // 1. 방부 시스템 체크
+  const preservNames = ['phenoxyethanol', '1,2-hexanediol', 'ethylhexylglycerin', 'caprylyl glycol', 'chlorphenesin']
+  const hasPreserv = fixed.some(i => preservNames.some(p => (i.inci_name || '').toLowerCase().includes(p)))
+  if (!hasPreserv) {
+    // 방부제 자동 삽입 (Phenoxyethanol 0.8% + Ethylhexylglycerin 0.3%)
+    if (!inciSet.has('phenoxyethanol')) {
+      fixed.push({ inci_name: 'Phenoxyethanol', korean_name: '페녹시에탄올', percentage: 0.8, int_value: 80, phase: 'D', function: '방부제', type: 'PRESERVATIVE', is_compound: false })
+      inciSet.add('phenoxyethanol')
+      additions.push('Phenoxyethanol 0.8% (방부제 자동 추가)')
+    }
+    if (!inciSet.has('ethylhexylglycerin')) {
+      fixed.push({ inci_name: 'Ethylhexylglycerin', korean_name: '에틸헥실글리세린', percentage: 0.3, int_value: 30, phase: 'D', function: '보존보조', type: 'PRESERVATIVE', is_compound: false })
+      inciSet.add('ethylhexylglycerin')
+      additions.push('Ethylhexylglycerin 0.3% (보존보조 자동 추가)')
+    }
+    console.log('[ValidateFix] 방부 시스템 누락 → 자동 보완:', additions.join(', '))
+  }
+
+  // 2. 유화제 체크 (크림/로션/선크림)
+  const type = (productType || '').toLowerCase()
+  if (type.includes('크림') || type.includes('로션') || type.includes('선')) {
+    const emulsifierKeywords = ['polysorbate', 'cetearyl alcohol', 'glyceryl stearate', 'peg-100', 'cetearyl glucoside', 'sorbitan', 'dimethicone', 'olivate']
+    const hasEmulsifier = fixed.some(i => {
+      const inci = (i.inci_name || '').toLowerCase()
+      return emulsifierKeywords.some(k => inci.includes(k)) ||
+        (i.function || '').toLowerCase().includes('유화')
+    })
+    if (!hasEmulsifier && !inciSet.has('cetearyl olivate')) {
+      fixed.push({ inci_name: 'Cetearyl Olivate', korean_name: '세테아릴올리베이트', percentage: 2.5, int_value: 250, phase: 'B', function: '천연 유화제 (Olivem 1000)', type: 'EMULSIFIER', is_compound: false })
+      fixed.push({ inci_name: 'Sorbitan Olivate', korean_name: '소르비탄올리베이트', percentage: 1.5, int_value: 150, phase: 'B', function: '보조 유화제', type: 'EMULSIFIER', is_compound: false })
+      additions.push('Cetearyl Olivate 2.5% + Sorbitan Olivate 1.5% (유화제 자동 추가)')
+      console.log('[ValidateFix] 유화제 누락 → Olivem 1000 자동 추가')
+    }
+  }
+
+  return { ingredients: fixed, additions }
+}
+
 // ─── SKILL 후처리: Gemini 응답을 expandAndMerge() 통과시켜 100.00% 보정 ───
-function postProcessGeminiResult(parsed) {
+function postProcessGeminiResult(parsed, productType) {
   const rawIngredients = parsed.ingredients || []
   if (rawIngredients.length === 0) return parsed
 
+  // 필수 시스템 자동 보완 (방부제/유화제)
+  const { ingredients: validatedIngs, additions } = validateAndFixIngredients(rawIngredients, productType)
+
   // Gemini 응답의 ingredients를 expandAndMerge 입력 형식으로 변환
   // Water는 expandAndMerge 내부에서 역산하므로 제외
-  const forExpand = rawIngredients
+  const forExpand = validatedIngs
     .filter(i => {
       const inci = (i.inci_name || '').toLowerCase()
       return inci !== 'water' && inci !== 'water (aqua)' && inci !== 'aqua'
@@ -1337,7 +1424,7 @@ function postProcessGeminiResult(parsed) {
   // 보정된 ingredients 재구성
   const correctedIngredients = sortedInci.map(item => {
     // 원본에서 매칭되는 원료 정보 찾기
-    const original = rawIngredients.find(
+    const original = validatedIngs.find(
       r => (r.inci_name || '').toLowerCase() === item.inci.toLowerCase()
     )
     return {
@@ -1371,6 +1458,7 @@ function postProcessGeminiResult(parsed) {
       allPassed: verification.allPassed,
     },
     compoundInfo: compoundInfo.length > 0 ? compoundInfo : undefined,
+    autoFixes: additions.length > 0 ? additions : undefined,
   }
 }
 
@@ -1606,8 +1694,8 @@ app.post('/api/ai-formula', async (req, res) => {
 
     const rawParsed = await callGemini(prompt)
 
-    // SKILL 후처리: expandAndMerge() 통과 → 100.00% 보정 + fullInciList 생성
-    const parsed = postProcessGeminiResult(rawParsed)
+    // SKILL 후처리: expandAndMerge() 통과 → 100.00% 보정 + fullInciList 생성 + 방부/유화 자동보완
+    const parsed = postProcessGeminiResult(rawParsed, productType)
 
     // 10항목 검증 체크리스트
     const checklist = validateFormulaChecklist(parsed.ingredients, parsed.verification)
@@ -1625,6 +1713,7 @@ app.post('/api/ai-formula', async (req, res) => {
       verification: parsed.verification || null,
       checklist,
       qualityChecks,
+      autoFixes: parsed.autoFixes || [],
       purposeGate: purposes ? {
         detected: purposes.detected,
         required: purposes.required.map(r => r.inci_name),
@@ -2212,8 +2301,24 @@ async function initPurposeGateDB() {
     console.log('[PurposeGate] product_categories 시드 7건 삽입')
   }
 
+  // 유기 UV 필터 + 하이브리드 선크림 시드 추가 (이미 있으면 무시)
+  await pool.query(`
+    INSERT INTO purpose_ingredient_map (purpose_key, purpose_keywords, inci_name, korean_name, role, ingredient_type, phase, fn, default_pct_int, max_pct_int, reason, priority) VALUES
+    -- 자외선차단: 유기 UV 필터 (하이브리드/유기자차 전용)
+    ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Ethylhexyl Methoxycinnamate', '에칠헥실메톡시신나메이트', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVB 필터 — 가장 보편적 화학적 자차 (OMC)', 700, 1000, NULL, 85),
+    ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Bis-Ethylhexyloxyphenol Methoxyphenyl Triazine', '비스에칠헥실옥시페놀메톡시페닐트리아진', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVA+UVB 광안정성 필터 (Tinosorb S)', 300, 500, NULL, 84),
+    ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Diethylamino Hydroxybenzoyl Hexyl Benzoate', '디에칠아미노하이드록시벤조일헥실벤조에이트', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVA1 필터 (DHHB/Uvinul A Plus)', 200, 500, NULL, 83),
+    ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Octocrylene', '옥토크릴렌', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVB 필터 + 광안정화제 역할', 500, 1000, NULL, 75),
+    ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Homosalate', '호모살레이트', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVB 필터 — 높은 흡광 효율', 500, 1000, NULL, 70),
+    -- 방부 (모든 목적에 공통 적용을 위한 범용 방부 시드)
+    ('방부공통', ARRAY['방부','preserv','보존'], 'Phenoxyethanol', '페녹시에탄올', 'REQUIRED', 'PRESERVATIVE', 'D', '광범위 방부제 — 그람양성/음성균', 80, 100, NULL, 100),
+    ('방부공통', ARRAY['방부','preserv','보존'], '1,2-Hexanediol', '1,2-헥산다이올', 'REQUIRED', 'PRESERVATIVE', 'D', '보존보조 + 보습', 80, 200, NULL, 90),
+    ('방부공통', ARRAY['방부','preserv','보존'], 'Ethylhexylglycerin', '에틸헥실글리세린', 'RECOMMENDED', 'PRESERVATIVE', 'D', '방부 보조 — 페녹시에탄올 효과 증강', 30, 50, NULL, 80)
+    ON CONFLICT (purpose_key, inci_name, role) DO NOTHING
+  `)
+
   const { rows: pimRows } = await pool.query('SELECT count(*) as cnt FROM purpose_ingredient_map')
-  if (parseInt(pimRows[0].cnt) === 0) {
+  if (parseInt(pimRows[0].cnt) <= 8) {
     await pool.query(`
       INSERT INTO purpose_ingredient_map (purpose_key, purpose_keywords, inci_name, korean_name, role, ingredient_type, phase, fn, default_pct_int, max_pct_int, reason, priority) VALUES
       -- 보습
