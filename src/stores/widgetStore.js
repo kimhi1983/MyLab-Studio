@@ -15,7 +15,7 @@ export const WIDGET_CATALOG = [
   { id: 'chart', label: '상태 차트', icon: '◐', description: '처방 상태별 도넛 차트', minW: 3, minH: 3, defaultW: 4, defaultH: 3 },
   { id: 'memo', label: '메모장', icon: '✎', description: '자유 메모 (자동 저장)', minW: 3, minH: 3, defaultW: 4, defaultH: 4 },
   { id: 'stability', label: '안정성 현황', icon: '⏱', description: '처방별 안정성 테스트 현황', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
-  { id: 'regulation', label: '규제 모니터링', icon: '⚠', description: '지역별 성분 규제 현황', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
+  { id: 'regulation', label: '규제 모니터링', icon: '⚠', description: '지역별 성분 규제 현황', minW: 6, minH: 5, defaultW: 12, defaultH: 7 },
   { id: 'todaylog', label: '오늘의 업무', icon: '◉', description: '오늘 진행한 업무 타임라인', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
   { id: 'hlb', label: 'HLB 계산기', icon: '⚖', description: '오일/유화제 HLB 빠른 계산 및 판정', minW: 3, minH: 4, defaultW: 4, defaultH: 5 },
 ]
@@ -29,19 +29,20 @@ const DEFAULT_LAYOUT = [
   { x: 0, y: 3,  w: 5,  h: 5,  i: 'active' },      // 진행중 처방
   { x: 5, y: 3,  w: 4,  h: 5,  i: 'todaylog' },    // 오늘의 업무
   { x: 9, y: 3,  w: 3,  h: 5,  i: 'quick' },       // 빠른 작업
-  // Row 8: 안정성 + 규제
+  // Row 8: 안정성 + 최근처방
   { x: 0, y: 8,  w: 6,  h: 5,  i: 'stability' },   // 안정성 현황
-  { x: 6, y: 8,  w: 6,  h: 5,  i: 'regulation' },  // 규제 모니터링
-  // Row 13: 최근처방 + 프로젝트 + HLB
-  { x: 0, y: 13, w: 4,  h: 5,  i: 'recent' },      // 최근 처방
-  { x: 4, y: 13, w: 4,  h: 5,  i: 'projects' },    // 프로젝트 요약
-  { x: 8, y: 13, w: 4,  h: 5,  i: 'hlb' },         // HLB 계산기
-  // Row 18: 메모
-  { x: 0, y: 18, w: 12, h: 3,  i: 'memo' },        // 메모장 (전체 폭)
+  { x: 6, y: 8,  w: 6,  h: 5,  i: 'recent' },      // 최근 처방
+  // Row 13: 규제 모니터링 (전체 너비)
+  { x: 0, y: 13, w: 12, h: 7,  i: 'regulation' },  // 규제 모니터링
+  // Row 20: 프로젝트 + HLB
+  { x: 0, y: 20, w: 6,  h: 5,  i: 'projects' },    // 프로젝트 요약
+  { x: 6, y: 20, w: 6,  h: 5,  i: 'hlb' },         // HLB 계산기
+  // Row 25: 메모
+  { x: 0, y: 25, w: 12, h: 3,  i: 'memo' },        // 메모장 (전체 폭)
 ]
 
-// v3: 11개 위젯 전체 표시 레이아웃 (이전 v2는 8개만 표시)
-const savedLayout = useLocalStorage('mylab:dashboard-layout-v3', null)
+// v4: 규제 모니터링 전체 너비 레이아웃 (v3 대비 regulation w=12, h=7)
+const savedLayout = useLocalStorage('mylab:dashboard-layout-v4', null)
 
 export function useWidgetStore() {
   // 현재 레이아웃

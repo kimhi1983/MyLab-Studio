@@ -1,35 +1,87 @@
 <template>
   <div class="regulation-widget">
-    <!-- 지역 필터 탭 -->
-    <div class="region-tabs">
-      <button
-        v-for="tab in regionTabs"
-        :key="tab.label"
-        class="region-tab"
-        :class="{ active: selectedRegion === tab.label }"
-        @click="selectedRegion = tab.label"
-      >
-        {{ tab.label }}
-      </button>
-    </div>
 
-    <!-- 규제 리스트 -->
-    <div class="reg-list">
-      <div v-for="row in displayData" :key="row.id" class="reg-row">
-        <span class="region-chip" :class="getRegionClass(row.region)">{{ row.region }}</span>
-        <div class="reg-info">
-          <span class="reg-name">{{ row.ingredient }}</span>
-          <span class="reg-limit">{{ row.limit || '-' }}</span>
+    <!-- ── 헤더: 탭 + 검색 + 통계 뱃지 ── -->
+    <div class="reg-header">
+      <div class="region-tabs">
+        <button
+          v-for="tab in regionTabs"
+          :key="tab.label"
+          :class="['region-tab', { active: selectedRegion === tab.label }]"
+          @click="selectedRegion = tab.label"
+        >
+          {{ tab.label }}
+          <span v-if="tab.label !== '전체' && tab.count" class="tab-count">{{ tab.count }}</span>
+        </button>
+      </div>
+      <div class="reg-controls">
+        <input
+          v-model="searchQ"
+          class="search-input"
+          placeholder="성분명 검색..."
+        />
+        <div class="stat-badges">
+          <span class="stat-badge badge-ban">금지 {{ stats.ban }}</span>
+          <span class="stat-badge badge-limit">제한 {{ stats.limit }}</span>
+          <span class="stat-badge badge-monitor">모니터링 {{ stats.monitor }}</span>
         </div>
-        <span class="status-chip" :class="getStatusClass(row.status)">
-          {{ getStatusLabel(row.status) }}
-        </span>
       </div>
     </div>
 
-    <div v-if="!displayData.length" class="empty">
-      해당 지역의 규제 데이터가 없습니다
+    <!-- ── 규제 테이블 ── -->
+    <div class="reg-table-wrap">
+      <table class="reg-table">
+        <thead>
+          <tr>
+            <th class="col-region">지역</th>
+            <th class="col-name">성분명</th>
+            <th class="col-restrict">제한 내용</th>
+            <th class="col-conc">최대 농도</th>
+            <th class="col-status">상태</th>
+            <th class="col-date">갱신</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="row in displayData" :key="row.id">
+            <tr
+              :class="['reg-row', `row-${row.status}`, { 'row-expanded': expandedId === row.id }]"
+              @click="toggleExpand(row.id)"
+            >
+              <td>
+                <span :class="['region-chip', getRegionClass(row.region)]">{{ row.region }}</span>
+              </td>
+              <td class="td-name">{{ row.ingredient }}</td>
+              <td class="td-restrict">
+                <span v-if="row.restrictionShort" class="restrict-text">{{ row.restrictionShort }}</span>
+                <span v-else class="restrict-empty">—</span>
+              </td>
+              <td class="td-conc mono">{{ row.limit || '—' }}</td>
+              <td>
+                <span :class="['status-chip', getStatusClass(row.status)]">
+                  {{ getStatusLabel(row.status) }}
+                </span>
+              </td>
+              <td class="td-date mono">{{ row.updatedAt }}</td>
+            </tr>
+            <!-- 제한 내용 전문 펼침 -->
+            <tr v-if="expandedId === row.id && row.restriction" class="expand-row">
+              <td colspan="6" class="expand-cell">
+                <div class="expand-content">
+                  <span class="expand-label">전체 내용</span>
+                  {{ row.restriction }}
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
     </div>
+
+    <div v-if="!displayData.length && !loading" class="empty">
+      {{ searchQ ? `'${searchQ}' 검색 결과가 없습니다` : '해당 지역의 규제 데이터가 없습니다' }}
+    </div>
+    <div v-if="loading" class="empty">불러오는 중...</div>
+
   </div>
 </template>
 
@@ -40,81 +92,109 @@ import { mapRegulationSource, isVisibleSource } from '../../utils/regulationSour
 
 const store = useIngredientStore()
 const selectedRegion = ref('전체')
-const allData = ref([])   // 변환된 전체 데이터 (클라이언트 필터링용)
+const searchQ = ref('')
+const expandedId = ref(null)
+const loading = ref(false)
+const allData = ref([])
 
-// 탭 목록: 레이블 기준으로 중복 제거
-const regionTabs = computed(() => {
-  const labels = new Set()
+// ── 지역별 카운트 ──
+const regionCounts = computed(() => {
+  const counts = {}
   for (const row of allData.value) {
-    if (row.region && row.region !== '기타') labels.add(row.region)
+    counts[row.region] = (counts[row.region] || 0) + 1
   }
+  return counts
+})
+
+// ── 탭 목록 (실데이터 기반, 순서 고정) ──
+const REGION_ORDER = ['한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
+const regionTabs = computed(() => {
+  const existing = REGION_ORDER.filter(r => regionCounts.value[r] > 0)
   return [
-    { label: '전체' },
-    ...['한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
-      .filter(l => labels.has(l))
-      .map(l => ({ label: l })),
+    { label: '전체', count: allData.value.length },
+    ...existing.map(r => ({ label: r, count: regionCounts.value[r] })),
   ]
 })
 
-// 선택된 지역에 해당하는 20개 표시
+// ── 통계 뱃지 (선택된 지역 기준) ──
+const stats = computed(() => {
+  const base = selectedRegion.value === '전체'
+    ? allData.value
+    : allData.value.filter(r => r.region === selectedRegion.value)
+  return {
+    ban: base.filter(r => r.status === 'ban').length,
+    limit: base.filter(r => r.status === 'limit').length,
+    monitor: base.filter(r => r.status === 'monitor').length,
+  }
+})
+
+// ── 표시 데이터 (지역 + 검색 필터, 최대 50행) ──
 const displayData = computed(() => {
-  if (selectedRegion.value === '전체') return allData.value.slice(0, 20)
-  return allData.value.filter(r => r.region === selectedRegion.value).slice(0, 20)
+  let data = allData.value
+  if (selectedRegion.value !== '전체') {
+    data = data.filter(r => r.region === selectedRegion.value)
+  }
+  if (searchQ.value.trim()) {
+    const q = searchQ.value.trim().toLowerCase()
+    data = data.filter(r => r.ingredient.toLowerCase().includes(q))
+  }
+  return data.slice(0, 50)
 })
 
 onMounted(async () => {
+  loading.value = true
   await store.init()
   await loadData()
+  loading.value = false
 })
 
 async function loadData() {
-  // 충분히 많이 가져와서 클라이언트에서 지역별 필터링
-  const data = await store.searchRegulations({ limit: 200 })
+  // 많이 가져와서 클라이언트에서 지역·검색 필터링
+  const data = await store.searchRegulations({ limit: 300 })
   if (!data) return
 
   allData.value = data.items
     .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
-    .map((r, i) => ({
-      id: i,
-      region: mapRegulationSource(r.source),
-      ingredient: r.ingredient || r.inci_name,
-      status: getRegulationStatus(r),
-      limit: r.max_concentration || '-',
-    }))
+    .map((r, i) => {
+      const region = mapRegulationSource(r.source)
+      const restriction = r.restriction || ''
+      return {
+        id: i,
+        region,
+        ingredient: r.ingredient || r.inci_name,
+        restriction,
+        restrictionShort: restriction.length > 40 ? restriction.slice(0, 40) + '…' : restriction,
+        status: getRegulationStatus(r),
+        limit: r.max_concentration || '',
+        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString().slice(2, 7).replace('-', '/') : '—',
+      }
+    })
     .filter(r => r.region !== '기타')
+}
+
+function toggleExpand(id) {
+  expandedId.value = expandedId.value === id ? null : id
 }
 
 function getRegulationStatus(r) {
   const restriction = (r.restriction || '').toLowerCase()
   const maxConc = (r.max_concentration || '').toLowerCase()
-  if (restriction.includes('금지') || restriction.includes('ban')) return 'ban'
+  if (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit')) return 'ban'
   if (maxConc && maxConc !== '-') return 'limit'
   return 'monitor'
 }
 
 function getRegionClass(region) {
-  if (region === '한국') return 'region-kr'
-  if (region === '유럽') return 'region-eu'
-  if (region === '미국') return 'region-us'
-  if (region === '일본') return 'region-jp'
-  if (region === '중국') return 'region-cn'
-  if (region === '아세안') return 'region-asean'
-  if (region === '안전성') return 'region-safety'
-  return ''
+  const map = { '한국': 'region-kr', '유럽': 'region-eu', '미국': 'region-us', '일본': 'region-jp', '중국': 'region-cn', '아세안': 'region-asean', '안전성': 'region-safety' }
+  return map[region] || ''
 }
 
 function getStatusClass(status) {
-  if (status === 'limit') return 'chip-amber'
-  if (status === 'ban') return 'chip-red'
-  if (status === 'monitor') return 'chip-purple'
-  return ''
+  return { ban: 'chip-red', limit: 'chip-amber', monitor: 'chip-purple' }[status] || ''
 }
 
 function getStatusLabel(status) {
-  if (status === 'limit') return '제한'
-  if (status === 'ban') return '금지'
-  if (status === 'monitor') return '모니터링'
-  return status
+  return { ban: '금지', limit: '제한', monitor: '모니터링' }[status] || status
 }
 </script>
 
@@ -122,63 +202,139 @@ function getStatusLabel(status) {
 .regulation-widget {
   display: flex;
   flex-direction: column;
-  max-height: 100%;
+  height: 100%;
   overflow: hidden;
+  container-type: inline-size;
 }
 
-/* 지역 필터 탭 */
-.region-tabs {
+/* ── 헤더 ── */
+.reg-header {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 6px;
   flex-shrink: 0;
   flex-wrap: wrap;
 }
 
+.region-tabs {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
 .region-tab {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
-  font-size: 10px;
-  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-dim);
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
+}
+.region-tab:hover { border-color: var(--accent); color: var(--accent); }
+.region-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.tab-count {
+  font-size: 9px;
+  font-weight: 700;
+  opacity: 0.75;
 }
 
-.region-tab:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.region-tab.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-/* 규제 리스트 */
-.reg-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.reg-row {
+/* ── 검색 + 통계 ── */
+.reg-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 6px;
-  border-radius: 4px;
-  transition: background 0.1s;
+  flex-wrap: wrap;
 }
 
-.reg-row:hover {
+.search-input {
+  padding: 4px 10px;
+  font-size: 11px;
   background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  outline: none;
+  width: 150px;
+}
+.search-input:focus { border-color: var(--accent); }
+
+.stat-badges {
+  display: flex;
+  gap: 4px;
+}
+
+.stat-badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-ban    { background: rgba(196,78,78,0.12);   color: var(--red); }
+.badge-limit  { background: rgba(184,147,90,0.12);  color: var(--amber); }
+.badge-monitor{ background: rgba(124,92,191,0.12);  color: var(--purple); }
+
+/* ── 테이블 ── */
+.reg-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.reg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.reg-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.col-region   { width: 52px; }
+.col-name     { width: 22%; }
+.col-restrict { /* flex */ }
+.col-conc     { width: 88px; }
+.col-status   { width: 72px; }
+.col-date     { width: 54px; }
+
+.reg-row {
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.reg-row:hover { background: var(--bg); }
+.reg-row.row-expanded { background: var(--bg); }
+.reg-row.row-ban td { border-left: 2px solid var(--red); }
+.reg-row.row-ban td:first-child { border-left: none; }
+
+.reg-row td {
+  padding: 6px 8px;
+  vertical-align: middle;
 }
 
 /* 지역 칩 */
@@ -186,77 +342,54 @@ function getStatusLabel(status) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
+  min-width: 34px;
   height: 20px;
   padding: 0 4px;
   border-radius: 3px;
   font-size: 9px;
   font-weight: 700;
-  font-family: var(--font-mono);
-  flex-shrink: 0;
   letter-spacing: 0.3px;
+  white-space: nowrap;
 }
+.region-kr     { background: rgba(58,111,168,0.15);  color: var(--blue); }
+.region-eu     { background: rgba(124,92,191,0.15);  color: var(--purple); }
+.region-us     { background: rgba(58,144,104,0.15);  color: var(--green); }
+.region-jp     { background: rgba(196,78,78,0.12);   color: #c44e4e; }
+.region-cn     { background: rgba(196,130,50,0.15);  color: #c48232; }
+.region-asean  { background: rgba(58,144,104,0.15);  color: var(--green); }
+.region-safety { background: rgba(184,147,90,0.15);  color: var(--amber); }
 
-.region-kr {
-  background: rgba(58, 111, 168, 0.15);
-  color: var(--blue);
-}
-
-.region-eu {
-  background: rgba(124, 92, 191, 0.15);
-  color: var(--purple);
-}
-
-.region-us {
-  background: rgba(58, 144, 104, 0.15);
-  color: var(--green);
-}
-
-.region-jp {
-  background: rgba(196, 78, 78, 0.12);
-  color: #c44e4e;
-}
-
-.region-cn {
-  background: rgba(196, 130, 50, 0.15);
-  color: #c48232;
-}
-
-.region-asean {
-  background: rgba(58, 144, 104, 0.15);
-  color: var(--green);
-}
-
-.region-safety {
-  background: rgba(184, 147, 90, 0.15);
-  color: var(--amber);
-  width: 38px;
-}
-
-/* 성분 정보 */
-.reg-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.reg-name {
-  font-size: 11px;
+/* 성분명 */
+.td-name {
   font-weight: 600;
   color: var(--text);
+  max-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.reg-limit {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  color: var(--text-dim);
+/* 제한 내용 */
+.td-restrict {
+  color: var(--text-sub);
+  max-width: 0;
+  overflow: hidden;
+}
+.restrict-text {
+  display: block;
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+}
+.restrict-empty { color: var(--text-dim); }
+
+/* 농도 */
+.td-conc.mono {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 /* 상태 칩 */
@@ -264,33 +397,62 @@ function getStatusLabel(status) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 3px;
   font-size: 9px;
   font-weight: 700;
-  flex-shrink: 0;
   letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.chip-red    { background: rgba(196,78,78,0.15);   color: var(--red); }
+.chip-amber  { background: rgba(184,147,90,0.15);  color: var(--amber); }
+.chip-purple { background: rgba(124,92,191,0.15);  color: var(--purple); }
+
+/* 갱신일 */
+.td-date.mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
-.chip-amber {
-  background: rgba(184, 147, 90, 0.15);
-  color: var(--amber);
+/* 펼침 행 */
+.expand-row {
+  background: var(--bg);
+}
+.expand-cell {
+  padding: 6px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.expand-content {
+  font-size: 11px;
+  color: var(--text-sub);
+  line-height: 1.6;
+}
+.expand-label {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 8px;
+  vertical-align: middle;
 }
 
-.chip-red {
-  background: rgba(196, 78, 78, 0.15);
-  color: var(--red);
-}
-
-.chip-purple {
-  background: rgba(124, 92, 191, 0.15);
-  color: var(--purple);
-}
-
+/* 빈 상태 */
 .empty {
   text-align: center;
   color: var(--text-dim);
   font-size: 11px;
-  padding: 16px;
+  padding: 20px;
+}
+
+/* 좁은 위젯 대응 */
+@container (max-width: 600px) {
+  .col-restrict, .td-restrict { display: none; }
+  .col-date, .td-date { display: none; }
+  .search-input { width: 110px; }
+  .stat-badges { display: none; }
 }
 </style>
