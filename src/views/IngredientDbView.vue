@@ -186,7 +186,7 @@
                     class="regulation-item"
                   >
                     <div class="reg-item-header">
-                      <span class="reg-source-badge">{{ reg.source }}</span>
+                      <span class="reg-source-badge">{{ mapRegulationSource(reg.source) }}</span>
                       <span class="reg-inci mono-text">{{ reg.inci_name || reg.ingredient }}</span>
                     </div>
                     <div v-if="reg.restriction" class="reg-restriction">{{ reg.restriction }}</div>
@@ -243,6 +243,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useIngredientStore } from '../stores/ingredientStore.js'
+import { mapRegulationSource } from '../utils/regulationSource.js'
 
 const store = useIngredientStore()
 const { loading } = store

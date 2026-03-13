@@ -36,6 +36,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useIngredientStore } from '../../stores/ingredientStore.js'
+import { mapRegulationSource, isVisibleSource, HIDDEN_SOURCES } from '../../utils/regulationSource.js'
 
 const store = useIngredientStore()
 const selectedSource = ref('ALL')
@@ -43,14 +44,13 @@ const regulations = ref([])
 const totalCount = ref(0)
 const sources = ref([])
 
-// 숨길 소스
-const HIDDEN_SOURCES = ['coching_legacy', 'gem2_kb', 'gemini_kb', 'UNKNOWN', 'REG_MONITOR_ERROR']
 
 const regionTabs = computed(() => {
   const tabs = [{ value: 'ALL', label: '전체' }]
   for (const s of sources.value) {
-    if (HIDDEN_SOURCES.includes(s.source)) continue
-    const label = mapSource(s.source)
+    if (!isVisibleSource(s.source)) continue
+    const label = mapRegulationSource(s.source)
+    if (label === '기타') continue
     if (!tabs.find(t => t.label === label)) {
       tabs.push({ value: s.source, label, count: s.count })
     }
@@ -71,11 +71,11 @@ async function loadData() {
   const data = await store.searchRegulations({ source, limit: 50 })
   if (data) {
     regulations.value = data.items
-      .filter(r => (r.ingredient || r.inci_name) && !HIDDEN_SOURCES.includes(r.source))
+      .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
       .slice(0, 20)
       .map((r, i) => ({
         id: i,
-        region: mapSource(r.source),
+        region: mapRegulationSource(r.source),
         ingredient: r.ingredient || r.inci_name,
         status: getRegulationStatus(r),
         limit: r.max_concentration || '-',
@@ -85,20 +85,6 @@ async function loadData() {
   }
 }
 
-function mapSource(src) {
-  const map = {
-    MFDS_SEED: '한국', GEMINI_KR: '한국',
-    GEMINI_EU: '유럽', EU: '유럽',
-    GEMINI_US: '미국', FDA_SEED: '미국', REG_MONITOR_US: '미국',
-    GEMINI_JP: '일본', JP: '일본',
-    GEMINI_CN: '중국', CN: '중국',
-    GEMINI_ASEAN: '아세안',
-    GEMINI_SAFETY: '안전성',
-    INI_SAFETY: '안전성',
-    KR: '한국', US: '미국',
-  }
-  return map[src] || src
-}
 
 watch(selectedSource, loadData)
 
