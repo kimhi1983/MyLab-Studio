@@ -76,33 +76,20 @@ app.get('/api/ingredients', async (req, res) => {
 
     const whereClause = 'WHERE ' + where.join(' AND ')
 
-    // regulation_cache에서 KR/EU 규제 서브쿼리 (coching_legacy 제외)
+    // 1단계: 목록 조회 — 규제 존재 여부를 EXISTS 서브쿼리로 빠르게 체크
     const dataQuery = `
       SELECT im.id, im.inci_name, im.korean_name, im.cas_number, im.ec_number,
         im.ingredient_type, im.description, im.origin, im.source, im.updated_at,
-        kr.restriction AS kr_restriction, kr.max_concentration AS kr_max_conc,
-        eu.restriction AS eu_restriction, eu.max_concentration AS eu_max_conc,
         (CASE WHEN im.korean_name IS NOT NULL AND im.korean_name != '' THEN 1 ELSE 0 END
          + CASE WHEN im.cas_number IS NOT NULL AND im.cas_number != '' THEN 1 ELSE 0 END
          + CASE WHEN im.description IS NOT NULL AND im.description != '' THEN 1 ELSE 0 END
-         + CASE WHEN kr.inci_name IS NOT NULL THEN 2 ELSE 0 END
-         + CASE WHEN eu.inci_name IS NOT NULL THEN 2 ELSE 0 END
+         + CASE WHEN EXISTS (
+             SELECT 1 FROM regulation_cache rc
+             WHERE lower(rc.inci_name) = lower(im.inci_name)
+               AND rc.source IN ('GEMINI_KR','MFDS_SEED','GEMINI_EU')
+           ) THEN 4 ELSE 0 END
         ) AS info_score
       FROM ingredient_master im
-      LEFT JOIN LATERAL (
-        SELECT rc.inci_name, rc.restriction, rc.max_concentration
-        FROM regulation_cache rc
-        WHERE lower(rc.inci_name) = lower(im.inci_name)
-          AND rc.source IN ('GEMINI_KR','MFDS_SEED')
-        LIMIT 1
-      ) kr ON true
-      LEFT JOIN LATERAL (
-        SELECT rc.inci_name, rc.restriction, rc.max_concentration
-        FROM regulation_cache rc
-        WHERE lower(rc.inci_name) = lower(im.inci_name)
-          AND rc.source = 'GEMINI_EU'
-        LIMIT 1
-      ) eu ON true
       ${whereClause}
       ORDER BY info_score DESC, im.inci_name
       LIMIT $${idx} OFFSET $${idx + 1}`
@@ -116,7 +103,28 @@ app.get('/api/ingredients', async (req, res) => {
       pool.query(dataQuery, params),
     ])
 
-    // 규제 상태 판단
+    // 2단계: 결과 INCI 이름으로 규제 배치 조회
+    const inciNames = dataRes.rows.map(r => r.inci_name).filter(Boolean)
+    let regMap = {}
+    if (inciNames.length > 0) {
+      const regPlaceholders = inciNames.map((_, i) => `$${i + 1}`).join(', ')
+      const { rows: regRows } = await pool.query(
+        `SELECT lower(inci_name) AS key, source, restriction, max_concentration
+         FROM regulation_cache
+         WHERE lower(inci_name) IN (${regPlaceholders})
+           AND source NOT IN ('coching_legacy','gemini_kb','gem2_kb')`,
+        inciNames.map(n => n.toLowerCase())
+      )
+      for (const r of regRows) {
+        if (!regMap[r.key]) regMap[r.key] = {}
+        if (r.source === 'GEMINI_KR' || r.source === 'MFDS_SEED') {
+          regMap[r.key].kr = r
+        } else if (r.source === 'GEMINI_EU') {
+          regMap[r.key].eu = r
+        }
+      }
+    }
+
     function deriveRegStatus(kr, eu) {
       const krR = (kr || '').toLowerCase()
       const euR = (eu || '').toLowerCase()
@@ -126,9 +134,11 @@ app.get('/api/ingredients', async (req, res) => {
       return null
     }
 
-    res.json({
-      total: parseInt(countRes.rows[0].count),
-      items: dataRes.rows.map(r => ({
+    // 3단계: 규제 포함 info_score 재계산 + 재정렬
+    const items = dataRes.rows.map(r => {
+      const reg = regMap[r.inci_name?.toLowerCase()] || {}
+      const regScore = (reg.kr ? 2 : 0) + (reg.eu ? 2 : 0)
+      return {
         id: r.id,
         inci_name: r.inci_name,
         korean_name: r.korean_name,
@@ -138,13 +148,18 @@ app.get('/api/ingredients', async (req, res) => {
         description: r.description,
         origin: r.origin,
         source: r.source,
-        regulation_status: deriveRegStatus(r.kr_restriction, r.eu_restriction),
-        kr_regulation: r.kr_restriction || null,
-        eu_regulation: r.eu_restriction || null,
-        max_concentration: r.kr_max_conc || r.eu_max_conc || null,
+        regulation_status: deriveRegStatus(reg.kr?.restriction, reg.eu?.restriction),
+        kr_regulation: reg.kr?.restriction || null,
+        eu_regulation: reg.eu?.restriction || null,
+        max_concentration: reg.kr?.max_concentration || reg.eu?.max_concentration || null,
         updated_at: r.updated_at,
-      })),
+        _score: (r.info_score || 0) + regScore,
+      }
     })
+    items.sort((a, b) => b._score - a._score || (a.inci_name || '').localeCompare(b.inci_name || ''))
+    items.forEach(i => delete i._score)
+
+    res.json({ total: parseInt(countRes.rows[0].count), items })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
