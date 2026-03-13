@@ -1086,7 +1086,275 @@ async function callGemini(prompt) {
   }
 }
 
-// ─── LLM 정밀 처방 생성 (Gemini) ───
+// ─── Layer 1: guide_cache에서 유사 처방 검색 (RAG) ───
+async function findSimilarFormulas(productType, purposes, limit = 3) {
+  try {
+    const pt = (productType || '').toLowerCase()
+    // 1차: product_type 정확 매칭
+    let { rows } = await pool.query(
+      `SELECT formula_name, product_type, skin_type, guide_data, total_wt_percent
+       FROM guide_cache WHERE lower(product_type) = $1 AND wt_valid = true
+       ORDER BY created_at DESC LIMIT $2`,
+      [pt, limit]
+    )
+    // 2차: product_type 부분 매칭 (결과 부족 시)
+    if (rows.length < limit) {
+      const { rows: fuzzy } = await pool.query(
+        `SELECT formula_name, product_type, skin_type, guide_data, total_wt_percent
+         FROM guide_cache WHERE lower(product_type) LIKE $1 AND wt_valid = true
+         ORDER BY created_at DESC LIMIT $2`,
+        [`%${pt}%`, limit - rows.length]
+      )
+      rows = [...rows, ...fuzzy]
+    }
+    // 3차: guide_cache_copy에서 보충 (신뢰도 높은 것)
+    if (rows.length < limit) {
+      const { rows: copyRows } = await pool.query(
+        `SELECT formula_name, guide_data, total_wt_percent, confidence
+         FROM guide_cache_copy WHERE lower(formula_name) LIKE $1 AND wt_valid = true
+         ORDER BY confidence DESC NULLS LAST LIMIT $2`,
+        [`%${pt}%`, limit - rows.length]
+      )
+      rows = [...rows, ...copyRows.map(r => ({ ...r, product_type: pt, skin_type: null }))]
+    }
+    return rows
+  } catch (err) {
+    console.error('[RAG] 유사 처방 검색 실패:', err.message)
+    return []
+  }
+}
+
+// ─── Layer 1: DB 정밀 원료 검색 (목적+타입 기반) ───
+async function findSmartIngredients(productType, purposes, targetMarket, limit = 60) {
+  const ingredients = []
+  const addedIncis = new Set()
+
+  // 1단계: Purpose Gate REQUIRED/RECOMMENDED 성분 (최우선)
+  if (purposes) {
+    for (const ing of [...purposes.required, ...purposes.recommended]) {
+      if (!addedIncis.has(ing.inci_name.toLowerCase())) {
+        ingredients.push({
+          inci_name: ing.inci_name,
+          korean_name: ing.korean_name,
+          ingredient_type: ing.ingredient_type || 'ACTIVE',
+          source: 'purpose-gate',
+          role: ing.role,
+          default_pct: ing.default_pct_int ? ing.default_pct_int / 100 : null,
+          fn: ing.fn,
+        })
+        addedIncis.add(ing.inci_name.toLowerCase())
+      }
+    }
+  }
+
+  // 2단계: 유사 처방에서 사용된 성분 추출
+  const similarFormulas = await findSimilarFormulas(productType, purposes)
+  for (const formula of similarFormulas) {
+    const phases = formula.guide_data?.phases || []
+    for (const phase of phases) {
+      for (const ing of (phase.ingredients || [])) {
+        const inci = (ing.inci_name || '').toLowerCase()
+        if (inci && !addedIncis.has(inci) && inci !== 'water (aqua)' && inci !== 'water') {
+          ingredients.push({
+            inci_name: ing.inci_name,
+            korean_name: ing.korean_name || '',
+            ingredient_type: ing.type || 'OTHER',
+            source: 'rag-reference',
+            role: null,
+            default_pct: ing.wt_percent || null,
+            fn: ing.function || '',
+          })
+          addedIncis.add(inci)
+        }
+      }
+    }
+  }
+
+  // 3단계: ingredient_master에서 타입별 보충 (부족한 역할 채우기)
+  const neededTypes = ['HUMECTANT', 'EMOLLIENT', 'EMULSIFIER', 'THICKENER', 'PRESERVATIVE', 'ACTIVE', 'ANTIOXIDANT', 'UV_FILTER']
+  const remaining = limit - ingredients.length
+  if (remaining > 0) {
+    const excludeList = [...addedIncis]
+    const { rows: imRows } = await pool.query(
+      `SELECT inci_name, korean_name, ingredient_type
+       FROM ingredient_master
+       WHERE ingredient_type = ANY($1)
+         AND ($2::text[] IS NULL OR lower(inci_name) != ALL($2))
+       ORDER BY RANDOM() LIMIT $3`,
+      [neededTypes, excludeList.length > 0 ? excludeList : null, remaining]
+    )
+    for (const r of imRows) {
+      if (!addedIncis.has(r.inci_name.toLowerCase())) {
+        ingredients.push({
+          inci_name: r.inci_name,
+          korean_name: r.korean_name || '',
+          ingredient_type: r.ingredient_type,
+          source: 'db-supplement',
+          role: null,
+          default_pct: null,
+          fn: '',
+        })
+        addedIncis.add(r.inci_name.toLowerCase())
+      }
+    }
+  }
+
+  return { ingredients, similarFormulas }
+}
+
+// ─── Layer 2: 스마트 프롬프트 조립 ───
+function buildSmartPrompt({ productType, requirements, targetMarket, customIngredients, physicalSpecs,
+                            smartIngredients, similarFormulas, purposes, regulations, compatRules }) {
+  // 목적별 제약 블록
+  let purposeBlock = ''
+  if (purposes && purposes.detected.length > 0) {
+    const reqList = purposes.required.map(r => `  - [필수] ${r.inci_name} (${r.korean_name}): ${r.fn}, 권장 ${(r.default_pct_int || 0) / 100}%`).join('\n')
+    const forbList = purposes.forbidden.map(f => `  - [금지] ${f.inci_name}: ${f.reason}`).join('\n')
+    purposeBlock = `\n\n처방 목적: ${purposes.detected.join(', ')}
+목적별 필수 성분 (반드시 포함):
+${reqList}
+${forbList ? `\n목적별 금지 성분 (절대 사용 금지):\n${forbList}` : ''}`
+  }
+
+  // 유사 처방 레퍼런스 (Few-shot)
+  let ragBlock = ''
+  if (similarFormulas.length > 0) {
+    const refs = similarFormulas.map((f, i) => {
+      const phases = f.guide_data?.phases || []
+      const ings = phases.flatMap(p => (p.ingredients || []).map(ing =>
+        `    ${ing.inci_name}: ${ing.wt_percent}% (${ing.function || ''})`
+      )).join('\n')
+      return `  [참고 처방 ${i + 1}] ${f.formula_name || f.product_type}\n${ings}`
+    }).join('\n\n')
+    ragBlock = `\n\n실제 처방 레퍼런스 (배합비와 구성을 참고하되 그대로 복사하지 말 것):
+${refs}`
+  }
+
+  // 원료 풀 (역할별 그룹핑)
+  const grouped = {}
+  for (const ing of smartIngredients) {
+    const src = ing.source === 'purpose-gate' ? '★ 목적필수' : ing.source === 'rag-reference' ? '◆ 레퍼런스' : '○ DB보충'
+    const key = ing.ingredient_type || 'OTHER'
+    if (!grouped[key]) grouped[key] = []
+    const regInfo = regulations.find(r => r.inci_name === ing.inci_name)
+    grouped[key].push(
+      `  ${src} ${ing.inci_name} (${ing.korean_name || '—'})` +
+      (ing.default_pct ? ` [참고 ${ing.default_pct}%]` : '') +
+      (regInfo ? ` {최대 ${regInfo.max_concentration}}` : '') +
+      (ing.fn ? ` — ${ing.fn}` : '')
+    )
+  }
+  const ingredientBlock = Object.entries(grouped)
+    .map(([type, items]) => `[${type}]\n${items.join('\n')}`)
+    .join('\n\n')
+
+  // 호환성 제약
+  let compatBlock = ''
+  if (compatRules.length > 0) {
+    const forbidden = compatRules.filter(r => r.severity === 'forbidden')
+    if (forbidden.length > 0) {
+      compatBlock = '\n\n금지 조합 (동시 배합 불가):\n' +
+        forbidden.map(r => `  - ${r.ingredient_a} + ${r.ingredient_b}: ${r.reason}`).join('\n')
+    }
+  }
+
+  const customList = customIngredients?.length
+    ? '\n\n사용자 지정 원료 (반드시 포함):\n' + customIngredients.map(c => `- ${c.name}: ${c.percentage}%`).join('\n')
+    : ''
+
+  const physSpecBlock = physicalSpecs?.length
+    ? '\n\n목표 물성:\n' + physicalSpecs.map(s => `- ${s}`).join('\n')
+    : ''
+
+  return `당신은 COCHING AI v2.3 화장품 처방 전문가입니다. 아래 DB 기반 원료 풀과 레퍼런스 처방을 참고하여 최적의 처방을 생성하세요.
+
+핵심 규칙 (SKILL20260309):
+1. 배합비 합계 = 정확히 100.00% (정수연산: wt%×100 → 합계 10000)
+2. 정제수(Water) = 밸런스 역산 (10000 - 비정제수 합계)
+3. Phase A(수상 70-75°C) / B(유상 70-75°C) / C(첨가 ≤45°C) / D(방부/향 ≤40°C)
+4. 규제 최대 농도 초과 금지
+5. 복합성분 = 투입원료명 + 구성 INCI 모두 표기
+6. 동일 INCI 중복 시 전성분 합산
+7. 향료(Fragrance) = 전개 안 함
+8. 각 원료에 int_value(wt%×100 정수) 포함
+9. 제조 공정 포함 (Phase별 온도, 시간, 순서)
+10. 목적별 필수 성분은 반드시 포함, 금지 성분은 절대 미사용
+
+제형: ${productType}
+요구사항: ${requirements || '없음'}
+타겟 시장: ${targetMarket}
+${purposeBlock}${ragBlock}${compatBlock}${customList}${physSpecBlock}
+
+사용 가능한 원료 풀 (★=목적필수, ◆=실제처방참조, ○=DB보충):
+${ingredientBlock}
+
+위 원료 풀에서 선택하여 완전한 처방을 생성하세요. ★표시 원료는 반드시 포함하세요.
+
+응답은 반드시 JSON:
+{
+  "ingredients": [
+    {"inci_name":"...","korean_name":"...","percentage":0.00,"int_value":0,"phase":"A","function":"...","type":"...","is_compound":false}
+  ],
+  "phases": [{"phase":"A","name":"수상","temp":"75°C","items":["Water","Glycerin"]}],
+  "process": [{"step":1,"phase":"A","desc":"...","temp":"75°C","time":"10분","note":"..."}],
+  "description": "...",
+  "cautions": ["..."],
+  "verification": {"step1_intSum":true,"step2_pctSum":true,"step3_aquaCross":true,"allPassed":true}
+}`
+}
+
+// ─── Layer 3: 생성 결과 guide_cache 자동 캐싱 ───
+async function cacheGeneratedFormula(productType, purposes, result) {
+  try {
+    const purposeLabel = purposes?.detected?.length ? purposes.detected.join('+') : '일반'
+    const comboKey = `${productType}_${purposeLabel}_AI`
+    const formulaName = `${productType} (${purposeLabel}) AI 생성`
+
+    // 중복 방지: 같은 combo_key가 이미 있으면 건너뛰기
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM guide_cache WHERE combo_key = $1 LIMIT 1',
+      [comboKey]
+    )
+    if (existing.length > 0) return
+
+    // ingredients → phases 형식으로 변환 (guide_cache 표준 구조)
+    const phaseMap = {}
+    for (const ing of (result.ingredients || [])) {
+      const p = ing.phase || 'C'
+      const phaseName = p === 'A' ? 'A (수상)' : p === 'B' ? 'B (유상)' : p === 'C' ? 'C (첨가)' : 'D (방부/향)'
+      if (!phaseMap[phaseName]) phaseMap[phaseName] = { phase: phaseName, ingredients: [] }
+      phaseMap[phaseName].ingredients.push({
+        inci_name: ing.inci_name,
+        korean_name: ing.korean_name || '',
+        wt_percent: ing.percentage,
+        function: ing.function || ing.type || '',
+      })
+    }
+    const guideData = {
+      product_type: productType,
+      formula_name: formulaName,
+      phases: Object.values(phaseMap),
+      process_steps: result.process || [],
+      total_wt_percent: result.totalPercentage || 100,
+      total_ingredients: (result.ingredients || []).length,
+      estimated_ph: null,
+      estimated_viscosity_cp: null,
+      notes: result.description || '',
+      quality_checks: [],
+    }
+
+    await pool.query(
+      `INSERT INTO guide_cache (combo_key, product_type, formula_name, guide_data, total_wt_percent, wt_valid, source, version)
+       VALUES ($1, $2, $3, $4, $5, true, $6, 1)`,
+      [comboKey, productType, formulaName, JSON.stringify(guideData), 100, result.source || 'hybrid-ai']
+    )
+    console.log(`[Cache] 처방 캐싱 완료: ${comboKey}`)
+  } catch (err) {
+    console.error('[Cache] 처방 캐싱 실패:', err.message)
+  }
+}
+
+// ─── 3-Layer Hybrid 처방 생성 (DB 정밀검색 + AI 조합 + 자동캐싱) ───
 app.post('/api/ai-formula', async (req, res) => {
   try {
     const { productType, requirements, targetMarket = 'KR', customIngredients = [], physicalSpecs = [] } = req.body
@@ -1095,92 +1363,71 @@ app.post('/api/ai-formula', async (req, res) => {
       return res.status(400).json({ success: false, error: 'productType은 필수입니다.' })
     }
 
+    // Purpose Gate: 카테고리 + 목적 감지
+    const { key: matchedType, tmpl, purposes, source: pgSource } = await matchTemplateFromDb(productType, requirements)
+
     if (!process.env.GEMINI_API_KEY) {
-      // 폴백: DB 기반 Phase 분류 처방
+      // 폴백: DB 기반 Purpose Gate 처방
       const formula = await buildDbFormula(productType, requirements, targetMarket)
       return res.json({ success: true, data: formula })
     }
 
-    // ingredient_master에서 원료 후보 조회
-    const { rows: imRows } = await pool.query(
-      "SELECT id, inci_name, korean_name, ingredient_type FROM ingredient_master ORDER BY RANDOM() LIMIT 30"
-    )
+    // ── Layer 1: DB 정밀 검색 ──
+    const { ingredients: smartIngredients, similarFormulas } = await findSmartIngredients(productType, purposes, targetMarket)
+
     // 규제 제약 조회
-    const inciNames = imRows.map(r => r.inci_name)
+    const allIncis = smartIngredients.map(r => r.inci_name)
     const { rows: regRows } = await pool.query(
-      'SELECT inci_name, max_concentration, restriction, source FROM regulation_cache WHERE inci_name = ANY($1) AND source ILIKE $2',
-      [inciNames, `%${targetMarket}%`]
+      `SELECT inci_name, max_concentration, restriction, source FROM regulation_cache
+       WHERE inci_name = ANY($1) AND source NOT IN ('coching_legacy','gem2_kb','gemini_kb','UNKNOWN')`,
+      [allIncis]
     )
 
-    const ingredientList = imRows.map(r => {
-      const reg = regRows.find(rg => rg.inci_name === r.inci_name)
-      return `- ${r.inci_name} (한국명: ${r.korean_name || '—'}, 유형: ${r.ingredient_type})${reg ? ` [최대 ${reg.max_concentration}, ${reg.source}]` : ''}`
-    }).join('\n')
+    // 호환성 규칙 조회
+    const { rows: compatRules } = await pool.query(
+      `SELECT ingredient_a, ingredient_b, severity, reason FROM compatibility_rules WHERE severity = 'forbidden'`
+    )
 
-    const customList = customIngredients.length
-      ? '\n\n반드시 포함할 원료:\n' + customIngredients.map(c => `- ${c.name}: ${c.percentage}%`).join('\n')
-      : ''
-
-    const physSpecBlock = physicalSpecs.length
-      ? '\n\n목표 물성 스펙 (처방이 이 물성을 달성하도록 원료를 선정하세요):\n' + physicalSpecs.map(s => `- ${s}`).join('\n')
-      : ''
-
-    const prompt = `당신은 COCHING AI v2.3 화장품 처방 전문가입니다. COMPOUND-EXPANSION SKILL + PRECISION-ARITHMETIC 규칙을 적용하여 처방을 생성하세요.
-
-핵심 규칙 (SKILL20260309):
-1. 배합비 합계는 정확히 100.00% (정수연산: 모든 wt%를 ×100 정수로 계산 후 합계 10000)
-2. 정제수(Water)는 밸런스 역산 (10000 - 비정제수 합계)
-3. Phase A(수상 70-75°C)/B(유상 70-75°C)/C(첨가 ≤45°C)/D(방부/향 ≤40°C) 구분
-4. 규제 최대 농도를 초과하지 않을 것
-5. 제조 공정(Manufacturing Process) 포함
-6. 목표 물성(pH, 점도 등)을 달성할 수 있는 원료 조합으로 처방할 것
-7. 복합성분(Compound/Blend)은 투입원료명 + 구성 INCI를 모두 표기
-8. 동일 INCI가 여러 원료에서 발생하면 전성분 표기에서 합산
-9. 향료(Fragrance)는 전개하지 않고 단일 표기
-10. 각 원료에 int_value(wt%×100 정수) 포함
-
-응답은 반드시 JSON 형식:
-{
-  "ingredients": [
-    {"inci_name": "...", "korean_name": "...", "percentage": 0.00, "int_value": 0, "phase": "A", "function": "...", "type": "...", "is_compound": false}
-  ],
-  "phases": [
-    {"phase": "A", "name": "수상", "temp": "75°C", "items": ["Water", "Glycerin"]}
-  ],
-  "process": [
-    {"step": 1, "phase": "A", "desc": "...", "temp": "75°C", "time": "10분", "note": "..."}
-  ],
-  "description": "...",
-  "cautions": ["..."],
-  "verification": {"step1_intSum": true, "step2_pctSum": true, "step3_aquaCross": true, "allPassed": true}
-}
-
-제형: ${productType}
-요구사항: ${requirements || '없음'}
-타겟 시장: ${targetMarket}
-${customList}${physSpecBlock}
-
-사용 가능한 DB 원료 목록:
-${ingredientList}
-
-위 원료에서 적합한 것을 선택하여 처방을 완성하세요.`
+    // ── Layer 2: 스마트 프롬프트 조립 + AI 호출 ──
+    const prompt = buildSmartPrompt({
+      productType, requirements, targetMarket, customIngredients, physicalSpecs,
+      smartIngredients, similarFormulas, purposes, regulations: regRows, compatRules,
+    })
 
     const parsed = await callGemini(prompt)
     const totalPct = parsed.ingredients?.reduce((sum, i) => sum + (i.percentage || 0), 0) ?? 0
 
-    return res.json({
-      success: true,
-      data: {
-        description: parsed.description || '',
-        ingredients: parsed.ingredients || [],
-        phases: parsed.phases || buildPhaseSummary(parsed.ingredients || []),
-        process: parsed.process || [],
-        cautions: parsed.cautions || [],
-        totalPercentage: Math.round(totalPct * 100) / 100,
-        generatedAt: new Date().toISOString(),
-        source: 'gemini-2.0-flash',
+    const responseData = {
+      description: parsed.description || '',
+      ingredients: parsed.ingredients || [],
+      phases: parsed.phases || buildPhaseSummary(parsed.ingredients || []),
+      process: parsed.process || [],
+      cautions: parsed.cautions || [],
+      verification: parsed.verification || null,
+      purposeGate: purposes ? {
+        detected: purposes.detected,
+        required: purposes.required.map(r => r.inci_name),
+        forbidden: purposes.forbidden.map(f => f.inci_name),
+      } : null,
+      ragInfo: {
+        similarFormulasUsed: similarFormulas.length,
+        smartIngredientsCount: smartIngredients.length,
+        sourceBreakdown: {
+          purposeGate: smartIngredients.filter(i => i.source === 'purpose-gate').length,
+          ragReference: smartIngredients.filter(i => i.source === 'rag-reference').length,
+          dbSupplement: smartIngredients.filter(i => i.source === 'db-supplement').length,
+        },
       },
-    })
+      totalPercentage: Math.round(totalPct * 100) / 100,
+      totalDbIngredients: (parsed.ingredients || []).length,
+      generatedAt: new Date().toISOString(),
+      source: 'hybrid-ai-gemini-2.0-flash',
+    }
+
+    // ── Layer 3: 결과 캐싱 (비동기, 응답 지연 없음) ──
+    cacheGeneratedFormula(productType, purposes, responseData).catch(() => {})
+
+    return res.json({ success: true, data: responseData })
   } catch (err) {
     res.status(500).json({ success: false, error: err.message })
   }
