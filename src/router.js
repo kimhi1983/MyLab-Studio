@@ -12,6 +12,7 @@ const routes = [
   { path: '/notes', name: 'notes', component: () => import('./views/NotesView.vue'), meta: { title: '연구 노트' } },
   { path: '/validation', name: 'validation', component: () => import('./views/ValidationView.vue'), meta: { title: '품질 검증' } },
   { path: '/hlb-calc', name: 'hlb-calc', component: () => import('./views/HlbCalcView.vue'), meta: { title: 'HLB 계산기' } },
+  { path: '/verify', name: 'verify', component: () => import('./views/VerifyView.vue'), meta: { title: '처방 검증' } },
 ]
 
 const router = createRouter({

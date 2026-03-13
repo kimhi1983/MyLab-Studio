@@ -12,7 +12,69 @@ import pool from './db.js'
 
 const app = express()
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '10mb' }))
+
+// ─── 검증 모드 DB 초기화 ───
+async function initVerificationDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS uploaded_formulations (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      product_name VARCHAR(200) NOT NULL,
+      version INTEGER DEFAULT 1,
+      file_name VARCHAR(300),
+      file_type VARCHAR(20),
+      raw_data JSONB,
+      normalized_data JSONB,
+      ingredient_count INTEGER,
+      total_pct DECIMAL(6,2),
+      category_code VARCHAR(20),
+      metadata JSONB,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      parent_id UUID REFERENCES uploaded_formulations(id)
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS verification_reports (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      formulation_id UUID NOT NULL REFERENCES uploaded_formulations(id) ON DELETE CASCADE,
+      overall_status VARCHAR(20) NOT NULL,
+      critical_count INTEGER DEFAULT 0,
+      warning_count INTEGER DEFAULT 0,
+      pass_count INTEGER DEFAULT 0,
+      report_data JSONB NOT NULL,
+      predicted_ph DECIMAL(3,1),
+      predicted_viscosity INTEGER,
+      predicted_hlb DECIMAL(4,1),
+      cost_estimate INTEGER,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS formulation_notes (
+      id SERIAL PRIMARY KEY,
+      formulation_id UUID NOT NULL REFERENCES uploaded_formulations(id) ON DELETE CASCADE,
+      note_text TEXT NOT NULL,
+      note_type VARCHAR(20) DEFAULT 'general',
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS verified_formulation_pool (
+      id SERIAL PRIMARY KEY,
+      formulation_id UUID NOT NULL REFERENCES uploaded_formulations(id) ON DELETE CASCADE,
+      category_code VARCHAR(20) NOT NULL,
+      quality_score DECIMAL(4,1),
+      used_for_training BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  // 인덱스 (이미 존재하면 무시)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_uf_created ON uploaded_formulations (created_at DESC)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_vr_formulation ON verification_reports (formulation_id)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_fn_formulation ON formulation_notes (formulation_id)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_vfp_category ON verified_formulation_pool (category_code, quality_score DESC)`)
+}
 
 // ─── Health ───
 app.get('/api/health', async (req, res) => {
@@ -2768,6 +2830,470 @@ app.post('/api/batch-scale', async (req, res) => {
   }
 })
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── 검증 모드 (Verification Mode) ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 검증 엔진: ① 규제 적합성 ──
+async function validateRegulation(ingredients) {
+  const checks = []
+  let critical = 0, warning = 0
+
+  for (const ing of ingredients) {
+    const name = ing.inci_name || ing.name || ''
+    const pct = parseFloat(ing.wt_pct) || 0
+
+    // 사용금지 원료
+    try {
+      const { rows: banned } = await pool.query(`
+        SELECT source, restriction, notes FROM regulation_cache
+        WHERE ingredient ILIKE $1
+        AND restriction IN ('BANNED','PROHIBITED','사용금지')
+        LIMIT 1
+      `, [`%${name}%`])
+      if (banned.length > 0) {
+        checks.push({ ingredient: name, severity: 'CRITICAL', category: '사용금지 원료',
+          message: `${name}은(는) ${banned[0].source}에서 사용이 금지된 원료입니다.`, action: '즉시 제거 필요' })
+        critical++
+        continue
+      }
+    } catch { /* regulation_cache 미존재 시 skip */ }
+
+    // 사용제한 원료 (농도 초과)
+    try {
+      const { rows: restricted } = await pool.query(`
+        SELECT source, max_concentration, restriction FROM regulation_cache
+        WHERE ingredient ILIKE $1 AND max_concentration IS NOT NULL LIMIT 1
+      `, [`%${name}%`])
+      if (restricted.length > 0) {
+        const maxC = parseFloat(restricted[0].max_concentration)
+        if (!isNaN(maxC) && pct > maxC) {
+          checks.push({ ingredient: name, severity: 'CRITICAL', category: '농도 초과',
+            message: `${name}: 현재 ${pct}% → 최대 허용 ${maxC}% (${restricted[0].source})`,
+            action: `${maxC}% 이하로 조정` })
+          critical++
+        } else if (!isNaN(maxC)) {
+          checks.push({ ingredient: name, severity: 'PASS', category: '제한 원료 적합',
+            message: `${name}: ${pct}% (한도 ${maxC}% 이내)` })
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  // 방부제 체크 (수계 처방)
+  const preservativeKeys = ['phenoxyethanol','ethylhexylglycerin','methylparaben','propylparaben',
+    'chlorphenesin','sodium benzoate','potassium sorbate','caprylyl glycol','1,2-hexanediol']
+  const hasWater = ingredients.some(i => {
+    const n = (i.inci_name || i.name || '').toLowerCase()
+    return n === 'water' || n === 'aqua' || n === '정제수'
+  })
+  const hasPreservative = ingredients.some(i => {
+    const n = (i.inci_name || i.name || '').toLowerCase()
+    return preservativeKeys.some(p => n.includes(p))
+  })
+  if (hasWater && !hasPreservative) {
+    checks.push({ ingredient: '방부제', severity: 'CRITICAL', category: '방부제 미포함',
+      message: '수계 처방에 방부제가 포함되어 있지 않습니다.',
+      action: 'Phenoxyethanol 등 방부제 추가 필요' })
+    critical++
+  }
+
+  const status = critical > 0 ? 'FAIL' : warning > 0 ? 'WARNING' : 'PASS'
+  return { title: '규제 적합성', status, checks, critical_count: critical, warning_count: warning }
+}
+
+// ── 검증 엔진: ② 안정성 예측 ──
+function validateStability(ingredients) {
+  const checks = []
+  let critical = 0, warning = 0
+  const names = ingredients.map(i => (i.inci_name || i.name || '').toLowerCase())
+
+  const INCOMPATIBLE = [
+    ['ascorbic acid', 'niacinamide', 'WARNING', '비타민C + 나이아신아마이드 → pH 차이로 효능 저하 가능'],
+    ['retinol', 'aha', 'WARNING', '레티놀 + AHA → 과도한 자극'],
+    ['retinol', 'bha', 'WARNING', '레티놀 + BHA → 과도한 자극'],
+    ['retinol', 'ascorbic acid', 'WARNING', '레티놀 + 비타민C → pH 최적 범위 상이'],
+    ['benzoyl peroxide', 'retinol', 'CRITICAL', '벤조일퍼옥사이드 + 레티놀 → 레티놀 비활성화'],
+  ]
+
+  for (const [a, b, sev, desc] of INCOMPATIBLE) {
+    if (names.some(n => n.includes(a)) && names.some(n => n.includes(b))) {
+      checks.push({ severity: sev, category: '성분 비호환', message: desc, action: '해당 성분 조합 재검토' })
+      if (sev === 'CRITICAL') critical++; else warning++
+    }
+  }
+
+  // 유화 안정성 간이 체크
+  const emulsifierKeys = ['ceteareth','polysorbate','sorbitan','peg-','glyceryl stearate']
+  const oilKeys = ['oil','butter','wax','dimethicone','silicone','triglyceride']
+  let emPct = 0, oilPct = 0
+  for (const ing of ingredients) {
+    const n = (ing.inci_name || ing.name || '').toLowerCase()
+    const p = parseFloat(ing.wt_pct) || 0
+    if (emulsifierKeys.some(k => n.includes(k))) emPct += p
+    if (oilKeys.some(k => n.includes(k))) oilPct += p
+  }
+  if (emPct < 2.0 && oilPct > 10.0) {
+    checks.push({ severity: 'WARNING', category: '유화 안정성',
+      message: `유화제 ${emPct.toFixed(1)}% vs 오일상 ${oilPct.toFixed(1)}% → 유화제 부족 가능`,
+      action: '유화제를 3~5%로 증량 권장' })
+    warning++
+  }
+
+  const status = critical > 0 ? 'FAIL' : warning > 0 ? 'WARNING' : 'PASS'
+  return { title: '안정성 예측', status, checks, critical_count: critical, warning_count: warning }
+}
+
+// ── 검증 엔진: ③ 배합비 검증 (정수 연산) ──
+function validateFormulation(ingredients) {
+  const checks = []
+  let critical = 0, warning = 0
+
+  const intValues = ingredients.map(i => Math.round((parseFloat(i.wt_pct) || 0) * 100))
+  const totalInt = intValues.reduce((s, v) => s + v, 0)
+  const totalPct = totalInt / 100
+
+  // 합계 100% 검증 (±0.05% 허용)
+  if (Math.abs(totalPct - 100.00) > 0.05) {
+    const dev = totalPct - 100.00
+    checks.push({ severity: 'CRITICAL', category: '배합비 합계 오류',
+      message: `합계 ${totalPct.toFixed(2)}% (편차: ${dev > 0 ? '+' : ''}${dev.toFixed(2)}%)`,
+      action: '밸런스(정제수) 조정 필요' })
+    critical++
+  } else {
+    checks.push({ severity: 'PASS', category: '배합비 합계', message: `합계 ${totalPct.toFixed(2)}% ✓` })
+  }
+
+  // 개별 성분 범위 체크
+  for (const ing of ingredients) {
+    const pct = parseFloat(ing.wt_pct) || 0
+    const name = ing.inci_name || ing.name || ''
+    if (pct < 0) {
+      checks.push({ severity: 'CRITICAL', category: '음수 배합량', message: `${name}: ${pct}%`, action: '양수로 수정' })
+      critical++
+    }
+    if (pct > 90 && !['water','aqua','정제수'].includes(name.toLowerCase())) {
+      checks.push({ severity: 'WARNING', category: '비정상 고함량',
+        message: `${name}: ${pct}% (정제수가 아닌데 90% 초과)`, action: '배합량 확인 필요' })
+      warning++
+    }
+  }
+
+  // 전성분 표시 순서 (1% 이상 성분 내림차순)
+  const above1 = ingredients.filter(i => (parseFloat(i.wt_pct) || 0) >= 1.0)
+  for (let i = 0; i < above1.length - 1; i++) {
+    const pA = parseFloat(above1[i].wt_pct), pB = parseFloat(above1[i+1].wt_pct)
+    if (pA < pB) {
+      checks.push({ severity: 'WARNING', category: '전성분 순서',
+        message: `${above1[i].name || above1[i].inci_name}(${pA}%) 뒤에 ${above1[i+1].name || above1[i+1].inci_name}(${pB}%) → 내림차순 위반`,
+        action: '1% 이상 성분은 배합량 내림차순 정렬' })
+      warning++
+    }
+  }
+
+  const status = critical > 0 ? 'FAIL' : warning > 0 ? 'WARNING' : 'PASS'
+  return { title: '배합비 검증', status, checks, critical_count: critical, warning_count: warning, totalPct }
+}
+
+// ── 검증 엔진: ④ 물성 예측 ──
+function validatePhysical(ingredients, metadata = {}) {
+  const checks = []
+  let warning = 0
+  const predicted = {}
+
+  // pH 간이 예측
+  const acidMap = { 'citric acid': 3.1, 'lactic acid': 3.9, 'glycolic acid': 3.8, 'salicylic acid': 3.0, 'ascorbic acid': 4.2 }
+  let lowestPka = null
+  for (const ing of ingredients) {
+    const n = (ing.inci_name || ing.name || '').toLowerCase()
+    for (const [acid, pka] of Object.entries(acidMap)) {
+      if (n.includes(acid) && (lowestPka === null || pka < lowestPka)) lowestPka = pka
+    }
+  }
+  if (lowestPka !== null) {
+    predicted.ph = { value: +(lowestPka + 0.5).toFixed(1), confidence: 'medium' }
+  } else {
+    predicted.ph = { value: 5.5, confidence: 'low' }
+  }
+
+  // pH 안전 범위
+  if (predicted.ph.value < 3.0 || predicted.ph.value > 11.5) {
+    checks.push({ severity: 'CRITICAL', category: 'pH 안전 범위 초과',
+      message: `예측 pH ${predicted.ph.value} → 안전 범위(3.0~11.5) 벗어남`, action: 'pH 조정 필수' })
+  }
+  if (metadata.target_ph) {
+    const dev = Math.abs(predicted.ph.value - metadata.target_ph)
+    if (dev > 1.0) {
+      checks.push({ severity: 'WARNING', category: 'pH 목표 편차',
+        message: `예측 pH ${predicted.ph.value} vs 목표 ${metadata.target_ph} (편차 ${dev.toFixed(1)})`,
+        action: 'pH 조정제 양 재계산' })
+      warning++
+    }
+  }
+
+  // HLB 계산
+  const hlbTable = { 'ceteareth-20': 15.7, 'polysorbate 80': 15.0, 'polysorbate 60': 14.9,
+    'sorbitan stearate': 4.7, 'glyceryl stearate': 3.8, 'peg-100 stearate': 18.8 }
+  let hlbSum = 0, hlbWtSum = 0
+  for (const ing of ingredients) {
+    const n = (ing.inci_name || ing.name || '').toLowerCase()
+    const p = parseFloat(ing.wt_pct) || 0
+    for (const [hn, hv] of Object.entries(hlbTable)) {
+      if (n.includes(hn)) { hlbSum += p * hv; hlbWtSum += p; break }
+    }
+  }
+  if (hlbWtSum > 0) predicted.hlb = { value: +(hlbSum / hlbWtSum).toFixed(1) }
+
+  // 점도 간이 예측
+  const thickeners = { 'carbomer': 15000, 'xanthan gum': 8000, 'hydroxyethylcellulose': 5000, 'acrylates': 10000 }
+  let estVisc = 0
+  for (const ing of ingredients) {
+    const n = (ing.inci_name || ing.name || '').toLowerCase()
+    const p = parseFloat(ing.wt_pct) || 0
+    for (const [tk, tv] of Object.entries(thickeners)) {
+      if (n.includes(tk)) { estVisc += tv * (p / 0.5); break }
+    }
+  }
+  if (estVisc > 0) predicted.viscosity = { value: Math.round(estVisc), unit: 'cP', confidence: 'medium' }
+
+  const status = checks.some(c => c.severity === 'CRITICAL') ? 'FAIL' : warning > 0 ? 'WARNING' : 'PASS'
+  return { title: '물성 예측', status, checks, predicted, warning_count: warning, critical_count: checks.filter(c => c.severity === 'CRITICAL').length }
+}
+
+// ── 검증 엔진: ⑤ 성분 충돌/시너지 ──
+function validateConflicts(ingredients) {
+  const checks = [], synergies = []
+  const names = ingredients.map(i => (i.inci_name || i.name || '').toLowerCase())
+
+  const SYNERGY = [
+    ['niacinamide', 'hyaluronic acid', '보습 시너지: 장벽 강화 + 수분 보유'],
+    ['vitamin c', 'vitamin e', '항산화 시너지: 상호 재생'],
+    ['ceramide', 'cholesterol', '장벽 복원 시너지'],
+  ]
+  for (const [a, b, desc] of SYNERGY) {
+    if (names.some(n => n.includes(a)) && names.some(n => n.includes(b))) {
+      synergies.push({ message: desc })
+    }
+  }
+
+  return { title: '성분 충돌/시너지', status: 'PASS', checks, synergies, critical_count: 0, warning_count: 0 }
+}
+
+// ── 검증 엔진: ⑥ 원가 추정 ──
+function estimateCost(ingredients) {
+  const costTable = { 'water': 10, 'glycerin': 3000, 'niacinamide': 25000, 'sodium hyaluronate': 500000,
+    'retinol': 800000, 'ceramide np': 1500000, 'dimethicone': 15000, 'phenoxyethanol': 20000,
+    'tocopheryl acetate': 35000, 'butylene glycol': 5000, 'carbomer': 30000, 'xanthan gum': 25000 }
+  let total = 0
+  const breakdown = []
+  for (const ing of ingredients) {
+    const n = (ing.inci_name || ing.name || '').toLowerCase()
+    const pct = parseFloat(ing.wt_pct) || 0
+    for (const [cn, cv] of Object.entries(costTable)) {
+      if (n.includes(cn)) {
+        const contrib = (pct / 100) * cv
+        total += contrib
+        if (contrib > 50) breakdown.push({ ingredient: ing.inci_name || ing.name, pct, cost_per_kg: cv, contribution: Math.round(contrib) })
+        break
+      }
+    }
+  }
+  const tier = total < 10000 ? '저가' : total < 30000 ? '중가' : total < 80000 ? '고가' : '프리미엄'
+  return { title: '원가 추정', status: 'INFO', total_cost_per_kg: Math.round(total), tier,
+    breakdown: breakdown.sort((a, b) => b.contribution - a.contribution), checks: [], critical_count: 0, warning_count: 0 }
+}
+
+// ── 통합 검증 오케스트레이터 ──
+async function runFullVerification(ingredients, metadata = {}) {
+  const [regulation, formulation, physical] = await Promise.all([
+    validateRegulation(ingredients),
+    Promise.resolve(validateFormulation(ingredients)),
+    Promise.resolve(validatePhysical(ingredients, metadata)),
+  ])
+  const stability = validateStability(ingredients)
+  const conflicts = validateConflicts(ingredients)
+  const cost = estimateCost(ingredients)
+
+  const allResults = [regulation, stability, formulation, physical, conflicts, cost]
+  const totalCritical = allResults.reduce((s, r) => s + (r.critical_count || 0), 0)
+  const totalWarning = allResults.reduce((s, r) => s + (r.warning_count || 0), 0)
+  const totalPass = allResults.filter(r => r.status === 'PASS').length
+
+  const overallStatus = totalCritical > 0 ? 'FAIL' : totalWarning > 0 ? 'WARNING' : 'PASS'
+
+  return {
+    summary: { overall_status: overallStatus, total_checks: allResults.length, critical_count: totalCritical, warning_count: totalWarning, pass_count: totalPass },
+    validations: { regulation, stability, formulation, physical, conflicts, cost },
+  }
+}
+
+// ── API: 처방 업로드 (직접 입력) ──
+app.post('/api/verify/upload', async (req, res) => {
+  try {
+    const { product_name, ingredients, metadata, category_code } = req.body
+    if (!product_name || !ingredients || !ingredients.length) {
+      return res.status(400).json({ error: '제품명과 성분 목록이 필요합니다.' })
+    }
+    const intVals = ingredients.map(i => Math.round((parseFloat(i.wt_pct) || 0) * 100))
+    const totalPct = intVals.reduce((s, v) => s + v, 0) / 100
+
+    const { rows } = await pool.query(`
+      INSERT INTO uploaded_formulations (product_name, normalized_data, ingredient_count, total_pct, category_code, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, created_at
+    `, [product_name, JSON.stringify({ ingredients }), ingredients.length, totalPct, category_code || null, JSON.stringify(metadata || {})])
+
+    res.json({ success: true, formulation_id: rows[0].id, created_at: rows[0].created_at, ingredient_count: ingredients.length, total_pct: totalPct })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 검증 실행 ──
+app.post('/api/verify/run/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { rows } = await pool.query('SELECT * FROM uploaded_formulations WHERE id = $1', [id])
+    if (!rows.length) return res.status(404).json({ error: '처방을 찾을 수 없습니다.' })
+
+    const formulation = rows[0]
+    const ingredients = formulation.normalized_data?.ingredients || []
+    const metadata = formulation.metadata || {}
+
+    const report = await runFullVerification(ingredients, metadata)
+
+    const predicted = report.validations.physical.predicted || {}
+    await pool.query(`
+      INSERT INTO verification_reports (formulation_id, overall_status, critical_count, warning_count, pass_count, report_data, predicted_ph, predicted_viscosity, predicted_hlb, cost_estimate)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [id, report.summary.overall_status, report.summary.critical_count, report.summary.warning_count, report.summary.pass_count,
+        JSON.stringify(report), predicted.ph?.value || null, predicted.viscosity?.value || null, predicted.hlb?.value || null,
+        report.validations.cost.total_cost_per_kg || null])
+
+    // 데이터 플라이휠: 고품질 처방 자동 등록
+    if (report.summary.overall_status === 'PASS' && formulation.category_code) {
+      await pool.query(`
+        INSERT INTO verified_formulation_pool (formulation_id, category_code, quality_score)
+        VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
+      `, [id, formulation.category_code, 100 - report.summary.warning_count * 5])
+    }
+
+    res.json({ success: true, formulation_id: id, product_name: formulation.product_name, report })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 업로드 + 즉시 검증 (원스텝) ──
+app.post('/api/verify/quick', async (req, res) => {
+  try {
+    const { product_name, ingredients, metadata, category_code } = req.body
+    if (!product_name || !ingredients || !ingredients.length) {
+      return res.status(400).json({ error: '제품명과 성분 목록이 필요합니다.' })
+    }
+    const intVals = ingredients.map(i => Math.round((parseFloat(i.wt_pct) || 0) * 100))
+    const totalPct = intVals.reduce((s, v) => s + v, 0) / 100
+
+    // 1. DB 저장
+    const { rows } = await pool.query(`
+      INSERT INTO uploaded_formulations (product_name, normalized_data, ingredient_count, total_pct, category_code, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, created_at
+    `, [product_name, JSON.stringify({ ingredients }), ingredients.length, totalPct, category_code || null, JSON.stringify(metadata || {})])
+    const fId = rows[0].id
+
+    // 2. 검증 실행
+    const report = await runFullVerification(ingredients, metadata || {})
+    const predicted = report.validations.physical.predicted || {}
+
+    // 3. 리포트 저장
+    await pool.query(`
+      INSERT INTO verification_reports (formulation_id, overall_status, critical_count, warning_count, pass_count, report_data, predicted_ph, predicted_viscosity, predicted_hlb, cost_estimate)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [fId, report.summary.overall_status, report.summary.critical_count, report.summary.warning_count, report.summary.pass_count,
+        JSON.stringify(report), predicted.ph?.value || null, predicted.viscosity?.value || null, predicted.hlb?.value || null,
+        report.validations.cost.total_cost_per_kg || null])
+
+    if (report.summary.overall_status === 'PASS' && category_code) {
+      await pool.query(`INSERT INTO verified_formulation_pool (formulation_id, category_code, quality_score) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [fId, category_code, 100 - report.summary.warning_count * 5])
+    }
+
+    res.json({ success: true, formulation_id: fId, product_name, total_pct: totalPct, report })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 검증 이력 목록 ──
+app.get('/api/verify/list', async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query
+    const { rows } = await pool.query(`
+      SELECT uf.id, uf.product_name, uf.ingredient_count, uf.total_pct, uf.category_code, uf.version, uf.created_at,
+             vr.overall_status, vr.critical_count, vr.warning_count, vr.pass_count, vr.predicted_ph, vr.cost_estimate
+      FROM uploaded_formulations uf
+      LEFT JOIN verification_reports vr ON vr.formulation_id = uf.id
+      ORDER BY uf.created_at DESC
+      LIMIT $1 OFFSET $2
+    `, [parseInt(limit), parseInt(offset)])
+    const { rows: countRows } = await pool.query('SELECT count(*) as cnt FROM uploaded_formulations')
+    res.json({ items: rows, total: parseInt(countRows[0].cnt) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 개별 리포트 조회 ──
+app.get('/api/verify/report/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT uf.*, vr.report_data, vr.overall_status, vr.created_at as report_date
+      FROM uploaded_formulations uf
+      LEFT JOIN verification_reports vr ON vr.formulation_id = uf.id
+      WHERE uf.id = $1
+    `, [req.params.id])
+    if (!rows.length) return res.status(404).json({ error: '처방을 찾을 수 없습니다.' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 메모 추가 ──
+app.post('/api/verify/note/:id', async (req, res) => {
+  try {
+    const { note_text, note_type = 'general' } = req.body
+    if (!note_text) return res.status(400).json({ error: '메모 내용이 필요합니다.' })
+    const { rows } = await pool.query(`
+      INSERT INTO formulation_notes (formulation_id, note_text, note_type) VALUES ($1, $2, $3) RETURNING *
+    `, [req.params.id, note_text, note_type])
+    res.json({ success: true, note: rows[0] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 메모 목록 ──
+app.get('/api/verify/notes/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM formulation_notes WHERE formulation_id = $1 ORDER BY created_at DESC', [req.params.id])
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 처방 삭제 ──
+app.delete('/api/verify/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM uploaded_formulations WHERE id = $1', [req.params.id])
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 서버 시작 ────────────────────────────────────────────────────────────
 const PORT = process.env.API_PORT || 3001
 
@@ -2783,6 +3309,12 @@ const PORT = process.env.API_PORT || 3001
     console.log('[Compatibility] DB 초기화 완료')
   } catch (err) {
     console.error('[Compatibility] DB 초기화 실패:', err.message)
+  }
+  try {
+    await initVerificationDB()
+    console.log('[Verification] DB 초기화 완료')
+  } catch (err) {
+    console.error('[Verification] DB 초기화 실패:', err.message)
   }
   app.listen(PORT, () => {
     console.log(`[MyLab API] Running on http://localhost:${PORT}`)

@@ -35,6 +35,7 @@ const navItems = [
   { sep: true },
   // 품질 관리
   { to: '/validation', label: '품질 검증', exact: true },
+  { to: '/verify', label: '처방 검증', exact: true },
   { to: '/stability', label: '안정성', exact: true },
   { sep: true },
   // 기록

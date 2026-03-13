@@ -45,6 +45,7 @@ const navItems = [
   { to: '/hlb-calc', icon: '⊘', label: 'HLB 계산기' },
   { sep: true },
   { to: '/validation', icon: '✓', label: '품질 검증' },
+  { to: '/verify', icon: '⬡', label: '처방 검증' },
   { to: '/stability', icon: '◉', label: '안정성' },
   { sep: true },
   { to: '/journal', icon: '▤', label: '일지' },
