@@ -6,7 +6,7 @@
         <span class="section-title">생성 결과</span>
       </div>
       <div class="header-actions">
-        <span class="gen-time">처리시간: {{ elapsed }}초</span>
+        <span class="gen-time">처리시간: {{ displayElapsed }}초</span>
         <button class="btn-ghost" @click="$emit('regenerate')">재생성</button>
       </div>
     </div>
@@ -121,10 +121,15 @@
 <script setup>
 import { computed } from 'vue'
 
-const props = defineProps({ result: Object })
+const props = defineProps({
+  result: Object,
+  elapsed: { type: [Number, String], default: null },
+})
 defineEmits(['save', 'regenerate'])
 
-const elapsed = computed(() => {
+const displayElapsed = computed(() => {
+  // prop으로 전달받은 값 우선, 없으면 result.generatedAt에서 계산
+  if (props.elapsed != null) return props.elapsed
   if (!props.result?.generatedAt) return '-'
   return ((Date.now() - new Date(props.result.generatedAt).getTime()) / 1000).toFixed(1)
 })

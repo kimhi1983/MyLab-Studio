@@ -155,12 +155,12 @@ function onSave() {
     product_type: typeLabel,
     formula_data: {
       ingredients: guideResult.value.ingredients.map(i => ({
-        name: i.name, inci: i.inci_name, percentage: i.percentage, function: i.function,
+        name: i.name, inci_name: i.inci_name, percentage: i.percentage, function: i.function,
       })),
       total_percentage: guideResult.value.totalPercentage,
       notes: guideResult.value.description,
     },
-    memo: `MyLab 자동 생성\n원료 ${guideResult.value.totalDbIngredients}종 · 규제확인 ${guideResult.value.regulationsChecked}건\n${guideResult.value.description}`,
+    memo: `MyLab 자동 생성\n원료 ${guideResult.value.totalDbIngredients ?? '-'}종 · 규제확인 ${guideResult.value.regulationsChecked ?? '-'}건\n${guideResult.value.description || ''}`,
     tags: ['MyLab생성', '자동처방'],
   })
   router.push('/formulas/' + created.id)

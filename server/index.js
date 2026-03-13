@@ -1591,7 +1591,7 @@ app.post('/api/check-regulation-limits', async (req, res) => {
     // regulation_cache 에서 INCI 매칭 (ILIKE 부분 포함)
     const placeholders = inciNames.map((_, idx) => `$${idx + 1}`).join(', ')
     const { rows: regs } = await pool.query(
-      `SELECT inci_name, max_concentration, unit, regulation_type, source, country
+      `SELECT inci_name, max_concentration, restriction, source
        FROM regulation_cache
        WHERE inci_name ILIKE ANY (ARRAY[${placeholders}])`,
       inciNames.map(n => `%${n}%`)
