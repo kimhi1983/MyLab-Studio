@@ -160,8 +160,8 @@ function onSave() {
       total_percentage: guideResult.value.totalPercentage,
       notes: guideResult.value.description,
     },
-    memo: `MyLab 자동 생성\n원료 ${guideResult.value.totalDbIngredients ?? '-'}종 · 규제확인 ${guideResult.value.regulationsChecked ?? '-'}건\n${guideResult.value.description || ''}`,
-    tags: ['MyLab생성', '자동처방'],
+    memo: `원료 ${guideResult.value.totalDbIngredients ?? '-'}종 · 규제확인 ${guideResult.value.regulationsChecked ?? '-'}건\n${guideResult.value.description || ''}`,
+    tags: ['스마트처방'],
   })
   router.push('/formulas/' + created.id)
 }

@@ -124,7 +124,7 @@
               @click="onAiFill"
             >
               <span v-if="isAiFilling" class="ai-spinner"></span>
-              {{ isAiFilling ? aiFillStep : '전성분 자동 채우기' }}
+              {{ isAiFilling ? aiFillStep : '스마트 처방 생성' }}
             </button>
             <div v-if="!form.product_type" class="ai-hint">제품 유형을 먼저 선택하세요</div>
           </div>
@@ -775,9 +775,9 @@ function getProcessByType(productType) {
   return processes['크림']
 }
 
-function buildAiMemo(source, data, existingMemo) {
+function buildAiMemo(data, existingMemo) {
   const lines = []
-  lines.push(`[${source} 자동 생성] ${data.description || ''}`)
+  lines.push(data.description || '')
   lines.push('')
 
   // 복합원료만 기록
@@ -1089,11 +1089,10 @@ async function onAiFill() {
         form.title = `${form.product_type} 처방`
       }
       // 태그 추가
-      if (!form.tags.includes('자동처방')) form.tags.push('자동처방')
+      if (!form.tags.includes('스마트처방')) form.tags.push('스마트처방')
       // 메모에 복합원료 + 제조방법 생성
-      const source = 'AI'
       res.data._productType = form.product_type
-      form.memo = buildAiMemo(source, res.data, form.memo)
+      form.memo = buildAiMemo(res.data, form.memo)
 
     } else {
       alert('처방 생성에 실패했습니다. 다시 시도해주세요.')
