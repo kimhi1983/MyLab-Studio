@@ -4,10 +4,10 @@
     <div class="region-tabs">
       <button
         v-for="tab in regionTabs"
-        :key="tab.value"
+        :key="tab.label"
         class="region-tab"
-        :class="{ active: selectedSource === tab.value }"
-        @click="selectedSource = tab.value"
+        :class="{ active: selectedRegion === tab.label }"
+        @click="selectedRegion = tab.label"
       >
         {{ tab.label }}
       </button>
@@ -15,7 +15,7 @@
 
     <!-- 규제 리스트 -->
     <div class="reg-list">
-      <div v-for="row in filteredData" :key="row.id" class="reg-row">
+      <div v-for="row in displayData" :key="row.id" class="reg-row">
         <span class="region-chip" :class="getRegionClass(row.region)">{{ row.region }}</span>
         <div class="reg-info">
           <span class="reg-name">{{ row.ingredient }}</span>
@@ -27,66 +27,62 @@
       </div>
     </div>
 
-    <div v-if="!filteredData.length" class="empty">
+    <div v-if="!displayData.length" class="empty">
       해당 지역의 규제 데이터가 없습니다
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useIngredientStore } from '../../stores/ingredientStore.js'
-import { mapRegulationSource, isVisibleSource, HIDDEN_SOURCES } from '../../utils/regulationSource.js'
+import { mapRegulationSource, isVisibleSource } from '../../utils/regulationSource.js'
 
 const store = useIngredientStore()
-const selectedSource = ref('ALL')
-const regulations = ref([])
-const totalCount = ref(0)
-const sources = ref([])
+const selectedRegion = ref('전체')
+const allData = ref([])   // 변환된 전체 데이터 (클라이언트 필터링용)
 
-
+// 탭 목록: 레이블 기준으로 중복 제거
 const regionTabs = computed(() => {
-  const tabs = [{ value: 'ALL', label: '전체' }]
-  for (const s of sources.value) {
-    if (!isVisibleSource(s.source)) continue
-    const label = mapRegulationSource(s.source)
-    if (label === '기타') continue
-    if (!tabs.find(t => t.label === label)) {
-      tabs.push({ value: s.source, label, count: s.count })
-    }
+  const labels = new Set()
+  for (const row of allData.value) {
+    if (row.region && row.region !== '기타') labels.add(row.region)
   }
-  return tabs
+  return [
+    { label: '전체' },
+    ...['한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
+      .filter(l => labels.has(l))
+      .map(l => ({ label: l })),
+  ]
 })
 
-const filteredData = computed(() => regulations.value)
+// 선택된 지역에 해당하는 20개 표시
+const displayData = computed(() => {
+  if (selectedRegion.value === '전체') return allData.value.slice(0, 20)
+  return allData.value.filter(r => r.region === selectedRegion.value).slice(0, 20)
+})
 
 onMounted(async () => {
   await store.init()
-  sources.value = store.regulationSources.value || []
   await loadData()
 })
 
 async function loadData() {
-  const source = selectedSource.value === 'ALL' ? undefined : selectedSource.value
-  const data = await store.searchRegulations({ source, limit: 50 })
-  if (data) {
-    regulations.value = data.items
-      .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
-      .slice(0, 20)
-      .map((r, i) => ({
-        id: i,
-        region: mapRegulationSource(r.source),
-        ingredient: r.ingredient || r.inci_name,
-        status: getRegulationStatus(r),
-        limit: r.max_concentration || '-',
-        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString().slice(0, 7) : '-',
-      }))
-    totalCount.value = data.total
-  }
+  // 충분히 많이 가져와서 클라이언트에서 지역별 필터링
+  const data = await store.searchRegulations({ limit: 200 })
+  if (!data) return
+
+  allData.value = data.items
+    .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
+    .map((r, i) => ({
+      id: i,
+      region: mapRegulationSource(r.source),
+      ingredient: r.ingredient || r.inci_name,
+      status: getRegulationStatus(r),
+      limit: r.max_concentration || '-',
+    }))
+    .filter(r => r.region !== '기타')
 }
-
-
-watch(selectedSource, loadData)
 
 function getRegulationStatus(r) {
   const restriction = (r.restriction || '').toLowerCase()
