@@ -53,7 +53,7 @@
           </button>
 
           <StatusChip v-if="!isNew" :status="formula.status" />
-          <button v-if="!isNew" class="btn-export" @click="onExportCsv" title="CSV 파일로 다운로드">CSV 내보내기</button>
+          <button v-if="!isNew" class="btn-export" @click="onExportExcel" title="Excel 파일로 다운로드">Excel 내보내기</button>
           <button v-if="!isNew" class="btn-export" @click="onExportPdf" title="인쇄용 PDF 미리보기">PDF 인쇄</button>
           <button v-if="!isNew" class="btn-danger" @click="onDelete">삭제</button>
         </div>
@@ -471,7 +471,7 @@ const route = useRoute()
 const router = useRouter()
 const { getById, addFormula, updateFormula, deleteFormula, saveVersion, restoreVersion } = useFormulaStore()
 const { projects } = useProjectStore()
-const { exportFormulaCsv, exportFormulaPdf } = useExport()
+const { exportFormulaExcel, exportFormulaPdf } = useExport()
 const api = useAPI()
 
 const allProductOptions = computed(() =>
@@ -690,9 +690,9 @@ function formatDate(iso) {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function onExportCsv() {
+function onExportExcel() {
   if (!formula.value?.id) return
-  exportFormulaCsv(formula.value)
+  exportFormulaExcel(formula.value)
 }
 
 function onExportPdf() {
@@ -1091,7 +1091,7 @@ async function onAiFill() {
       // 태그 추가
       if (!form.tags.includes('자동처방')) form.tags.push('자동처방')
       // 메모에 복합원료 + 제조방법 생성
-      const source = res.data.source?.includes('gemini') ? 'Gemini' : res.data.source?.includes('openai') ? 'LLM' : 'DB'
+      const source = 'AI'
       res.data._productType = form.product_type
       form.memo = buildAiMemo(source, res.data, form.memo)
 

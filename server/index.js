@@ -1743,7 +1743,7 @@ app.post('/api/ai-formula', async (req, res) => {
       totalPercentage: 100.00,
       totalDbIngredients: (parsed.ingredients || []).length,
       generatedAt: new Date().toISOString(),
-      source: 'hybrid-ai-gemini-2.5-flash-skill-v2.3',
+      source: 'hybrid-ai-skill-v2.3',
     }
 
     // ── Layer 3: 결과 캐싱 (비동기, 응답 지연 없음) ──
