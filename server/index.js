@@ -20,7 +20,7 @@ app.get('/api/health', async (req, res) => {
 // ─── 통계 (KPI 위젯용) ───
 app.get('/api/stats', async (req, res) => {
   try {
-    const [kbAll, kbIngredients, regulations, ingredients, products, companies, compounds] = await Promise.all([
+    const [kbAll, kbIngredients, regulations, ingredients, products, companies, compounds, guideFormulas, copyFormulas] = await Promise.all([
       pool.query('SELECT count(*) as cnt FROM coching_knowledge_base'),
       pool.query("SELECT count(*) as cnt FROM coching_knowledge_base WHERE category = 'INGREDIENT_REGULATION'"),
       pool.query('SELECT count(*) as cnt FROM regulation_cache'),
@@ -28,6 +28,8 @@ app.get('/api/stats', async (req, res) => {
       pool.query('SELECT count(*) as cnt FROM product_master'),
       pool.query('SELECT count(*) as cnt FROM cosmetics_company').catch(() => ({ rows: [{ cnt: 0 }] })),
       pool.query('SELECT count(*) as cnt FROM compound_master').catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query('SELECT count(*) as cnt FROM guide_cache').catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query('SELECT count(*) as cnt FROM guide_cache_copy').catch(() => ({ rows: [{ cnt: 0 }] })),
     ])
     const [sourceBreakdown, typeBreakdown, collectionStatus] = await Promise.all([
       pool.query('SELECT source, count(*) as cnt FROM regulation_cache GROUP BY source ORDER BY cnt DESC'),
@@ -41,6 +43,8 @@ app.get('/api/stats', async (req, res) => {
       totalProducts: parseInt(products.rows[0].cnt),
       totalCompanies: parseInt(companies.rows[0].cnt),
       totalCompounds: parseInt(compounds.rows[0].cnt),
+      totalGuideFormulas: parseInt(guideFormulas.rows[0].cnt),
+      totalCopyFormulas: parseInt(copyFormulas.rows[0].cnt),
       kbIngredients: parseInt(kbIngredients.rows[0].cnt),
       regulationsBySource: sourceBreakdown.rows.map(r => ({ source: r.source, count: parseInt(r.cnt) })),
       ingredientsByType: typeBreakdown.rows.map(r => ({ type: r.ingredient_type, count: parseInt(r.cnt) })),
@@ -1100,6 +1104,118 @@ function reverseCalcPercentages(inciList, regMaxMap) {
 
   return percentages
 }
+
+// ─── 카피 처방 목록 (guide_cache_copy DB 조회) ───
+app.get('/api/copy-formulas', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1)
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20))
+    const offset = (page - 1) * limit
+    const q = req.query.q || ''
+    const confidence = req.query.confidence || ''
+
+    let where = 'WHERE 1=1'
+    const params = []
+    let idx = 1
+
+    if (q) {
+      where += ` AND (original_product_name ILIKE $${idx} OR formula_name ILIKE $${idx})`
+      params.push(`%${q}%`)
+      idx++
+    }
+    if (confidence) {
+      where += ` AND confidence = $${idx}`
+      params.push(confidence)
+      idx++
+    }
+
+    const countQuery = `SELECT count(*) as cnt FROM guide_cache_copy ${where}`
+    const dataQuery = `SELECT id, source_product_id, source, original_product_name, formula_name, total_wt_percent, wt_valid, estimated_ph, confidence, version, created_at FROM guide_cache_copy ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`
+
+    const [countRes, dataRes] = await Promise.all([
+      pool.query(countQuery, params),
+      pool.query(dataQuery, [...params, limit, offset]),
+    ])
+
+    res.json({
+      items: dataRes.rows,
+      total: parseInt(countRes.rows[0].cnt),
+      page, limit,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 카피 처방 상세 (guide_cache_copy 단건) ───
+app.get('/api/copy-formulas/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM guide_cache_copy WHERE id = $1', [req.params.id])
+    if (!rows.length) return res.status(404).json({ error: '카피 처방을 찾을 수 없습니다.' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 가이드 처방 목록 (guide_cache DB 조회) ───
+app.get('/api/guide-formulas', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1)
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20))
+    const offset = (page - 1) * limit
+    const q = req.query.q || ''
+    const productType = req.query.product_type || ''
+    const skinType = req.query.skin_type || ''
+
+    let where = 'WHERE 1=1'
+    const params = []
+    let idx = 1
+
+    if (q) {
+      where += ` AND (formula_name ILIKE $${idx} OR combo_key ILIKE $${idx})`
+      params.push(`%${q}%`)
+      idx++
+    }
+    if (productType) {
+      where += ` AND product_type = $${idx}`
+      params.push(productType)
+      idx++
+    }
+    if (skinType) {
+      where += ` AND skin_type = $${idx}`
+      params.push(skinType)
+      idx++
+    }
+
+    const countQuery = `SELECT count(*) as cnt FROM guide_cache ${where}`
+    const dataQuery = `SELECT id, combo_key, product_type, skin_type, formula_name, total_wt_percent, wt_valid, estimated_ph, estimated_viscosity, source, version, created_at FROM guide_cache ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`
+
+    const [countRes, dataRes] = await Promise.all([
+      pool.query(countQuery, params),
+      pool.query(dataQuery, [...params, limit, offset]),
+    ])
+
+    res.json({
+      items: dataRes.rows,
+      total: parseInt(countRes.rows[0].cnt),
+      page, limit,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 가이드 처방 상세 (guide_cache 단건) ───
+app.get('/api/guide-formulas/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM guide_cache WHERE id = $1', [req.params.id])
+    if (!rows.length) return res.status(404).json({ error: '가이드 처방을 찾을 수 없습니다.' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // ─── 카피 처방 (역처방: DB 우선, productId 기반) ───
 app.post('/api/copy-formula', async (req, res) => {

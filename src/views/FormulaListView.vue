@@ -55,7 +55,7 @@
           </tr>
         </tbody>
       </table>
-      <EmptyState v-else icon="⚗" title="처방이 없습니다" subtitle="새 처방을 작성하거나 MyLab 가이드를 이용해보세요">
+      <EmptyState v-else icon="⚗" title="처방이 없습니다" subtitle="새 처방을 작성해보세요">
         <router-link to="/formulas/new" class="btn btn-primary" style="display:inline-block;margin-top:8px">새 처방 작성</router-link>
       </EmptyState>
     </div>

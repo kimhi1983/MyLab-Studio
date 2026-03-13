@@ -38,7 +38,6 @@ const navItems = [
   { to: '/formulas/new', icon: '+', label: '처방 생성' },
   { to: '/journal', icon: '◉', label: '처방 일지' },
   { to: '/projects', icon: '◎', label: '프로젝트' },
-  { to: '/ai-guide', icon: '✦', label: 'MyLab 가이드' },
 ]
 </script>
 

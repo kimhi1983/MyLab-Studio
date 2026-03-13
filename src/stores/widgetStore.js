@@ -9,7 +9,7 @@ export const GRID_ROW_HEIGHT = 40
 export const WIDGET_CATALOG = [
   { id: 'kpi', label: 'KPI 카드', icon: '⚗', description: '진행중 처방, 완료, 안정성, 규제 현황', minW: 4, minH: 3, defaultW: 8, defaultH: 3 },
   { id: 'recent', label: '최근 처방', icon: '◉', description: '최근 수정된 처방 목록', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
-  { id: 'quick', label: '빠른 작업', icon: '✦', description: 'MyLab 가이드, 새 처방 등 빠른 액션', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
+  { id: 'quick', label: '빠른 작업', icon: '✦', description: '새 처방, 처방 목록 등 빠른 액션', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
   { id: 'active', label: '진행중 처방', icon: '◎', description: '현재 진행 중인 처방 테이블', minW: 4, minH: 3, defaultW: 8, defaultH: 5 },
   { id: 'projects', label: '프로젝트 요약', icon: '◈', description: '프로젝트별 진행률 요약', minW: 3, minH: 3, defaultW: 6, defaultH: 5 },
   { id: 'chart', label: '상태 차트', icon: '◐', description: '처방 상태별 도넛 차트', minW: 3, minH: 3, defaultW: 4, defaultH: 3 },
