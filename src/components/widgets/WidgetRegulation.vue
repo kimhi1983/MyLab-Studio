@@ -97,23 +97,24 @@ const expandedId = ref(null)
 const loading = ref(false)
 const allData = ref([])
 
+// ── 지역 순서 고정 (항상 표시, 데이터 없어도) ──
+const REGION_ORDER = ['전체', '한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
+
 // ── 지역별 카운트 ──
 const regionCounts = computed(() => {
-  const counts = {}
+  const counts = { '전체': allData.value.length }
   for (const row of allData.value) {
     counts[row.region] = (counts[row.region] || 0) + 1
   }
   return counts
 })
 
-// ── 탭 목록 (실데이터 기반, 순서 고정) ──
-const REGION_ORDER = ['한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
+// ── 탭 목록: 항상 고정 순서로 전체 표시 ──
 const regionTabs = computed(() => {
-  const existing = REGION_ORDER.filter(r => regionCounts.value[r] > 0)
-  return [
-    { label: '전체', count: allData.value.length },
-    ...existing.map(r => ({ label: r, count: regionCounts.value[r] })),
-  ]
+  return REGION_ORDER.map(label => ({
+    label,
+    count: regionCounts.value[label] || 0,
+  }))
 })
 
 // ── 통계 뱃지 (선택된 지역 기준) ──
@@ -143,33 +144,39 @@ const displayData = computed(() => {
 
 onMounted(async () => {
   loading.value = true
-  await store.init()
+  try {
+    await store.init()
+  } catch { /* store init 실패해도 직접 조회 시도 */ }
   await loadData()
   loading.value = false
 })
 
 async function loadData() {
-  // 많이 가져와서 클라이언트에서 지역·검색 필터링
-  const data = await store.searchRegulations({ limit: 300 })
-  if (!data) return
+  try {
+    // 충분히 가져와서 클라이언트에서 지역·검색 필터링
+    const data = await store.searchRegulations({ limit: 300 })
+    if (!data?.items) return
 
-  allData.value = data.items
-    .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
-    .map((r, i) => {
-      const region = mapRegulationSource(r.source)
-      const restriction = r.restriction || ''
-      return {
-        id: i,
-        region,
-        ingredient: r.ingredient || r.inci_name,
-        restriction,
-        restrictionShort: restriction.length > 40 ? restriction.slice(0, 40) + '…' : restriction,
-        status: getRegulationStatus(r),
-        limit: r.max_concentration || '',
-        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString().slice(2, 7).replace('-', '/') : '—',
-      }
-    })
-    .filter(r => r.region !== '기타')
+    allData.value = data.items
+      .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
+      .map((r, i) => {
+        const region = mapRegulationSource(r.source)
+        const restriction = r.restriction || ''
+        return {
+          id: i,
+          region,
+          ingredient: r.ingredient || r.inci_name,
+          restriction,
+          restrictionShort: restriction.length > 40 ? restriction.slice(0, 40) + '…' : restriction,
+          status: getRegulationStatus(r),
+          limit: r.max_concentration || '',
+          updatedAt: r.updated_at ? new Date(r.updated_at).toISOString().slice(2, 7).replace('-', '/') : '—',
+        }
+      })
+      .filter(r => r.region !== '기타')
+  } catch (err) {
+    console.error('[WidgetRegulation] 데이터 로드 실패:', err.message)
+  }
 }
 
 function toggleExpand(id) {
