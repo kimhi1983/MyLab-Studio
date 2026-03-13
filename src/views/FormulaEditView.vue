@@ -87,6 +87,10 @@
         </div>
         <div class="form-body">
           <div class="form-group">
+            <label class="form-label">Lab No.</label>
+            <input v-model="form.lab_no" class="form-input form-input-mono" placeholder="예. ML-2026-001">
+          </div>
+          <div class="form-group">
             <label class="form-label">처방명 *</label>
             <input v-model="form.title" class="form-input" placeholder="처방명을 입력하세요">
           </div>
@@ -576,6 +580,7 @@ const currentVersion = computed(() => formula.value.version || 1)
 const versionHistory = computed(() => formula.value.version_history || [])
 
 const form = reactive({
+  lab_no: '',
   title: '',
   product_type: '',
   project_id: '',
@@ -608,6 +613,7 @@ onMounted(() => {
 
 function loadForm(f) {
   Object.assign(form, {
+    lab_no: f.lab_no || '',
     title: f.title,
     product_type: f.product_type,
     project_id: f.project_id,
@@ -1280,6 +1286,7 @@ async function onAiFill() {
   background: var(--surface);
 }
 .form-input:focus { border-color: var(--accent); outline: none; }
+.form-input-mono { font-family: var(--font-mono); letter-spacing: 0.5px; }
 
 .status-stepper {
   padding: 16px 20px;
