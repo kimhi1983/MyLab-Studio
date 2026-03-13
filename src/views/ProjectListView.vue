@@ -19,6 +19,12 @@
       </div>
     </div>
 
+    <!-- Header with Add Button -->
+    <div class="project-header">
+      <div class="project-count">{{ projectList.length }}개 프로젝트</div>
+      <button class="btn btn-primary btn-add" @click="showModal = true">+ 새 프로젝트</button>
+    </div>
+
     <!-- Project Cards -->
     <div class="project-grid" v-if="projectList.length">
       <div class="project-card" v-for="p in projectList" :key="p.id" @click="goToProject(p.id)">
@@ -87,6 +93,14 @@ function formatDate(iso) {
 </script>
 
 <style scoped>
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.project-count { font-size: 13px; color: var(--text-dim); font-weight: 500; }
+.btn-add { font-size: 13px; padding: 8px 18px; }
 .project-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

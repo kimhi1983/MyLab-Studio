@@ -1330,6 +1330,13 @@ ${refs}`
 9. 제조 공정 포함 (Phase별 온도, 시간, 순서)
 10. 목적별 필수 성분은 반드시 포함, 금지 성분은 절대 미사용
 
+방부 시스템 가이드 (2025-2026 최신 트렌드):
+- 무방부 컨셉 우선: 1,2-Hexanediol(1.5-3%) 중심 + 부스터 조합
+- 부스터: Caprylyl Glycol(0.2-0.5%), Ethylhexylglycerin(0.05-0.1%), Chlorphenesin(0.1-0.2%)
+- Phenoxyethanol은 보조적으로만 사용 (0.5% 이하), 가능하면 미사용
+- Paraben은 절대 사용하지 않음 (소비자 기피 원료)
+- 전체 방부 시스템 합계: 2.0-3.5% 범위
+
 제형: ${productType}
 요구사항: ${requirements || '없음'}
 타겟 시장: ${targetMarket}
@@ -1359,22 +1366,27 @@ function validateAndFixIngredients(ingredients, productType) {
   const additions = []
   const inciSet = new Set(fixed.map(i => (i.inci_name || '').toLowerCase()))
 
-  // 1. 방부 시스템 체크
+  // 1. 방부 시스템 체크 (최신 트렌드: 1,2-Hexanediol 중심 무방부 컨셉)
   const preservNames = ['phenoxyethanol', '1,2-hexanediol', 'ethylhexylglycerin', 'caprylyl glycol', 'chlorphenesin']
   const hasPreserv = fixed.some(i => preservNames.some(p => (i.inci_name || '').toLowerCase().includes(p)))
   if (!hasPreserv) {
-    // 방부제 자동 삽입 (Phenoxyethanol 0.8% + Ethylhexylglycerin 0.3%)
-    if (!inciSet.has('phenoxyethanol')) {
-      fixed.push({ inci_name: 'Phenoxyethanol', korean_name: '페녹시에탄올', percentage: 0.8, int_value: 80, phase: 'D', function: '방부제', type: 'PRESERVATIVE', is_compound: false })
-      inciSet.add('phenoxyethanol')
-      additions.push('Phenoxyethanol 0.8% (방부제 자동 추가)')
+    // 무방부 컨셉 자동 삽입: 1,2-Hexanediol 2% + Caprylyl Glycol 0.3% + Ethylhexylglycerin 0.1%
+    if (!inciSet.has('1,2-hexanediol')) {
+      fixed.push({ inci_name: '1,2-Hexanediol', korean_name: '1,2-헥산다이올', percentage: 2.0, int_value: 200, phase: 'D', function: '무방부 컨셉 핵심 — 항균+보습', type: 'PRESERVATIVE', is_compound: false })
+      inciSet.add('1,2-hexanediol')
+      additions.push('1,2-Hexanediol 2% (무방부 컨셉 핵심)')
+    }
+    if (!inciSet.has('caprylyl glycol')) {
+      fixed.push({ inci_name: 'Caprylyl Glycol', korean_name: '카프릴릴글라이콜', percentage: 0.3, int_value: 30, phase: 'D', function: '방부 부스터+보습', type: 'PRESERVATIVE', is_compound: false })
+      inciSet.add('caprylyl glycol')
+      additions.push('Caprylyl Glycol 0.3% (방부 부스터)')
     }
     if (!inciSet.has('ethylhexylglycerin')) {
-      fixed.push({ inci_name: 'Ethylhexylglycerin', korean_name: '에틸헥실글리세린', percentage: 0.3, int_value: 30, phase: 'D', function: '보존보조', type: 'PRESERVATIVE', is_compound: false })
+      fixed.push({ inci_name: 'Ethylhexylglycerin', korean_name: '에틸헥실글리세린', percentage: 0.1, int_value: 10, phase: 'D', function: '세포막 약화 부스터', type: 'PRESERVATIVE', is_compound: false })
       inciSet.add('ethylhexylglycerin')
-      additions.push('Ethylhexylglycerin 0.3% (보존보조 자동 추가)')
+      additions.push('Ethylhexylglycerin 0.1% (부스터)')
     }
-    console.log('[ValidateFix] 방부 시스템 누락 → 자동 보완:', additions.join(', '))
+    console.log('[ValidateFix] 방부 시스템 누락 → 무방부 컨셉 자동 보완:', additions.join(', '))
   }
 
   // 2. 유화제 체크 (크림/로션/선크림)
@@ -2310,10 +2322,12 @@ async function initPurposeGateDB() {
     ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Diethylamino Hydroxybenzoyl Hexyl Benzoate', '디에칠아미노하이드록시벤조일헥실벤조에이트', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVA1 필터 (DHHB/Uvinul A Plus)', 200, 500, NULL, 83),
     ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Octocrylene', '옥토크릴렌', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVB 필터 + 광안정화제 역할', 500, 1000, NULL, 75),
     ('자외선차단', ARRAY['자외선','차단','uv','spf','pa','sun protection','선케어'], 'Homosalate', '호모살레이트', 'RECOMMENDED', 'UV_FILTER_ORGANIC', 'B', '유기 UVB 필터 — 높은 흡광 효율', 500, 1000, NULL, 70),
-    -- 방부 (모든 목적에 공통 적용을 위한 범용 방부 시드)
-    ('방부공통', ARRAY['방부','preserv','보존'], 'Phenoxyethanol', '페녹시에탄올', 'REQUIRED', 'PRESERVATIVE', 'D', '광범위 방부제 — 그람양성/음성균', 80, 100, NULL, 100),
-    ('방부공통', ARRAY['방부','preserv','보존'], '1,2-Hexanediol', '1,2-헥산다이올', 'REQUIRED', 'PRESERVATIVE', 'D', '보존보조 + 보습', 80, 200, NULL, 90),
-    ('방부공통', ARRAY['방부','preserv','보존'], 'Ethylhexylglycerin', '에틸헥실글리세린', 'RECOMMENDED', 'PRESERVATIVE', 'D', '방부 보조 — 페녹시에탄올 효과 증강', 30, 50, NULL, 80)
+    -- 방부 (최신 트렌드: 무방부 컨셉 — 1,2-Hexanediol 중심 + 부스터 조합)
+    ('방부공통', ARRAY['방부','preserv','보존'], '1,2-Hexanediol', '1,2-헥산다이올', 'REQUIRED', 'PRESERVATIVE', 'D', '무방부 컨셉 핵심 — 강력 항균 + 보습 겸용, 1.5-3% 권장', 200, 300, NULL, 100),
+    ('방부공통', ARRAY['방부','preserv','보존'], 'Caprylyl Glycol', '카프릴릴글라이콜', 'REQUIRED', 'PRESERVATIVE', 'D', '방부 부스터 — 보습+방부 동시, 유화 제형에서 효과적, 0.2-0.5%', 30, 50, NULL, 95),
+    ('방부공통', ARRAY['방부','preserv','보존'], 'Ethylhexylglycerin', '에틸헥실글리세린', 'REQUIRED', 'PRESERVATIVE', 'D', '세포막 약화 부스터 — 다른 보존제 효능 증강, 0.05-0.1%', 10, 10, NULL, 90),
+    ('방부공통', ARRAY['방부','preserv','보존'], 'Chlorphenesin', '클로르페네신', 'RECOMMENDED', 'PRESERVATIVE', 'D', '진균 억제 부스터 — 헥산다이올 부족 부분 보완, 0.1-0.2%', 15, 20, NULL, 85),
+    ('방부공통', ARRAY['방부','preserv','보존'], 'Phenoxyethanol', '페녹시에탄올', 'RECOMMENDED', 'PRESERVATIVE', 'D', '전통 광범위 방부제 — 필요 시 보조, 0.5-1.0%', 50, 100, NULL, 70)
     ON CONFLICT (purpose_key, inci_name, role) DO NOTHING
   `)
 
