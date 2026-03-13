@@ -567,7 +567,7 @@ const FORMULA_TEMPLATES = {
 function matchTemplate(productType) {
   const pt = (productType || '').toLowerCase()
   // 우선 매칭 (세부 유형)
-  if (pt.includes('선크림') || pt.includes('자외선') || pt.includes('sun') || pt.includes('spf')) return { key: '선크림', tmpl: FORMULA_TEMPLATES['선크림'] }
+  if (pt.includes('선크림') || pt.includes('썬크림') || pt.includes('자외선') || pt.includes('sun') || pt.includes('spf')) return { key: '선크림', tmpl: FORMULA_TEMPLATES['선크림'] }
   if (pt.includes('클렌') || pt.includes('폼') || pt.includes('워시')) return { key: '클렌징', tmpl: FORMULA_TEMPLATES['클렌징'] }
   if (pt.includes('샴푸') || pt.includes('shampoo')) return { key: '샴푸', tmpl: FORMULA_TEMPLATES['샴푸'] }
   if (pt.includes('세럼') || pt.includes('에센스') || pt.includes('앰플')) return { key: '세럼', tmpl: FORMULA_TEMPLATES['세럼'] }
@@ -1716,16 +1716,15 @@ app.post('/api/check-regulation-limits', async (req, res) => {
       return res.status(400).json({ success: false, error: 'ingredients 배열이 필요합니다.' })
     }
 
-    // ingredients: [{ inci_name: string, percentage: number }, ...]
-    const inciNames = ingredients.map(i => i.inci_name)
-
-    // regulation_cache 에서 INCI 매칭 (ILIKE 부분 포함)
+    // 정확 매칭 (대소문자 무시), coching_legacy/gem2_kb 등 제외
+    const inciNames = ingredients.map(i => (i.inci_name || '').toLowerCase()).filter(Boolean)
     const placeholders = inciNames.map((_, idx) => `$${idx + 1}`).join(', ')
     const { rows: regs } = await pool.query(
       `SELECT inci_name, max_concentration, restriction, source
        FROM regulation_cache
-       WHERE inci_name ILIKE ANY (ARRAY[${placeholders}])`,
-      inciNames.map(n => `%${n}%`)
+       WHERE lower(inci_name) IN (${placeholders})
+         AND source NOT IN ('coching_legacy','gem2_kb','gemini_kb','UNKNOWN')`,
+      inciNames
     )
 
     const violations = []
@@ -1734,40 +1733,66 @@ app.post('/api/check-regulation-limits', async (req, res) => {
     for (const item of ingredients) {
       if (item.percentage == null) continue
       const pct = parseFloat(item.percentage)
-      if (isNaN(pct)) continue
+      if (isNaN(pct) || pct <= 0) continue
+      const key = (item.inci_name || '').toLowerCase()
 
-      // 해당 INCI에 매칭되는 규정 검색 (대소문자 무시 포함 매칭)
-      const matchingRegs = regs.filter(r =>
-        r.inci_name.toLowerCase().includes(item.inci_name.toLowerCase()) ||
-        item.inci_name.toLowerCase().includes(r.inci_name.toLowerCase())
-      )
+      // 해당 INCI의 모든 규제 중 가장 엄격한(최소) max_concentration 찾기
+      const matchingRegs = regs.filter(r => r.inci_name.toLowerCase() === key)
+      if (!matchingRegs.length) continue
 
+      // 소스별로 그룹화하여 가장 엄격한 규제만 사용
+      const bySource = {}
       for (const reg of matchingRegs) {
-        const maxAllowed = parseFloat(reg.max_concentration)
-        if (isNaN(maxAllowed)) continue
+        const concStr = (reg.max_concentration || '').replace(/%/g, '').trim()
+        if (!concStr) continue
+        // 범위 형식 ("1-10", "0.1~0.5") → 상한값 사용
+        let maxVal
+        const rangeMatch = concStr.match(/([\d.]+)\s*[-~]\s*([\d.]+)/)
+        if (rangeMatch) {
+          maxVal = parseFloat(rangeMatch[2])
+        } else {
+          maxVal = parseFloat(concStr)
+        }
+        if (isNaN(maxVal) || maxVal <= 0) continue
+        const src = reg.source || 'UNKNOWN'
+        if (!bySource[src] || maxVal < bySource[src].maxVal) {
+          bySource[src] = { maxVal, reg }
+        }
+      }
 
-        const entry = {
+      // 전체 소스 중 가장 엄격한 하나로 판정
+      let strictest = null
+      let strictSrc = ''
+      for (const [src, { maxVal, reg }] of Object.entries(bySource)) {
+        if (!strictest || maxVal < strictest) {
+          strictest = maxVal
+          strictSrc = src
+        }
+      }
+      if (strictest == null) continue
+
+      const sources = Object.keys(bySource)
+      const sourceLabel = sources.map(s => {
+        const map = { MFDS_SEED: 'KR', GEMINI_KR: 'KR', GEMINI_EU: 'EU', GEMINI_US: 'US', GEMINI_JP: 'JP', GEMINI_CN: 'CN' }
+        return map[s] || s
+      }).filter((v, i, a) => a.indexOf(v) === i).join('/')
+
+      if (pct > strictest) {
+        violations.push({
           inci_name: item.inci_name,
           percentage: pct,
-          max_allowed: maxAllowed,
-          unit: reg.unit ?? '%',
-          regulation_type: reg.regulation_type ?? null,
-          source: reg.source ?? null,
-          country: reg.country ?? null,
-        }
-
-        if (pct > maxAllowed) {
-          violations.push({
-            ...entry,
-            message: `${item.inci_name} 최대 허용 농도 ${maxAllowed}${reg.unit ?? '%'}를 초과합니다 (현재 ${pct}%)`,
-          })
-        } else if (pct > maxAllowed * 0.9) {
-          // 최대치의 90% 이상이면 경고
-          warnings.push({
-            ...entry,
-            message: `${item.inci_name} 최대 허용 농도(${maxAllowed}${reg.unit ?? '%'})에 근접합니다 (현재 ${pct}%)`,
-          })
-        }
+          max_allowed: strictest,
+          source: sourceLabel,
+          message: `${item.inci_name} 최대 허용 농도 ${strictest}%를 초과합니다 (현재 ${pct}%, ${sourceLabel} 기준)`,
+        })
+      } else if (pct > strictest * 0.9) {
+        warnings.push({
+          inci_name: item.inci_name,
+          percentage: pct,
+          max_allowed: strictest,
+          source: sourceLabel,
+          message: `${item.inci_name} 최대 허용 농도 ${strictest}%에 근접합니다 (현재 ${pct}%, ${sourceLabel} 기준)`,
+        })
       }
     }
 

@@ -134,50 +134,64 @@
       </tfoot>
     </table>
     <!-- 실시간 경고 패널 -->
-    <div v-if="editable && (alerts.length || recommendations.length || regViolations.length)" class="alert-panel">
+    <div v-if="editable && totalAlertCount > 0" class="alert-panel">
       <div class="alert-panel-header">
         <span class="section-label">SAFETY CHECK</span>
         <span class="section-title">실시간 검증</span>
         <span v-if="isChecking" class="checking-badge">검사 중...</span>
+        <span class="alert-summary">
+          <span v-if="regViolations.length" class="summary-chip chip-danger">초과 {{ regViolations.length }}</span>
+          <span v-if="regWarnings.length" class="summary-chip chip-warn">근접 {{ regWarnings.length }}</span>
+          <span v-if="forbiddenAlerts.length" class="summary-chip chip-danger">금지 {{ forbiddenAlerts.length }}</span>
+          <span v-if="cautionAlerts.length" class="summary-chip chip-warn">주의 {{ cautionAlerts.length }}</span>
+          <span v-if="recommendations.length" class="summary-chip chip-ok">추천 {{ recommendations.length }}</span>
+        </span>
       </div>
-      <!-- 규제 위반 -->
-      <div v-for="v in regViolations" :key="'reg-' + v.inci_name" class="alert-item alert-forbidden">
-        <span class="alert-icon">⛔</span>
-        <div class="alert-body">
-          <div class="alert-title">규제 한도 초과: {{ v.inci_name }}</div>
-          <div class="alert-desc">{{ v.message }}</div>
+      <!-- 규제 한도 섹션 -->
+      <div v-if="regViolations.length || regWarnings.length" class="alert-group">
+        <div class="alert-group-title">규제 한도 검사</div>
+        <div v-for="v in regViolations" :key="'reg-' + v.inci_name" class="alert-item alert-forbidden">
+          <span class="alert-icon">⛔</span>
+          <div class="alert-body">
+            <div class="alert-title">{{ v.inci_name }} <span class="alert-source">{{ v.source }}</span></div>
+            <div class="alert-desc">현재 {{ v.percentage }}% → 최대 {{ v.max_allowed }}%</div>
+          </div>
+        </div>
+        <div v-for="w in regWarnings" :key="'regw-' + w.inci_name" class="alert-item alert-caution">
+          <span class="alert-icon">⚠</span>
+          <div class="alert-body">
+            <div class="alert-title">{{ w.inci_name }} <span class="alert-source">{{ w.source }}</span></div>
+            <div class="alert-desc">현재 {{ w.percentage }}% → 최대 {{ w.max_allowed }}%</div>
+          </div>
         </div>
       </div>
-      <!-- 규제 경고 (90% 근접) -->
-      <div v-for="w in regWarnings" :key="'regw-' + w.inci_name" class="alert-item alert-caution">
-        <span class="alert-icon">⚠</span>
-        <div class="alert-body">
-          <div class="alert-title">규제 한도 근접: {{ w.inci_name }}</div>
-          <div class="alert-desc">{{ w.message }}</div>
+      <!-- 원료 호환성 섹션 -->
+      <div v-if="forbiddenAlerts.length || cautionAlerts.length" class="alert-group">
+        <div class="alert-group-title">원료 호환성</div>
+        <div v-for="(a, i) in forbiddenAlerts" :key="'f-' + i" class="alert-item alert-forbidden">
+          <span class="alert-icon">⛔</span>
+          <div class="alert-body">
+            <div class="alert-title">{{ a.ingredientA }} + {{ a.ingredientB }}</div>
+            <div class="alert-desc">{{ a.reason }}</div>
+          </div>
+        </div>
+        <div v-for="(a, i) in cautionAlerts" :key="'c-' + i" class="alert-item alert-caution">
+          <span class="alert-icon">⚠</span>
+          <div class="alert-body">
+            <div class="alert-title">{{ a.ingredientA }} + {{ a.ingredientB }}</div>
+            <div class="alert-desc">{{ a.reason }}</div>
+          </div>
         </div>
       </div>
-      <!-- 호환성 금지 -->
-      <div v-for="(a, i) in forbiddenAlerts" :key="'f-' + i" class="alert-item alert-forbidden">
-        <span class="alert-icon">⛔</span>
-        <div class="alert-body">
-          <div class="alert-title">{{ a.ingredientA }} + {{ a.ingredientB }}</div>
-          <div class="alert-desc">{{ a.reason }}</div>
-        </div>
-      </div>
-      <!-- 호환성 주의 -->
-      <div v-for="(a, i) in cautionAlerts" :key="'c-' + i" class="alert-item alert-caution">
-        <span class="alert-icon">⚠</span>
-        <div class="alert-body">
-          <div class="alert-title">{{ a.ingredientA }} + {{ a.ingredientB }}</div>
-          <div class="alert-desc">{{ a.reason }}</div>
-        </div>
-      </div>
-      <!-- 추천 조합 -->
-      <div v-for="(r, i) in recommendations" :key="'r-' + i" class="alert-item alert-recommended">
-        <span class="alert-icon">✓</span>
-        <div class="alert-body">
-          <div class="alert-title">{{ r.ingredientA }} + {{ r.ingredientB }}</div>
-          <div class="alert-desc">{{ r.reason }}</div>
+      <!-- 추천 조합 섹션 -->
+      <div v-if="recommendations.length" class="alert-group">
+        <div class="alert-group-title">추천 조합</div>
+        <div v-for="(r, i) in recommendations" :key="'r-' + i" class="alert-item alert-recommended">
+          <span class="alert-icon">✓</span>
+          <div class="alert-body">
+            <div class="alert-title">{{ r.ingredientA }} + {{ r.ingredientB }}</div>
+            <div class="alert-desc">{{ r.reason }}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -273,6 +287,10 @@ let checkTimer = null
 
 const forbiddenAlerts = computed(() => alerts.value.filter(a => a.severity === 'forbidden'))
 const cautionAlerts = computed(() => alerts.value.filter(a => a.severity === 'caution'))
+const totalAlertCount = computed(() =>
+  regViolations.value.length + regWarnings.value.length +
+  forbiddenAlerts.value.length + cautionAlerts.value.length + recommendations.value.length
+)
 
 watch(() => props.ingredients, (ings) => {
   if (!props.editable || ings.length < 2) {
@@ -618,5 +636,42 @@ function onPhaseChange() {
   color: var(--text-sub);
   margin-top: 2px;
   line-height: 1.4;
+}
+.alert-summary {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.summary-chip {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.chip-danger { background: rgba(196,78,78,0.12); color: var(--red, #c44e4e); }
+.chip-warn { background: rgba(176,120,32,0.12); color: var(--amber, #b07820); }
+.chip-ok { background: rgba(58,144,104,0.12); color: var(--green, #3a9068); }
+.alert-group {
+  margin-bottom: 8px;
+}
+.alert-group:last-child { margin-bottom: 0; }
+.alert-group-title {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.alert-source {
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  margin-left: 4px;
 }
 </style>
