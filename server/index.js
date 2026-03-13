@@ -1,4 +1,11 @@
-import 'dotenv/config'
+import dotenv from 'dotenv'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+dotenv.config({ path: join(__dirname, '.env') })
+
 import express from 'express'
 import cors from 'cors'
 import pool from './db.js'
@@ -1054,7 +1061,7 @@ async function callGemini(prompt) {
   if (!apiKey) return null
 
   const geminiRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1063,6 +1070,7 @@ async function callGemini(prompt) {
         generationConfig: {
           temperature: 0.3,
           responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     }
@@ -1344,9 +1352,9 @@ async function cacheGeneratedFormula(productType, purposes, result) {
     }
 
     await pool.query(
-      `INSERT INTO guide_cache (combo_key, product_type, formula_name, guide_data, total_wt_percent, wt_valid, source, version)
-       VALUES ($1, $2, $3, $4, $5, true, $6, 1)`,
-      [comboKey, productType, formulaName, JSON.stringify(guideData), 100, result.source || 'hybrid-ai']
+      `INSERT INTO guide_cache (combo_key, product_type, skin_type, formula_name, guide_data, total_wt_percent, wt_valid, source, version)
+       VALUES ($1, $2, $3, $4, $5, $6, true, $7, 1)`,
+      [comboKey, productType, purposeLabel, formulaName, JSON.stringify(guideData), 100, result.source || 'hybrid-ai']
     )
     console.log(`[Cache] 처방 캐싱 완료: ${comboKey}`)
   } catch (err) {
@@ -1421,7 +1429,7 @@ app.post('/api/ai-formula', async (req, res) => {
       totalPercentage: Math.round(totalPct * 100) / 100,
       totalDbIngredients: (parsed.ingredients || []).length,
       generatedAt: new Date().toISOString(),
-      source: 'hybrid-ai-gemini-2.0-flash',
+      source: 'hybrid-ai-gemini-2.5-flash',
     }
 
     // ── Layer 3: 결과 캐싱 (비동기, 응답 지연 없음) ──
@@ -1793,7 +1801,7 @@ app.post('/api/copy-formula', async (req, res) => {
         cautions: parsed.cautions || [],
         totalPercentage: Math.round(totalPct * 100) / 100,
         generatedAt: new Date().toISOString(),
-        source: 'gemini-2.0-flash',
+        source: 'gemini-2.5-flash',
       },
     })
   } catch (err) {
