@@ -199,6 +199,79 @@
               </div>
             </div>
           </div>
+
+          <!-- ⑦⑧ AI 심화 분석 버튼 -->
+          <div class="ai-panel-footer">
+            <button class="btn-ai" @click="suggestAlternatives" :disabled="loadingAlt">
+              {{ loadingAlt ? '분석 중...' : '⑦ 대체 성분 제안 (AI)' }}
+            </button>
+            <button class="btn-ai btn-ai-process" @click="runProcessReview" :disabled="loadingProcess">
+              {{ loadingProcess ? '분석 중...' : '⑧ 공정 리뷰 (AI)' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- ⑦ 대체 성분 제안 결과 패널 -->
+        <div v-if="altSuggestions" class="panel ai-result-panel">
+          <div class="panel-header">
+            <span class="panel-title">⑦ 대체 성분 제안</span>
+            <button class="btn-del" @click="altSuggestions = null">×</button>
+          </div>
+          <div class="panel-body">
+            <div v-if="altSuggestions.summary" class="ai-summary">{{ altSuggestions.summary }}</div>
+            <div v-for="(alt, ai) in altSuggestions.alternatives" :key="ai" class="alt-item">
+              <div class="alt-original">
+                <span class="alt-label">원래</span>
+                <strong>{{ alt.original_inci }}</strong>
+                <span class="alt-func">({{ alt.original_function }})</span>
+              </div>
+              <div v-for="(sug, si) in alt.suggestions" :key="si" class="alt-suggestion">
+                <div class="sug-name">→ {{ sug.inci }} <span class="sug-kr">{{ sug.korean_name }}</span></div>
+                <div class="sug-meta">
+                  <span class="sug-tag">{{ sug.usage_range }}</span>
+                  <span class="sug-reason">{{ sug.reason }}</span>
+                </div>
+                <div class="sug-benefit">{{ sug.benefit }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ⑧ 공정 리뷰 결과 패널 -->
+        <div v-if="processReview" class="panel ai-result-panel">
+          <div class="panel-header">
+            <span class="panel-title">⑧ 공정 리뷰</span>
+            <button class="btn-del" @click="processReview = null">×</button>
+          </div>
+          <div class="panel-body">
+            <div v-if="processReview.summary" class="ai-summary">{{ processReview.summary }}</div>
+            <!-- 공정 단계 -->
+            <div v-if="processReview.process_steps?.length" class="proc-section">
+              <div class="proc-title">공정 단계</div>
+              <div v-for="(step, si) in processReview.process_steps" :key="si" class="proc-step">
+                <div class="step-header">
+                  <span class="step-num">Step {{ step.step }}</span>
+                  <span class="step-phase">{{ step.phase }}</span>
+                  <span v-if="step.temperature" class="step-temp">{{ step.temperature }}</span>
+                </div>
+                <div class="step-desc">{{ step.description }}</div>
+                <div v-if="step.notes" class="step-notes">⚠ {{ step.notes }}</div>
+              </div>
+            </div>
+            <!-- 핵심 포인트 -->
+            <div v-if="processReview.critical_points?.length" class="proc-section">
+              <div class="proc-title">핵심 관리 포인트</div>
+              <div v-for="(cp, ci) in processReview.critical_points" :key="ci" class="crit-row">
+                <div class="crit-point">{{ cp.point }}</div>
+                <div class="crit-control">→ {{ cp.control }}</div>
+              </div>
+            </div>
+            <!-- 품질 확인 -->
+            <div v-if="processReview.quality_checks?.length" class="proc-section">
+              <div class="proc-title">품질 확인 항목</div>
+              <div v-for="(qc, qi) in processReview.quality_checks" :key="qi" class="qc-row">✓ {{ qc }}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -285,6 +358,10 @@ const report = ref(null)
 const expanded = reactive({})
 const history = ref({ items: [], total: 0 })
 const detailReport = ref(null)
+const altSuggestions = ref(null)
+const processReview = ref(null)
+const loadingAlt = ref(false)
+const loadingProcess = ref(false)
 
 function emptyRow() {
   return { inci_name: '', name: '', wt_pct: null, phase: '', role: '' }
@@ -424,6 +501,56 @@ async function pasteFromClipboard() {
       form.ingredients = newRows
     }
   } catch { alert('클립보드 접근 권한이 필요합니다.') }
+}
+
+async function suggestAlternatives() {
+  const valid = form.ingredients.filter(i => (i.inci_name || i.name) && i.wt_pct > 0)
+  if (!valid.length) return
+  loadingAlt.value = true
+  altSuggestions.value = null
+  try {
+    const resp = await fetch(`${API}/api/verify/suggest-alternatives`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ingredients: valid,
+        category: form.category_code || '',
+        concern: '',
+      }),
+    })
+    const data = await resp.json()
+    if (data.error) throw new Error(data.error)
+    altSuggestions.value = data
+  } catch (err) {
+    alert('대체 성분 제안 오류: ' + err.message)
+  } finally {
+    loadingAlt.value = false
+  }
+}
+
+async function runProcessReview() {
+  const valid = form.ingredients.filter(i => (i.inci_name || i.name) && i.wt_pct > 0)
+  if (!valid.length) return
+  loadingProcess.value = true
+  processReview.value = null
+  try {
+    const resp = await fetch(`${API}/api/verify/process-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ingredients: valid,
+        category: form.category_code || '',
+        process_notes: '',
+      }),
+    })
+    const data = await resp.json()
+    if (data.error) throw new Error(data.error)
+    processReview.value = data
+  } catch (err) {
+    alert('공정 리뷰 오류: ' + err.message)
+  } finally {
+    loadingProcess.value = false
+  }
 }
 
 function toggleExpand(key) { expanded[key] = !expanded[key] }
@@ -610,6 +737,74 @@ function formatDate(d) { if (!d) return '-'; const dt = new Date(d); return `${d
 .td-warning { color: #b87000; font-weight: 600; }
 .td-date { color: var(--text-dim); font-size: 11px; }
 .empty-state { text-align: center; padding: 40px; color: var(--text-dim); font-size: 13px; }
+
+/* AI 심화 분석 버튼 */
+.ai-panel-footer {
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.btn-ai {
+  padding: 7px 16px; font-size: 12px; font-weight: 600;
+  background: linear-gradient(135deg, var(--accent), #7c5cfc);
+  color: #fff; border: none; border-radius: 6px; cursor: pointer;
+}
+.btn-ai:hover { opacity: 0.9; }
+.btn-ai:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ai-process { background: linear-gradient(135deg, #0e9f6e, #059669); }
+
+/* AI 결과 패널 */
+.ai-result-panel { margin-top: 12px; }
+.ai-summary {
+  padding: 10px 12px; background: var(--bg); border-radius: 6px;
+  font-size: 12px; color: var(--text-sub); line-height: 1.6; margin-bottom: 12px;
+}
+
+/* 대체 성분 */
+.alt-item { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+.alt-original {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.alt-label {
+  font-size: 10px; font-weight: 600; color: var(--text-dim);
+  background: var(--bg); padding: 1px 6px; border-radius: 10px;
+}
+.alt-func { font-size: 11px; color: var(--text-dim); }
+.alt-suggestion {
+  padding: 8px 12px; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.alt-suggestion:last-child { border-bottom: none; }
+.sug-name { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+.sug-kr { font-weight: 400; color: var(--text-sub); font-size: 11px; }
+.sug-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+.sug-tag { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 10px; background: #eef; color: #66a; }
+.sug-reason { font-size: 11px; color: var(--text-sub); }
+.sug-benefit { font-size: 11px; color: #0a7; }
+
+/* 공정 리뷰 */
+.proc-section { margin-bottom: 14px; }
+.proc-title {
+  font-size: 11px; font-weight: 600; color: var(--text-sub);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;
+}
+.proc-step {
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px;
+  margin-bottom: 6px; background: var(--surface);
+}
+.step-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.step-num { font-size: 10px; font-weight: 700; color: var(--accent); }
+.step-phase {
+  font-size: 11px; font-weight: 600; background: var(--accent);
+  color: #fff; padding: 1px 7px; border-radius: 10px;
+}
+.step-temp { font-size: 11px; color: #b87000; font-weight: 600; }
+.step-desc { font-size: 12px; color: var(--text); line-height: 1.5; }
+.step-notes { font-size: 11px; color: #b87000; margin-top: 4px; }
+.crit-row { padding: 6px 8px; border-left: 3px solid #e04040; margin-bottom: 4px; background: #fff5f5; border-radius: 0 4px 4px 0; }
+.crit-point { font-size: 12px; font-weight: 600; color: var(--text); }
+.crit-control { font-size: 11px; color: var(--accent); margin-top: 2px; }
+.qc-row { font-size: 12px; color: var(--text); padding: 3px 0; }
 
 /* 상세 모달 */
 .detail-overlay {

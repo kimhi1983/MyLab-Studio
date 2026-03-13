@@ -69,11 +69,24 @@ async function initVerificationDB() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `)
+  // llm_cache: Qwen + Gemini 결과 공유 캐싱 (워크플로우 batch와 충돌 없음 — 마이랩 전용)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS llm_cache (
+      cache_key VARCHAR(64) PRIMARY KEY,
+      model VARCHAR(30) NOT NULL,
+      task_type VARCHAR(30) NOT NULL,
+      result JSONB NOT NULL,
+      hit_count INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT NOW(),
+      expires_at TIMESTAMP DEFAULT NOW() + INTERVAL '30 days'
+    )
+  `)
   // 인덱스 (이미 존재하면 무시)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_uf_created ON uploaded_formulations (created_at DESC)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_vr_formulation ON verification_reports (formulation_id)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_fn_formulation ON formulation_notes (formulation_id)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_vfp_category ON verified_formulation_pool (category_code, quality_score DESC)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_llm_cache_type ON llm_cache (task_type, created_at DESC)`)
 }
 
 // ─── Health ───
@@ -1159,11 +1172,100 @@ async function buildDbFormula(productType, requirements, targetMarket) {
   }
 }
 
-// ─── Gemini API 호출 헬퍼 ───
-async function callGemini(prompt) {
+// ═══════════════════════════════════════════════════════════════════════
+// ─── LLM 헬퍼 (Gemini 주 / Qwen 보조) — 워크플로우 batch와 READ/WRITE 분리 ─
+// 워크플로우: ingredient_master WRITE (배치 분류)
+// 마이랩 서버: ingredient_master READ + llm_cache READ/WRITE (캐싱)
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─── 캐시 키 생성 (SHA-256 간이 대체 — crypto 모듈 사용) ───
+import { createHash } from 'crypto'
+function makeCacheKey(model, taskType, input) {
+  return createHash('sha256').update(`${model}:${taskType}:${JSON.stringify(input)}`).digest('hex').slice(0, 32)
+}
+
+// ─── llm_cache 조회 ───
+async function getCached(cacheKey) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE llm_cache SET hit_count = hit_count + 1
+       WHERE cache_key = $1 AND expires_at > NOW()
+       RETURNING result`,
+      [cacheKey]
+    )
+    return rows[0]?.result ?? null
+  } catch { return null }
+}
+
+// ─── llm_cache 저장 ───
+async function setCached(cacheKey, model, taskType, result) {
+  try {
+    await pool.query(
+      `INSERT INTO llm_cache (cache_key, model, task_type, result)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (cache_key) DO UPDATE SET result = $4, hit_count = 0, expires_at = NOW() + INTERVAL '30 days'`,
+      [cacheKey, model, taskType, JSON.stringify(result)]
+    )
+  } catch { /* 캐시 저장 실패는 무시 */ }
+}
+
+// ─── Qwen (Ollama) 호출 헬퍼 — 단순 분류·변환 보조 작업용 ───
+async function callQwen(prompt, taskType = 'classify') {
+  const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434'
+  const model = process.env.OLLAMA_MODEL || 'qwen2.5:14b'
+  const cacheKey = makeCacheKey('qwen', taskType, prompt)
+
+  // 1. 캐시 확인
+  const cached = await getCached(cacheKey)
+  if (cached) return cached
+
+  // 2. Ollama 호출
+  try {
+    const resp = await fetch(`${ollamaUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model, prompt, stream: false,
+        options: { temperature: 0.1, num_predict: 1024, num_ctx: 4096 }
+      }),
+      signal: AbortSignal.timeout(30000)  // 30초 타임아웃
+    })
+    if (!resp.ok) return null
+    const data = await resp.json()
+    const text = (data.response || '').replace(/```json\n?|```/g, '').trim()
+    let result
+    try { result = JSON.parse(text) } catch { result = { text } }
+    await setCached(cacheKey, 'qwen', taskType, result)
+    return result
+  } catch (err) {
+    console.warn(`[Qwen] 호출 실패 (${taskType}):`, err.message)
+    return null  // Qwen 실패 시 null 반환 → Gemini로 폴백
+  }
+}
+
+// ─── Gemini API 호출 헬퍼 (캐시 지원) ───
+// taskType: 'formula'(처방생성), 'alternatives'(대체성분), 'process'(공정리뷰), etc.
+// useCache: 대화형/단건 생성은 false, 반복 가능한 분류는 true
+async function callGemini(prompt, taskType = 'formula', useCache = false) {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) return null
 
+  // 캐시 가능한 작업이면 캐시 먼저 확인
+  if (useCache) {
+    const cacheKey = makeCacheKey('gemini', taskType, prompt)
+    const cached = await getCached(cacheKey)
+    if (cached) return cached
+
+    const result = await _fetchGemini(prompt)
+    if (result) await setCached(cacheKey, 'gemini', taskType, result)
+    return result
+  }
+
+  return _fetchGemini(prompt)
+}
+
+async function _fetchGemini(prompt) {
+  const apiKey = process.env.GEMINI_API_KEY
   const geminiRes = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
@@ -3290,6 +3392,131 @@ app.delete('/api/verify/:id', async (req, res) => {
     await pool.query('DELETE FROM uploaded_formulations WHERE id = $1', [req.params.id])
     res.json({ success: true })
   } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API ⑦: 대체 성분 제안 (Qwen 전처리 → Gemini 생성) ──
+app.post('/api/verify/suggest-alternatives', async (req, res) => {
+  try {
+    const { ingredients = [], category = '', concern = '' } = req.body
+    if (!ingredients.length) return res.status(400).json({ error: '성분 목록이 없습니다.' })
+
+    // Qwen: 각 성분의 기능 분류 전처리 (DB에 없는 경우 보조)
+    const inciList = ingredients.map(i => i.inci_name || i.name).filter(Boolean)
+    let qwenContext = null
+    try {
+      const qwenPrompt = `다음 화장품 성분의 주요 기능을 간략히 분류해줘. JSON으로만 응답:
+${inciList.slice(0, 10).map(n => `- ${n}`).join('\n')}
+형식: [{"inci":"성분명","function":"기능"}]`
+      qwenContext = await callQwen(qwenPrompt, 'classify')
+    } catch { /* Gemini 단독으로 진행 */ }
+
+    // Gemini: 대체 성분 제안 (주 LLM)
+    const functionInfo = Array.isArray(qwenContext)
+      ? qwenContext.map(q => `${q.inci}: ${q.function}`).join(', ')
+      : '(기능 분류 없음)'
+
+    const prompt = `당신은 화장품 처방 전문가입니다.
+아래 처방의 각 성분에 대해 더 효과적이거나 안전한 대체 성분을 제안해주세요.
+
+제품 카테고리: ${category || '미상'}
+우려 사항: ${concern || '없음'}
+성분 목록 (기능 포함): ${functionInfo}
+
+각 성분별 최대 2개의 대체 성분을 제안하되, 다음 기준으로 선정:
+1. 동일 기능군 내에서 더 나은 안전성 프로파일
+2. 규제 친화적 (EU/MFDS 허용)
+3. 소비자 선호 트렌드 (클린뷰티, 비건 등)
+
+JSON 형식으로만 응답:
+{
+  "alternatives": [
+    {
+      "original_inci": "원래 성분명",
+      "original_function": "기능",
+      "suggestions": [
+        {
+          "inci": "대체 성분 INCI",
+          "korean_name": "한글명",
+          "reason": "대체 이유 (한글)",
+          "benefit": "개선점",
+          "usage_range": "권장 사용 농도 (예: 0.5~2%)"
+        }
+      ]
+    }
+  ],
+  "summary": "전체 대체 제안 요약 (한글, 2~3문장)"
+}`
+
+    const result = await callGemini(prompt, 'alternatives', false)
+    if (!result) return res.status(503).json({ error: 'AI 서비스 일시 불가' })
+    res.json(result)
+  } catch (err) {
+    console.error('[verify/suggest-alternatives]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API ⑧: 공정 리뷰 (Qwen 구조화 → Gemini 검토) ──
+app.post('/api/verify/process-review', async (req, res) => {
+  try {
+    const { ingredients = [], category = '', process_notes = '' } = req.body
+    if (!ingredients.length) return res.status(400).json({ error: '성분 목록이 없습니다.' })
+
+    // Qwen: 성분을 공정 단계별로 분류 (Phase A/B/C 추론)
+    const inciList = ingredients.map(i =>
+      `${i.inci_name || i.name} (${i.percentage || 0}%)`
+    ).join(', ')
+
+    let phaseInfo = null
+    try {
+      const qwenPrompt = `화장품 제조 공정을 위해 아래 성분들을 Phase A(유상/오일상), Phase B(수상), Phase C(냉각 후 첨가), Phase D(향/색소)로 분류해줘.
+성분: ${inciList.slice(0, 500)}
+JSON만 응답: {"phaseA":["성분"],"phaseB":["성분"],"phaseC":["성분"],"phaseD":["성분"]}`
+      phaseInfo = await callQwen(qwenPrompt, 'process')
+    } catch { /* Gemini 단독 처리 */ }
+
+    const phaseText = phaseInfo
+      ? `Qwen 공정 분류:\nPhase A: ${(phaseInfo.phaseA||[]).join(', ')}\nPhase B: ${(phaseInfo.phaseB||[]).join(', ')}\nPhase C: ${(phaseInfo.phaseC||[]).join(', ')}\nPhase D: ${(phaseInfo.phaseD||[]).join(', ')}`
+      : `전체 성분: ${inciList}`
+
+    const prompt = `당신은 화장품 제조 공정 전문가입니다.
+아래 처방의 제조 공정을 검토하고 최적 공정 조건을 제안해주세요.
+
+제품 카테고리: ${category || '미상'}
+공정 메모: ${process_notes || '없음'}
+${phaseText}
+
+다음을 포함하여 JSON으로 응답:
+{
+  "process_steps": [
+    {
+      "step": 1,
+      "phase": "Phase A",
+      "description": "공정 단계 설명 (한글)",
+      "temperature": "온도 조건 (예: 75~80°C)",
+      "ingredients": ["성분명"],
+      "notes": "주의사항"
+    }
+  ],
+  "critical_points": [
+    {
+      "point": "주요 공정 포인트",
+      "risk": "위험 요소",
+      "control": "관리 방법"
+    }
+  ],
+  "equipment": ["필요 장비"],
+  "quality_checks": ["품질 확인 항목"],
+  "summary": "공정 리뷰 요약 (한글, 3~4문장)"
+}`
+
+    const result = await callGemini(prompt, 'process', false)
+    if (!result) return res.status(503).json({ error: 'AI 서비스 일시 불가' })
+    res.json(result)
+  } catch (err) {
+    console.error('[verify/process-review]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
