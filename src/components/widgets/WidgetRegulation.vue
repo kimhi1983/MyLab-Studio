@@ -64,11 +64,17 @@
               <td class="td-date mono">{{ row.updatedAt }}</td>
             </tr>
             <!-- 제한 내용 전문 펼침 -->
-            <tr v-if="expandedId === row.id && row.restriction" class="expand-row">
+            <tr v-if="expandedId === row.id" class="expand-row">
               <td colspan="6" class="expand-cell">
                 <div class="expand-content">
-                  <span class="expand-label">전체 내용</span>
-                  {{ row.restriction }}
+                  <span v-if="row.restriction" class="expand-label">규제 내용</span>
+                  <span v-if="row.restriction">{{ row.restriction }}</span>
+                  <span v-if="row.primary_function" class="expand-fn">
+                    <span class="expand-label" style="margin-left:12px">기능</span>{{ row.primary_function }}
+                  </span>
+                  <span v-if="row.ewg_score != null" :class="['ewg-badge', ewgClass(row.ewg_score)]">
+                    EWG {{ row.ewg_score }}
+                  </span>
                 </div>
               </td>
             </tr>
@@ -162,14 +168,20 @@ async function loadData() {
       .map((r, i) => {
         const region = mapRegulationSource(r.source)
         const restriction = r.restriction || ''
+        // GEMINI_SAFETY_* 부가 정보 (ewg_score, concerns) 활용
+        const ewgTag = r.ewg_score != null ? `EWG ${r.ewg_score}` : ''
+        const concernTag = r.concerns?.length ? r.concerns.slice(0, 1).join('') : ''
+        const displayRestriction = restriction || [ewgTag, concernTag].filter(Boolean).join(' · ')
         return {
           id: i,
           region,
           ingredient: r.ingredient || r.inci_name,
-          restriction,
-          restrictionShort: restriction.length > 40 ? restriction.slice(0, 40) + '…' : restriction,
+          restriction: displayRestriction,
+          restrictionShort: displayRestriction.length > 40 ? displayRestriction.slice(0, 40) + '…' : displayRestriction,
           status: getRegulationStatus(r),
           limit: r.max_concentration || '',
+          ewg_score: r.ewg_score ?? null,
+          primary_function: r.primary_function || '',
           updatedAt: r.updated_at ? new Date(r.updated_at).toISOString().slice(2, 7).replace('-', '/') : '—',
         }
       })
@@ -184,6 +196,16 @@ function toggleExpand(id) {
 }
 
 function getRegulationStatus(r) {
+  // EWG 점수 기반 (GEMINI_SAFETY_* 안전성 데이터)
+  if (r.ewg_score != null) {
+    if (r.ewg_score >= 7) return 'ban'
+    if (r.ewg_score >= 4) return 'limit'
+    return 'monitor'
+  }
+  // reg_status 기반 (coching_legacy / 구조화 JSON)
+  if (r.reg_status === 'banned') return 'ban'
+  if (r.reg_status === 'restricted') return 'limit'
+  // 텍스트 기반 (기존 방식)
   const restriction = (r.restriction || '').toLowerCase()
   const maxConc = (r.max_concentration || '').toLowerCase()
   if (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit')) return 'ban'
@@ -202,6 +224,12 @@ function getStatusClass(status) {
 
 function getStatusLabel(status) {
   return { ban: '금지', limit: '제한', monitor: '모니터링' }[status] || status
+}
+
+function ewgClass(score) {
+  if (score >= 7) return 'ewg-high'
+  if (score >= 4) return 'ewg-mid'
+  return 'ewg-low'
 }
 </script>
 
@@ -446,6 +474,25 @@ function getStatusLabel(status) {
   margin-right: 8px;
   vertical-align: middle;
 }
+
+/* EWG 점수 뱃지 */
+.ewg-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 10px;
+  vertical-align: middle;
+  letter-spacing: 0.3px;
+}
+.ewg-low  { background: rgba(58,144,104,0.15); color: var(--green); }
+.ewg-mid  { background: rgba(184,147,90,0.15);  color: var(--amber); }
+.ewg-high { background: rgba(196,78,78,0.15);   color: var(--red); }
+
+/* 기능 표시 */
+.expand-fn { color: var(--text-sub); }
 
 /* 빈 상태 */
 .empty {
