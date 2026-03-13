@@ -43,8 +43,8 @@ const regulations = ref([])
 const totalCount = ref(0)
 const sources = ref([])
 
-// 숨길 소스: coching_legacy, gem2_kb, gemini_kb, UNKNOWN
-const HIDDEN_SOURCES = ['coching_legacy', 'gem2_kb', 'gemini_kb', 'UNKNOWN']
+// 숨길 소스
+const HIDDEN_SOURCES = ['coching_legacy', 'gem2_kb', 'gemini_kb', 'UNKNOWN', 'REG_MONITOR_ERROR']
 
 const regionTabs = computed(() => {
   const tabs = [{ value: 'ALL', label: '전체' }]
@@ -87,12 +87,15 @@ async function loadData() {
 
 function mapSource(src) {
   const map = {
-    MFDS_SEED: 'KR', GEMINI_KR: 'KR',
-    GEMINI_EU: 'EU',
-    GEMINI_US: 'US', FDA_SEED: 'US',
-    GEMINI_JP: 'JP',
-    GEMINI_CN: 'CN',
-    GEMINI_ASEAN: 'ASEAN',
+    MFDS_SEED: '한국', GEMINI_KR: '한국',
+    GEMINI_EU: '유럽', EU: '유럽',
+    GEMINI_US: '미국', FDA_SEED: '미국', REG_MONITOR_US: '미국',
+    GEMINI_JP: '일본', JP: '일본',
+    GEMINI_CN: '중국', CN: '중국',
+    GEMINI_ASEAN: '아세안',
+    GEMINI_SAFETY: '안전성',
+    INI_SAFETY: '안전성',
+    KR: '한국', US: '미국',
   }
   return map[src] || src
 }
@@ -108,12 +111,13 @@ function getRegulationStatus(r) {
 }
 
 function getRegionClass(region) {
-  if (region === 'KR') return 'region-kr'
-  if (region === 'EU') return 'region-eu'
-  if (region === 'US') return 'region-us'
-  if (region === 'JP') return 'region-jp'
-  if (region === 'CN') return 'region-cn'
-  if (region === 'ASEAN') return 'region-asean'
+  if (region === '한국') return 'region-kr'
+  if (region === '유럽') return 'region-eu'
+  if (region === '미국') return 'region-us'
+  if (region === '일본') return 'region-jp'
+  if (region === '중국') return 'region-cn'
+  if (region === '아세안') return 'region-asean'
+  if (region === '안전성') return 'region-safety'
   return ''
 }
 
@@ -200,8 +204,9 @@ function getStatusLabel(status) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  min-width: 32px;
   height: 20px;
+  padding: 0 4px;
   border-radius: 3px;
   font-size: 9px;
   font-weight: 700;
@@ -238,6 +243,12 @@ function getStatusLabel(status) {
 .region-asean {
   background: rgba(58, 144, 104, 0.15);
   color: var(--green);
+}
+
+.region-safety {
+  background: rgba(184, 147, 90, 0.15);
+  color: var(--amber);
+  width: 38px;
 }
 
 /* 성분 정보 */
