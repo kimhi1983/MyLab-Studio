@@ -1,77 +1,109 @@
 import { computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
 
-// 그리드 설정 상수
 export const GRID_COL_NUM = 12
 export const GRID_ROW_HEIGHT = 40
 
-// 사용 가능한 위젯 목록 (카탈로그) — 12컬럼 기준
 export const WIDGET_CATALOG = [
-  { id: 'kpi', label: 'KPI 카드', icon: '⚗', description: '진행중 처방, 완료, 안정성, 규제 현황', minW: 4, minH: 3, defaultW: 8, defaultH: 3 },
-  { id: 'recent', label: '최근 처방', icon: '◉', description: '최근 수정된 처방 목록', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
-  { id: 'quick', label: '빠른 작업', icon: '✦', description: '새 처방, 처방 목록 등 빠른 액션', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
-  { id: 'active', label: '진행중 처방', icon: '◎', description: '현재 진행 중인 처방 테이블', minW: 4, minH: 3, defaultW: 8, defaultH: 5 },
-  { id: 'projects', label: '프로젝트 요약', icon: '◈', description: '프로젝트별 진행률 요약', minW: 3, minH: 3, defaultW: 6, defaultH: 5 },
-  { id: 'chart', label: '상태 차트', icon: '◐', description: '처방 상태별 도넛 차트', minW: 3, minH: 3, defaultW: 4, defaultH: 3 },
-  { id: 'memo', label: '메모장', icon: '✎', description: '자유 메모 (자동 저장)', minW: 3, minH: 3, defaultW: 4, defaultH: 4 },
-  { id: 'stability', label: '안정성 현황', icon: '⏱', description: '처방별 안정성 테스트 현황', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
-  { id: 'regulation', label: '규제 모니터링', icon: '⚠', description: '지역별 성분 규제 현황', minW: 6, minH: 5, defaultW: 12, defaultH: 7 },
-  { id: 'todaylog', label: '오늘의 업무', icon: '◉', description: '오늘 진행한 업무 타임라인', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
-  { id: 'hlb', label: 'HLB 계산기', icon: '⚖', description: '오일/유화제 HLB 빠른 계산 및 판정', minW: 3, minH: 4, defaultW: 4, defaultH: 5 },
+  { id: 'kpi', label: 'KPI 카드', icon: 'K', description: '처방 현황 요약', minW: 4, minH: 3, defaultW: 8, defaultH: 3 },
+  { id: 'recent', label: '최근 처방', icon: 'R', description: '최근 작업한 처방', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
+  { id: 'quick', label: '빠른 작업', icon: 'Q', description: '바로 가기 액션', minW: 3, minH: 3, defaultW: 4, defaultH: 5 },
+  { id: 'active', label: '진행 중 처방', icon: 'A', description: '현재 진행 상태', minW: 4, minH: 3, defaultW: 8, defaultH: 5 },
+  { id: 'projects', label: '프로젝트 요약', icon: 'P', description: '프로젝트 진행 현황', minW: 3, minH: 3, defaultW: 6, defaultH: 5 },
+  { id: 'chart', label: '상태 차트', icon: 'C', description: '처방 상태 분포', minW: 3, minH: 3, defaultW: 4, defaultH: 3 },
+  { id: 'memo', label: '메모', icon: 'M', description: '자유 메모', minW: 3, minH: 3, defaultW: 12, defaultH: 3 },
+  { id: 'stability', label: '안정성', icon: 'S', description: '안정성 모니터링', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
+  { id: 'regulation', label: '규제 모니터링', icon: 'G', description: '지역별 규제 현황', minW: 6, minH: 5, defaultW: 12, defaultH: 7 },
+  { id: 'todaylog', label: '오늘의 업무', icon: 'T', description: '오늘 진행 내역', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
+  { id: 'hlb', label: 'HLB 계산기', icon: 'H', description: '빠른 HLB 계산', minW: 3, minH: 4, defaultW: 6, defaultH: 5 },
 ]
 
-// 기본 레이아웃 (첫 방문 시) — 12컬럼, 11개 위젯 전체 표시
 const DEFAULT_LAYOUT = [
-  // Row 0: 핵심 지표
-  { x: 0, y: 0,  w: 8,  h: 3,  i: 'kpi' },        // KPI 카드 (상단 넓게)
-  { x: 8, y: 0,  w: 4,  h: 3,  i: 'chart' },       // 상태 차트 (우상단)
-  // Row 3: 업무 + 진행현황 + 빠른작업
-  { x: 0, y: 3,  w: 5,  h: 5,  i: 'active' },      // 진행중 처방
-  { x: 5, y: 3,  w: 4,  h: 5,  i: 'todaylog' },    // 오늘의 업무
-  { x: 9, y: 3,  w: 3,  h: 5,  i: 'quick' },       // 빠른 작업
-  // Row 8: 안정성 + 최근처방
-  { x: 0, y: 8,  w: 6,  h: 5,  i: 'stability' },   // 안정성 현황
-  { x: 6, y: 8,  w: 6,  h: 5,  i: 'recent' },      // 최근 처방
-  // Row 13: 규제 모니터링 (전체 너비)
-  { x: 0, y: 13, w: 12, h: 7,  i: 'regulation' },  // 규제 모니터링
-  // Row 20: 프로젝트 + HLB
-  { x: 0, y: 20, w: 6,  h: 5,  i: 'projects' },    // 프로젝트 요약
-  { x: 6, y: 20, w: 6,  h: 5,  i: 'hlb' },         // HLB 계산기
-  // Row 25: 메모
-  { x: 0, y: 25, w: 12, h: 3,  i: 'memo' },        // 메모장 (전체 폭)
+  { x: 0, y: 0, w: 8, h: 3, i: 'kpi' },
+  { x: 8, y: 0, w: 4, h: 3, i: 'chart' },
+  { x: 0, y: 3, w: 5, h: 5, i: 'active' },
+  { x: 5, y: 3, w: 4, h: 5, i: 'todaylog' },
+  { x: 9, y: 3, w: 3, h: 5, i: 'quick' },
+  { x: 0, y: 8, w: 6, h: 5, i: 'stability' },
+  { x: 6, y: 8, w: 6, h: 5, i: 'recent' },
+  { x: 0, y: 13, w: 12, h: 7, i: 'regulation' },
+  { x: 0, y: 20, w: 6, h: 5, i: 'projects' },
+  { x: 6, y: 20, w: 6, h: 5, i: 'hlb' },
+  { x: 0, y: 25, w: 12, h: 3, i: 'memo' },
 ]
 
-// v4: 규제 모니터링 전체 너비 레이아웃 (v3 대비 regulation w=12, h=7)
 const savedLayout = useLocalStorage('mylab:dashboard-layout-v4', null)
 
-export function useWidgetStore() {
-  // 현재 레이아웃
-  const layout = computed({
-    get: () => savedLayout.value || JSON.parse(JSON.stringify(DEFAULT_LAYOUT)),
-    set: (val) => { savedLayout.value = val },
-  })
+if (typeof window !== 'undefined') {
+  const url = new URL(window.location.href)
+  if (url.searchParams.get('reset-dashboard') === '1') {
+    localStorage.removeItem('mylab:dashboard-layout-v4')
+    savedLayout.value = null
+    url.searchParams.delete('reset-dashboard')
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash)
+  }
+}
 
-  // 현재 활성 위젯 ID 목록
-  const activeWidgetIds = computed(() => layout.value.map(item => item.i))
+function cloneDefaultLayout() {
+  return DEFAULT_LAYOUT.map((item) => ({ ...item }))
+}
 
-  // 추가 가능한 위젯 (현재 레이아웃에 없는 것)
-  const availableWidgets = computed(() =>
-    WIDGET_CATALOG.filter(w => !activeWidgetIds.value.includes(w.id))
-  )
+function isValidLayoutItem(item) {
+  return item &&
+    typeof item === 'object' &&
+    typeof item.i === 'string' &&
+    Number.isFinite(item.x) &&
+    Number.isFinite(item.y) &&
+    Number.isFinite(item.w) &&
+    Number.isFinite(item.h)
+}
 
-  // 레이아웃 저장
-  function saveLayout(newLayout) {
-    savedLayout.value = newLayout.map(item => ({
-      x: item.x, y: item.y, w: item.w, h: item.h, i: item.i,
-    }))
+function sanitizeLayout(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return cloneDefaultLayout()
   }
 
-  // 위젯 추가
+  const knownIds = new Set(WIDGET_CATALOG.map((widget) => widget.id))
+  const seenIds = new Set()
+
+  const cleaned = value
+    .filter((item) => isValidLayoutItem(item) && knownIds.has(item.i) && !seenIds.has(item.i))
+    .map((item) => {
+      seenIds.add(item.i)
+      return {
+        x: Math.max(0, Number(item.x) || 0),
+        y: Math.max(0, Number(item.y) || 0),
+        w: Math.min(GRID_COL_NUM, Math.max(1, Number(item.w) || 1)),
+        h: Math.max(1, Number(item.h) || 1),
+        i: item.i,
+      }
+    })
+
+  return cleaned.length ? cleaned : cloneDefaultLayout()
+}
+
+export function useWidgetStore() {
+  const layout = computed({
+    get: () => sanitizeLayout(savedLayout.value),
+    set: (val) => {
+      savedLayout.value = sanitizeLayout(val)
+    },
+  })
+
+  const activeWidgetIds = computed(() => layout.value.map((item) => item.i))
+
+  const availableWidgets = computed(() =>
+    WIDGET_CATALOG.filter((widget) => !activeWidgetIds.value.includes(widget.id))
+  )
+
+  function saveLayout(newLayout) {
+    savedLayout.value = sanitizeLayout(newLayout)
+  }
+
   function addWidget(widgetId) {
-    const catalog = WIDGET_CATALOG.find(w => w.id === widgetId)
+    const catalog = WIDGET_CATALOG.find((widget) => widget.id === widgetId)
     if (!catalog || activeWidgetIds.value.includes(widgetId)) return
 
-    // 빈 위치 찾기: 가장 아래에 추가
     const maxY = layout.value.reduce((max, item) => Math.max(max, item.y + item.h), 0)
     const newItem = {
       x: 0,
@@ -80,17 +112,17 @@ export function useWidgetStore() {
       h: catalog.defaultH,
       i: widgetId,
     }
+
     savedLayout.value = [...layout.value, newItem]
   }
 
-  // 위젯 제거
   function removeWidget(widgetId) {
-    savedLayout.value = layout.value.filter(item => item.i !== widgetId)
+    const nextLayout = layout.value.filter((item) => item.i !== widgetId)
+    savedLayout.value = nextLayout.length ? nextLayout : cloneDefaultLayout()
   }
 
-  // 기본 레이아웃으로 복원
   function resetLayout() {
-    savedLayout.value = JSON.parse(JSON.stringify(DEFAULT_LAYOUT))
+    savedLayout.value = cloneDefaultLayout()
   }
 
   return {
