@@ -1,5 +1,8 @@
 <template>
   <div class="ingredient-db-page">
+    <div v-if="errorMessage" class="error-banner">
+      {{ errorMessage }}
+    </div>
     <!-- 상단 검색바 -->
     <div class="search-bar-wrap">
       <div class="search-bar">
@@ -79,8 +82,8 @@
                   <td colspan="5" class="empty-cell">
                     <div class="empty-state">
                       <div class="empty-icon">◎</div>
-                      <div class="empty-title">검색 결과가 없습니다</div>
-                      <div class="empty-sub">다른 키워드로 검색해보세요</div>
+                      <div class="empty-title">{{ errorMessage ? 'API 서버에 연결하지 못했습니다' : '검색 결과가 없습니다' }}</div>
+                      <div class="empty-sub">{{ errorMessage ? 'scripts\\run-api.cmd 로 API 서버를 먼저 실행하세요' : '다른 키워드로 검색해보세요' }}</div>
                     </div>
                   </td>
                 </tr>
@@ -246,7 +249,7 @@ import { useIngredientStore } from '../stores/ingredientStore.js'
 import { mapRegulationSource } from '../utils/regulationSource.js'
 
 const store = useIngredientStore()
-const { loading } = store
+const { loading, error } = store
 
 const searchQuery = ref('')
 const items = ref([])
@@ -261,6 +264,7 @@ const detailLoading = ref(false)
 let debounceTimer = null
 
 const totalPages = computed(() => Math.ceil(totalCount.value / PAGE_SIZE))
+const errorMessage = computed(() => error.value ? `API 연결 오류: ${error.value}` : '')
 
 // 표시할 페이지 번호 목록 (최대 7개)
 const visiblePages = computed(() => {
@@ -388,6 +392,16 @@ function formatDate(iso) {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.error-banner {
+  padding: 10px 14px;
+  border: 1px solid #e8b8b8;
+  border-radius: 8px;
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* ─── 검색바 ─── */

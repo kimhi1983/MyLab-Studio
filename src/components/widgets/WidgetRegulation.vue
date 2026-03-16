@@ -1,5 +1,8 @@
 <template>
   <div class="regulation-widget">
+    <div v-if="errorMessage" class="error-banner">
+      {{ errorMessage }}
+    </div>
 
     <!-- ── 헤더: 탭 + 검색 + 통계 뱃지 ── -->
     <div class="reg-header">
@@ -84,7 +87,7 @@
     </div>
 
     <div v-if="!displayData.length && !loading" class="empty">
-      {{ searchQ ? `'${searchQ}' 검색 결과가 없습니다` : '해당 지역의 규제 데이터가 없습니다' }}
+      {{ errorMessage ? 'API 서버를 먼저 실행하세요' : (searchQ ? `'${searchQ}' 검색 결과가 없습니다` : '해당 지역의 규제 데이터가 없습니다') }}
     </div>
     <div v-if="loading" class="empty">불러오는 중...</div>
 
@@ -102,6 +105,7 @@ const searchQ = ref('')
 const expandedId = ref(null)
 const loading = ref(false)
 const allData = ref([])
+const errorMessage = computed(() => store.error.value ? `규제 데이터 연결 오류: ${store.error.value}` : '')
 
 // ── 지역 순서 고정 (항상 표시, 데이터 없어도) ──
 const REGION_ORDER = ['전체', '한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
@@ -164,7 +168,7 @@ async function loadData() {
     if (!data?.items) return
 
     allData.value = data.items
-      .filter(r => (r.ingredient || r.inci_name) && isVisibleSource(r.source))
+      .filter(r => (r.displayable ?? true) && (r.ingredient || r.inci_name) && isVisibleSource(r.source))
       .map((r, i) => {
         const region = mapRegulationSource(r.source)
         const restriction = r.restriction || ''
@@ -240,6 +244,17 @@ function ewgClass(score) {
   height: 100%;
   overflow: hidden;
   container-type: inline-size;
+}
+
+.error-banner {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e8b8b8;
+  border-radius: 8px;
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 /* ── 헤더 ── */
