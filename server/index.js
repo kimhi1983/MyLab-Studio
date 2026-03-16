@@ -1,6 +1,7 @@
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { existsSync } from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -13,6 +14,21 @@ import pool from './db.js'
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
+
+async function resyncGuideCacheIdSequence(client = pool) {
+  await client.query(`
+    SELECT setval(
+      pg_get_serial_sequence('guide_cache', 'id'),
+      COALESCE((SELECT MAX(id) FROM guide_cache), 0) + 1,
+      false
+    )
+  `)
+}
+
+function isGuideCachePrimaryKeyConflict(err) {
+  return err?.code === '23505' &&
+    (err?.constraint === 'guide_cache_pkey' || String(err?.message || '').includes('guide_cache_pkey'))
+}
 
 // ─── 검증 모드 DB 초기화 ───
 async function initVerificationDB() {
@@ -297,6 +313,8 @@ function parseRestrictionField(restriction) {
     if (obj && typeof obj === 'object') {
       const textParts = []
       if (obj.annex_type) textParts.push(obj.annex_type)
+      if (obj.annex) textParts.push(`Annex ${obj.annex}`)
+      if (obj.summary) textParts.push(obj.summary)
       if (obj.note && obj.note !== 'null') textParts.push(obj.note)
       if (obj.status && !obj.annex_type) textParts.push(obj.status === 'banned' ? '금지' : obj.status === 'restricted' ? '제한' : obj.status)
       return {
@@ -311,10 +329,99 @@ function parseRestrictionField(restriction) {
   return { text: restriction, ewg_score: null, concerns: null, primary_function: null, reg_status: null }
 }
 
+function normalizeRegulationIngredientName(ingredient, inciName) {
+  const raw = String(ingredient || inciName || '').trim()
+  if (!raw) return ''
+  return raw.replace(/^[\-\s]+/, '').trim()
+}
+
+function normalizeRegulationRestrictionText(text, regStatus = '') {
+  const raw = String(text || '').trim()
+  const cleaned = raw.replace(/^Annex null\s*[—-]\s*/i, '').trim()
+
+  if (!cleaned && regStatus === 'allowed') return '별도 제한 없음'
+  if (/^allowed$/i.test(cleaned)) return '별도 제한 없음'
+
+  return cleaned
+}
+
+function isDisplayableRegulationRow({ ingredient, inci_name, restriction, reg_status }) {
+  const displayName = normalizeRegulationIngredientName(ingredient, inci_name)
+  const text = String(restriction || '')
+
+  if (!displayName) return false
+  if (reg_status === 'unknown') return false
+  if (/유효하지 않은 원료명|원료 정보를 찾을 수 없습니다|해당하는 원료 정보를 찾을 수 없습니다/.test(text)) return false
+  if (/^\[?\d+\]?$/.test(displayName)) return false
+  if (/^\(?\d+\)?\s*\d{2,}-\d{2,}-\d$/.test(displayName)) return false
+
+  return true
+}
+
+const COLUMN_CACHE_TTL_MS = 5 * 60 * 1000
+let _columnCache = { columns: null, fetchedAt: 0 }
+
+async function getRegulationCacheColumns(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && _columnCache.columns && now - _columnCache.fetchedAt < COLUMN_CACHE_TTL_MS) {
+    return _columnCache.columns
+  }
+  const { rows } = await pool.query(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'regulation_cache'
+  `)
+  _columnCache = { columns: new Set(rows.map(r => r.column_name)), fetchedAt: now }
+  return _columnCache.columns
+}
+
+function parseRestrictionObject(restriction) {
+  if (!restriction) return null
+  try {
+    const obj = typeof restriction === 'object' ? restriction : JSON.parse(restriction)
+    return obj && typeof obj === 'object' ? obj : null
+  } catch (_) {
+    return null
+  }
+}
+
+function parseMaxConcentrationValue(maxConcentration, restriction) {
+  const candidates = [maxConcentration]
+  const restrictionObj = parseRestrictionObject(restriction)
+  if (restrictionObj?.max_concentration) candidates.push(restrictionObj.max_concentration)
+
+  for (const candidate of candidates) {
+    if (candidate == null || candidate === '') continue
+    if (typeof candidate === 'number' && !Number.isNaN(candidate)) return candidate
+
+    const text = String(candidate)
+    const match = text.match(/(\d+(?:\.\d+)?)/)
+    if (match) return parseFloat(match[1])
+  }
+
+  return null
+}
+
+function isBannedRestriction(restriction, regStatus = '') {
+  const text = `${restriction || ''} ${regStatus || ''}`.toLowerCase()
+  return text.includes('banned') || text.includes('prohibit') || text.includes('forbidden') || text.includes('사용금지')
+}
+
+function normalizeFormulaCacheRow(row) {
+  return {
+    ...row,
+    estimated_ph: row?.estimated_ph == null ? null : String(row.estimated_ph),
+  }
+}
+
 // ─── 규제 데이터 (위젯용) ───
 app.get('/api/regulations', async (req, res) => {
   try {
     const { source, q, limit = 50, offset = 0 } = req.query
+    const columns = await getRegulationCacheColumns()
+    const hasDisplayName = columns.has('display_name')
+    const hasDisplayStatus = columns.has('display_status')
+    const hasDisplayRestriction = columns.has('display_restriction')
+    const hasQualityFlag = columns.has('quality_flag')
     let where = []
     let params = []
     let idx = 1
@@ -332,7 +439,11 @@ app.get('/api/regulations', async (req, res) => {
 
     const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : ''
     const countQuery = `SELECT count(*) FROM regulation_cache ${whereClause}`
-    const dataQuery = `SELECT source, ingredient, inci_name, max_concentration, restriction, updated_at
+    const dataQuery = `SELECT source, ingredient, inci_name, max_concentration, restriction, updated_at,
+      ${hasDisplayName ? 'display_name' : 'NULL::text AS display_name'},
+      ${hasDisplayStatus ? 'display_status' : 'NULL::text AS display_status'},
+      ${hasDisplayRestriction ? 'display_restriction' : 'NULL::text AS display_restriction'},
+      ${hasQualityFlag ? 'quality_flag' : 'NULL::text AS quality_flag'}
       FROM regulation_cache ${whereClause}
       ORDER BY ingredient
       LIMIT $${idx} OFFSET $${idx + 1}`
@@ -343,19 +454,40 @@ app.get('/api/regulations', async (req, res) => {
       pool.query(dataQuery, params),
     ])
 
+    const items = dataRes.rows.map(r => {
+      const parsed = parseRestrictionField(r.restriction)
+      const regStatus = r.display_status || parsed.reg_status
+      const normalizedRestriction = normalizeRegulationRestrictionText(
+        r.display_restriction || parsed.text || r.restriction,
+        regStatus,
+      )
+      const normalizedIngredient = r.display_name || normalizeRegulationIngredientName(r.ingredient, r.inci_name)
+      const qualityFlag = (r.quality_flag || '').toLowerCase()
+      const displayable = qualityFlag
+        ? qualityFlag === 'valid'
+        : isDisplayableRegulationRow({
+            ingredient: normalizedIngredient,
+            inci_name: r.inci_name,
+            restriction: normalizedRestriction,
+            reg_status: regStatus,
+          })
+
+      return {
+        ...r,
+        ingredient: normalizedIngredient,
+        restriction: normalizedRestriction,
+        ewg_score: parsed.ewg_score,
+        concerns: parsed.concerns,
+        primary_function: parsed.primary_function,
+        reg_status: regStatus,
+        quality_flag: r.quality_flag || null,
+        displayable,
+      }
+    })
+
     res.json({
       total: parseInt(countRes.rows[0].count),
-      items: dataRes.rows.map(r => {
-        const parsed = parseRestrictionField(r.restriction)
-        return {
-          ...r,
-          restriction: parsed.text || r.restriction,
-          ewg_score: parsed.ewg_score,
-          concerns: parsed.concerns,
-          primary_function: parsed.primary_function,
-          reg_status: parsed.reg_status,
-        }
-      }),
+      items,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -369,6 +501,125 @@ app.get('/api/regulation-sources', async (req, res) => {
       'SELECT source, count(*) as cnt FROM regulation_cache GROUP BY source ORDER BY cnt DESC'
     )
     res.json(rows.map(r => ({ source: r.source, count: parseInt(r.cnt) })))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/regulations-quality-summary', async (req, res) => {
+  try {
+    const columns = await getRegulationCacheColumns()
+    const hasQualityFlag = columns.has('quality_flag')
+    const hasDisplayName = columns.has('display_name')
+    const hasDisplayStatus = columns.has('display_status')
+    const hasDisplayRestriction = columns.has('display_restriction')
+    const displayNameExpr = hasDisplayName ? 'display_name' : 'NULL::text'
+    const displayStatusExpr = hasDisplayStatus ? 'display_status' : 'NULL::text'
+    const displayRestrictionExpr = hasDisplayRestriction ? 'display_restriction' : 'NULL::text'
+
+    let rows, byQuality, hiddenExamples, isSampled
+
+    if (hasQualityFlag) {
+      // quality_flag 컬럼이 있으면 DB에서 직접 GROUP BY 집계 (LIMIT 없음)
+      isSampled = false
+      const qualityExpr = 'quality_flag'
+      const result = await pool.query(`
+        SELECT
+          source,
+          ingredient,
+          inci_name,
+          restriction,
+          ${displayNameExpr} AS display_name,
+          ${displayStatusExpr} AS display_status,
+          ${displayRestrictionExpr} AS display_restriction,
+          ${qualityExpr} AS quality_flag,
+          updated_at
+        FROM regulation_cache
+        ORDER BY updated_at DESC NULLS LAST
+      `)
+      rows = result.rows
+
+      const normalized = rows.map((row) => {
+        const parsed = parseRestrictionField(row.restriction)
+        const regStatus = row.display_status || parsed.reg_status
+        const displayName = row.display_name || normalizeRegulationIngredientName(row.ingredient, row.inci_name)
+        const text = normalizeRegulationRestrictionText(row.display_restriction || parsed.text || row.restriction, regStatus)
+        const qualityFlag = (row.quality_flag || '').toLowerCase()
+        const displayable = qualityFlag === 'valid'
+
+        return {
+          source: row.source,
+          ingredient: displayName,
+          quality_flag: row.quality_flag,
+          displayable,
+        }
+      })
+
+      byQuality = normalized.reduce((acc, row) => {
+        acc[row.quality_flag] = (acc[row.quality_flag] || 0) + 1
+        return acc
+      }, {})
+      hiddenExamples = normalized.filter((row) => !row.displayable).slice(0, 20)
+
+      res.json({
+        sampled_rows: normalized.length,
+        is_sampled: false,
+        by_quality: byQuality,
+        hidden_examples: hiddenExamples,
+      })
+    } else {
+      // quality_flag 컬럼 없으면 LIMIT 5000으로 샘플링
+      isSampled = true
+      const result = await pool.query(`
+        SELECT
+          source,
+          ingredient,
+          inci_name,
+          restriction,
+          ${displayNameExpr} AS display_name,
+          ${displayStatusExpr} AS display_status,
+          ${displayRestrictionExpr} AS display_restriction,
+          NULL::text AS quality_flag,
+          updated_at
+        FROM regulation_cache
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT 5000
+      `)
+      rows = result.rows
+
+      const normalized = rows.map((row) => {
+        const parsed = parseRestrictionField(row.restriction)
+        const regStatus = row.display_status || parsed.reg_status
+        const displayName = row.display_name || normalizeRegulationIngredientName(row.ingredient, row.inci_name)
+        const text = normalizeRegulationRestrictionText(row.display_restriction || parsed.text || row.restriction, regStatus)
+        const displayable = isDisplayableRegulationRow({
+          ingredient: displayName,
+          inci_name: row.inci_name,
+          restriction: text,
+          reg_status: regStatus,
+        })
+
+        return {
+          source: row.source,
+          ingredient: displayName,
+          quality_flag: displayable ? 'valid_inferred' : 'invalid_inferred',
+          displayable,
+        }
+      })
+
+      byQuality = normalized.reduce((acc, row) => {
+        acc[row.quality_flag] = (acc[row.quality_flag] || 0) + 1
+        return acc
+      }, {})
+      hiddenExamples = normalized.filter((row) => !row.displayable).slice(0, 20)
+
+      res.json({
+        sampled_rows: normalized.length,
+        is_sampled: true,
+        by_quality: byQuality,
+        hidden_examples: hiddenExamples,
+      })
+    }
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1867,13 +2118,14 @@ function getQualityChecks(productType) {
 
 // ─── Layer 3: 생성 결과 guide_cache 자동 캐싱 ───
 async function cacheGeneratedFormula(productType, purposes, result) {
+  const client = await pool.connect()
   try {
     const purposeLabel = purposes?.detected?.length ? purposes.detected.join('+') : '일반'
     const comboKey = `${productType}_${purposeLabel}_AI`
     const formulaName = `${productType} (${purposeLabel}) AI 생성`
 
     // 중복 방지: 같은 combo_key가 이미 있으면 건너뛰기
-    const { rows: existing } = await pool.query(
+    const { rows: existing } = await client.query(
       'SELECT id FROM guide_cache WHERE combo_key = $1 LIMIT 1',
       [comboKey]
     )
@@ -1905,14 +2157,43 @@ async function cacheGeneratedFormula(productType, purposes, result) {
       quality_checks: [],
     }
 
-    await pool.query(
-      `INSERT INTO guide_cache (combo_key, product_type, skin_type, formula_name, guide_data, total_wt_percent, wt_valid, source, version)
-       VALUES ($1, $2, $3, $4, $5, $6, true, $7, 1)`,
-      [comboKey, productType, purposeLabel, formulaName, JSON.stringify(guideData), 100, result.source || 'hybrid-ai']
-    )
+    const insertQuery = `
+      INSERT INTO guide_cache (combo_key, product_type, skin_type, formula_name, guide_data, total_wt_percent, wt_valid, source, version)
+      VALUES ($1, $2, $3, $4, $5, $6, true, $7, 1)
+      RETURNING id
+    `
+    const insertParams = [
+      comboKey,
+      productType,
+      purposeLabel,
+      formulaName,
+      JSON.stringify(guideData),
+      100,
+      result.source || 'hybrid-ai',
+    ]
+
+    await resyncGuideCacheIdSequence(client)
+
+    try {
+      await client.query(insertQuery, insertParams)
+    } catch (err) {
+      if (!isGuideCachePrimaryKeyConflict(err)) throw err
+
+      await resyncGuideCacheIdSequence(client)
+
+      const { rows: existingAfterConflict } = await client.query(
+        'SELECT id FROM guide_cache WHERE combo_key = $1 LIMIT 1',
+        [comboKey]
+      )
+      if (existingAfterConflict.length > 0) return
+
+      await client.query(insertQuery, insertParams)
+    }
     console.log(`[Cache] 처방 캐싱 완료: ${comboKey}`)
   } catch (err) {
     console.error('[Cache] 처방 캐싱 실패:', err.message)
+  } finally {
+    client.release()
   }
 }
 
@@ -2125,7 +2406,7 @@ app.get('/api/copy-formulas', async (req, res) => {
     ])
 
     res.json({
-      items: dataRes.rows,
+      items: dataRes.rows.map(normalizeFormulaCacheRow),
       total: parseInt(countRes.rows[0].cnt),
       page, limit,
     })
@@ -2139,7 +2420,7 @@ app.get('/api/copy-formulas/:id', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM guide_cache_copy WHERE id = $1', [req.params.id])
     if (!rows.length) return res.status(404).json({ error: '카피 처방을 찾을 수 없습니다.' })
-    res.json(rows[0])
+    res.json(normalizeFormulaCacheRow(rows[0]))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -2184,7 +2465,7 @@ app.get('/api/guide-formulas', async (req, res) => {
     ])
 
     res.json({
-      items: dataRes.rows,
+      items: dataRes.rows.map(normalizeFormulaCacheRow),
       total: parseInt(countRes.rows[0].cnt),
       page, limit,
     })
@@ -2198,7 +2479,7 @@ app.get('/api/guide-formulas/:id', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM guide_cache WHERE id = $1', [req.params.id])
     if (!rows.length) return res.status(404).json({ error: '가이드 처방을 찾을 수 없습니다.' })
-    res.json(rows[0])
+    res.json(normalizeFormulaCacheRow(rows[0]))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -2901,7 +3182,7 @@ app.post('/api/check-regulation-limits', async (req, res) => {
 
       const sources = Object.keys(bySource)
       const sourceLabel = sources.map(s => {
-        const map = { MFDS_SEED: 'KR', GEMINI_KR: 'KR', GEMINI_EU: 'EU', GEMINI_US: 'US', GEMINI_JP: 'JP', GEMINI_CN: 'CN', coching_legacy: 'EU', FDA_SEED: 'US', REG_MONITOR_US: 'US' }
+        const map = { MFDS_SEED: 'KR', GEMINI_KR: 'KR', GEMINI_EU: 'EU', GEMINI_US: 'US', GEMINI_JP: 'JP', GEMINI_CN: 'CN', GEMINI_SAFETY: 'SAFETY', coching_legacy: 'EU', FDA_SEED: 'US', REG_MONITOR_US: 'US' }
         return map[s] || s
       }).filter((v, i, a) => a.indexOf(v) === i).join('/')
 
@@ -3093,6 +3374,97 @@ async function validateRegulation(ingredients) {
 }
 
 // ── 검증 엔진: ② 안정성 예측 ──
+async function validateRegulationV2(ingredients) {
+  const checks = []
+  let critical = 0
+  let warning = 0
+
+  for (const ing of ingredients) {
+    const name = ing.inci_name || ing.name || ''
+    const pct = parseFloat(ing.wt_pct) || 0
+
+    try {
+      const { rows } = await pool.query(`
+        SELECT source, ingredient, inci_name, restriction, max_concentration
+        FROM regulation_cache
+        WHERE ingredient ILIKE $1 OR inci_name ILIKE $1
+        LIMIT 20
+      `, [`%${name}%`])
+
+      const normalizedRows = rows.map((row) => {
+        const parsed = parseRestrictionField(row.restriction)
+        return {
+          ...row,
+          parsed,
+          max_allowed: parseMaxConcentrationValue(row.max_concentration, row.restriction),
+        }
+      })
+
+      const banned = normalizedRows.find((row) =>
+        isBannedRestriction(row.parsed.text || row.restriction, row.parsed.reg_status)
+      )
+      if (banned) {
+        checks.push({
+          ingredient: name,
+          severity: 'CRITICAL',
+          category: '사용금지 성분',
+          message: `${name}은(는) ${banned.source}에서 사용이 금지된 성분입니다.`,
+          action: '즉시 제거 필요',
+        })
+        critical++
+        continue
+      }
+
+      const restricted = normalizedRows.find((row) => row.max_allowed != null)
+      if (restricted) {
+        const maxC = restricted.max_allowed
+        if (pct > maxC) {
+          checks.push({
+            ingredient: name,
+            severity: 'CRITICAL',
+            category: '농도 초과',
+            message: `${name}: 현재 ${pct}% 는 허용 한도 ${maxC}% 초과 (${restricted.source})`,
+            action: `${maxC}% 이하로 조정`,
+          })
+          critical++
+        } else {
+          checks.push({
+            ingredient: name,
+            severity: 'PASS',
+            category: '허용 성분 확인',
+            message: `${name}: ${pct}% (한도 ${maxC}% 이내)`,
+          })
+          warning++
+        }
+      }
+    } catch { /* regulation_cache 테이블 없으면 skip */ }
+  }
+
+  const preservativeKeys = ['phenoxyethanol', 'ethylhexylglycerin', 'methylparaben', 'propylparaben',
+    'chlorphenesin', 'sodium benzoate', 'potassium sorbate', 'caprylyl glycol', '1,2-hexanediol']
+  const hasWater = ingredients.some((i) => {
+    const n = (i.inci_name || i.name || '').toLowerCase()
+    return n === 'water' || n === 'aqua' || n === '정제수'
+  })
+  const hasPreservative = ingredients.some((i) => {
+    const n = (i.inci_name || i.name || '').toLowerCase()
+    return preservativeKeys.some((p) => n.includes(p))
+  })
+  if (hasWater && !hasPreservative) {
+    checks.push({
+      ingredient: '방부제',
+      severity: 'CRITICAL',
+      category: '방부제 누락',
+      message: '수성 제형에 방부제가 포함되어 있지 않습니다.',
+      action: 'Phenoxyethanol 등 방부제 추가 필요',
+    })
+    critical++
+  }
+
+  const status = critical > 0 ? 'FAIL' : warning > 0 ? 'WARNING' : 'PASS'
+  return { title: '규제 확인 완료', status, checks, critical_count: critical, warning_count: warning }
+}
+
 function validateStability(ingredients) {
   const checks = []
   let critical = 0, warning = 0
@@ -3296,7 +3668,7 @@ function estimateCost(ingredients) {
 // ── 통합 검증 오케스트레이터 ──
 async function runFullVerification(ingredients, metadata = {}) {
   const [regulation, formulation, physical] = await Promise.all([
-    validateRegulation(ingredients),
+    validateRegulationV2(ingredients),
     Promise.resolve(validateFormulation(ingredients)),
     Promise.resolve(validatePhysical(ingredients, metadata)),
   ])
@@ -3645,6 +4017,14 @@ app.get('/api/stability', async (req, res) => {
 
 // ─── 서버 시작 ────────────────────────────────────────────────────────────
 const PORT = process.env.API_PORT || 3001
+const DIST_DIR = join(__dirname, '..', 'dist')
+
+if (existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR))
+  app.get(/^\/(?!api).*/, (req, res) => {
+    res.sendFile(join(DIST_DIR, 'index.html'))
+  })
+}
 
 ;(async () => {
   try {
