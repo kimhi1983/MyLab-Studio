@@ -563,6 +563,77 @@ app.get('/api/ewg-ingredient/:inci_name', async (req, res) => {
   }
 })
 
+// ─── 원료 통합 프로파일 (ingredient_profile_mv) ───
+app.get('/api/ingredient-profile/:query', async (req, res) => {
+  try {
+    const query = req.params.query?.trim()
+    if (!query || query.length < 2) {
+      return res.status(400).json({ error: 'query must be at least 2 characters' })
+    }
+
+    // 1차: MV 완전 일치 (INCI / CAS / 한글명)
+    const { rows: mvRows } = await pool.query(
+      `SELECT * FROM ingredient_profile_mv
+       WHERE inci_name_lower = lower($1)
+          OR (cas_number IS NOT NULL AND cas_number ILIKE $1)
+          OR korean_name = $1
+       LIMIT 1`,
+      [query],
+    )
+    if (mvRows.length > 0) {
+      return res.json({ source: 'materialized_view', data: mvRows[0] })
+    }
+
+    // 2차: MV 부분 일치
+    const { rows: partialRows } = await pool.query(
+      `SELECT master_id, inci_name, korean_name, cas_number, ingredient_type,
+              ewg_score, reg_kr_status, reg_eu_status, purposes, completeness_score
+       FROM ingredient_profile_mv
+       WHERE inci_name ILIKE $1 OR korean_name ILIKE $1
+       ORDER BY completeness_score DESC
+       LIMIT 10`,
+      [`%${query}%`],
+    )
+    if (partialRows.length === 1) {
+      const { rows: fullRows } = await pool.query(
+        'SELECT * FROM ingredient_profile_mv WHERE master_id = $1',
+        [partialRows[0].master_id],
+      )
+      return res.json({ source: 'materialized_view', data: fullRows[0] })
+    }
+    if (partialRows.length > 1) {
+      return res.json({ source: 'materialized_view_partial', candidates: partialRows })
+    }
+
+    // 3차: ingredient_master 직접 조회 (MV 미갱신 원료)
+    const { rows: masterRows } = await pool.query(
+      `SELECT id, inci_name, korean_name, cas_number, ec_number,
+              ingredient_type, description, origin, ewg_score
+       FROM ingredient_master
+       WHERE lower(inci_name) = lower($1)
+          OR (cas_number IS NOT NULL AND cas_number ILIKE $1)
+          OR korean_name = $1
+       LIMIT 1`,
+      [query],
+    )
+    if (masterRows.length > 0) {
+      return res.json({
+        source: 'ingredient_master_direct',
+        note: 'ingredient_profile_mv 미갱신 원료입니다.',
+        data: masterRows[0],
+      })
+    }
+
+    return res.status(404).json({ error: 'Ingredient not found', query })
+  } catch (err) {
+    // ingredient_profile_mv가 아직 없을 경우 graceful fallback
+    if (err.message?.includes('ingredient_profile_mv')) {
+      return res.status(503).json({ error: 'ingredient_profile_mv not yet created. Run migration first.' })
+    }
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.get('/api/regulations-quality-summary', async (req, res) => {
   try {
     const columns = await getRegulationCacheColumns()
