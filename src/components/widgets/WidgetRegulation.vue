@@ -14,7 +14,7 @@
           @click="selectedRegion = tab.label"
         >
           {{ tab.label }}
-          <span v-if="tab.label !== '전체' && tab.count" class="tab-count">{{ tab.count }}</span>
+          <span v-if="tab.count" class="tab-count">{{ tab.count }}</span>
         </button>
       </div>
       <div class="reg-controls">
@@ -105,7 +105,7 @@ import { useIngredientStore } from '../../stores/ingredientStore.js'
 import { mapRegulationSource, isVisibleSource } from '../../utils/regulationSource.js'
 
 const store = useIngredientStore()
-const selectedRegion = ref('전체')
+const selectedRegion = ref('한국')
 const searchQ = ref('')
 const expandedId = ref(null)
 const loading = ref(false)
@@ -113,11 +113,11 @@ const allData = ref([])
 const errorMessage = computed(() => store.error.value ? `규제 데이터 연결 오류: ${store.error.value}` : '')
 
 // ── 지역 순서 고정 (항상 표시, 데이터 없어도) ──
-const REGION_ORDER = ['전체', '한국', '유럽', '미국', '일본', '중국', '아세안', '안전성']
+const REGION_ORDER = ['한국', '유럽', '미국', '일본', '중국', '안전성']
 
 // ── 지역별 카운트 ──
 const regionCounts = computed(() => {
-  const counts = { '전체': allData.value.length }
+  const counts = {}
   for (const row of allData.value) {
     counts[row.region] = (counts[row.region] || 0) + 1
   }
@@ -134,9 +134,7 @@ const regionTabs = computed(() => {
 
 // ── 통계 뱃지 (선택된 지역 기준) ──
 const stats = computed(() => {
-  const base = selectedRegion.value === '전체'
-    ? allData.value
-    : allData.value.filter(r => r.region === selectedRegion.value)
+  const base = allData.value.filter(r => r.region === selectedRegion.value)
   return {
     ban: base.filter(r => r.status === 'ban').length,
     limit: base.filter(r => r.status === 'limit').length,
@@ -146,10 +144,7 @@ const stats = computed(() => {
 
 // ── 표시 데이터 (지역 + 검색 필터, 최대 50행) ──
 const displayData = computed(() => {
-  let data = allData.value
-  if (selectedRegion.value !== '전체') {
-    data = data.filter(r => r.region === selectedRegion.value)
-  }
+  let data = allData.value.filter(r => r.region === selectedRegion.value)
   if (searchQ.value.trim()) {
     const q = searchQ.value.trim().toLowerCase()
     data = data.filter(r => r.ingredient.toLowerCase().includes(q))
@@ -210,14 +205,16 @@ function getRegulationStatus(r) {
   if (r.display_status === 'limit') return 'limit'
   if (r.display_status === 'monitor') return 'monitor'
 
-  // 2순위: reg_status 구조화 값
+  // 2순위: reg_status 구조화 값 — allowed이면 텍스트 파싱 없이 바로 monitor
+  if (r.reg_status === 'allowed') return 'monitor'
   if (r.reg_status === 'banned') return 'ban'
   if (r.reg_status === 'restricted') return 'limit'
 
-  // 3순위: 텍스트 기반 (기존 방식)
+  // 3순위: 텍스트 기반 — 부정 표현("없음", "not in") 포함 시 텍스트 금지 판정 제외
   const restriction = (r.restriction || '').toLowerCase()
   const maxConc = (r.max_concentration || '').toLowerCase()
-  if (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit')) return 'ban'
+  const isNegated = /없음|not in|목록에 없|not prohibited|not restricted/.test(restriction)
+  if (!isNegated && (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit'))) return 'ban'
   if (maxConc && maxConc !== '-') return 'limit'
 
   // EWG 점수는 안전성 등급이지 규제 금지 여부가 아님 — 참고용으로만 사용

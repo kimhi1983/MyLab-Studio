@@ -101,9 +101,9 @@ import WidgetTodayLog from '../components/widgets/WidgetTodayLog.vue'
 import WidgetHlb from '../components/widgets/WidgetHlb.vue'
 
 const SIZES = [
-  { label: '1/3', w: 4 },
-  { label: '1/2', w: 6 },
-  { label: '2/3', w: 8 },
+  { label: '1/4', w: 3 },
+  { label: '2/4', w: 6 },
+  { label: '3/4', w: 9 },
   { label: '전체', w: 12 },
 ]
 

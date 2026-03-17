@@ -376,7 +376,7 @@ function isDisplayableRegulationRow({ ingredient, inci_name, restriction, reg_st
   if (/^\[?\d+\]?$/.test(displayName)) return false
   if (/^\(?\d+\)?\s*\d{2,}-\d{2,}-\d$/.test(displayName)) return false
   if (/^\(/.test(displayName)) return false             // (DL, (see note 등 파싱 실패
-  if (/^[,\s]/.test(displayName)) return false          // ,8060-28-4 등
+  if (/^[,\s\/]/.test(displayName)) return false        // ,8060-28-4, / Inonotus 등
   if (displayName.length < 2) return false              // 단일 문자
 
   return true
