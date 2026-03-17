@@ -39,6 +39,7 @@
     </div>
 
     <GridLayout
+      v-if="mounted"
       v-model:layout="localLayout"
       :col-num="12"
       :row-height="40"
@@ -74,7 +75,7 @@
 </template>
 
 <script setup>
-import { markRaw, ref, watch } from 'vue'
+import { markRaw, ref, watch, onMounted } from 'vue'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useWidgetStore, WIDGET_CATALOG } from '../stores/widgetStore.js'
 
@@ -120,7 +121,10 @@ const widgetComponents = {
 
 const { layout, activeWidgetIds, addWidget, removeWidget, resetLayout, saveLayout } = useWidgetStore()
 const showAddPanel = ref(false)
+const mounted = ref(false)
 const localLayout = ref(layout.value.map((item) => ({ ...item })))
+
+onMounted(() => { mounted.value = true })
 
 // 스토어 외부 변경(추가/제거/리셋) 시 localLayout 동기화
 watch(layout, (val) => {
