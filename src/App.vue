@@ -1,20 +1,25 @@
 <template>
   <div class="app-layout">
-    <AppHeader />
-    <AppNavBar>
-      <template #tools>
-        <slot name="nav-tools" />
-      </template>
-    </AppNavBar>
-    <main class="app-content">
+    <template v-if="isLoggedIn">
+      <AppHeader />
+      <AppNavBar>
+        <template #tools>
+          <slot name="nav-tools" />
+        </template>
+      </AppNavBar>
+    </template>
+    <main :class="isLoggedIn ? 'app-content' : 'app-content-full'">
       <router-view />
     </main>
   </div>
 </template>
 
 <script setup>
+import { useAuthStore } from './stores/authStore.js'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppNavBar from './components/layout/AppNavBar.vue'
+
+const { isLoggedIn } = useAuthStore()
 </script>
 
 <style>
@@ -60,6 +65,13 @@ import AppNavBar from './components/layout/AppNavBar.vue'
   max-width: 1400px;
   width: 100%;
   margin: 0 auto;
+}
+
+.app-content-full {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @media (max-width: 1199px) {

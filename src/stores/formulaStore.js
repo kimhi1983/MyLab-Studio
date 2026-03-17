@@ -1,7 +1,14 @@
 import { reactive, computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
+import { makeUserDataApi } from '../lib/userDataApi.js'
 
 const formulas = useLocalStorage('mylab:formulas', [])
+const api = makeUserDataApi('formulas')
+
+export async function loadFormulasFromServer() {
+  const data = await api.list()
+  if (data) formulas.value = data
+}
 
 function generateId() {
   return 'F-' + String(Date.now()).slice(-6) + Math.random().toString(36).slice(2, 5)
@@ -150,6 +157,7 @@ export function useFormulaStore() {
       version_history: [],
     }
     formulas.value.push(formula)
+    api.save(formula)
     return formula
   }
 
@@ -158,13 +166,14 @@ export function useFormulaStore() {
     if (idx === -1) return null
     const updated = { ...formulas.value[idx], ...data, updated_at: new Date().toISOString() }
     formulas.value[idx] = updated
-    // Trigger reactivity
     formulas.value = [...formulas.value]
+    api.update(id, updated)
     return updated
   }
 
   function deleteFormula(id) {
     formulas.value = formulas.value.filter(f => f.id !== id)
+    api.remove(id)
   }
 
   function changeStatus(id, status) {

@@ -11,8 +11,8 @@
     </div>
     <div class="header-actions">
       <div class="user-chip">
-        <span class="user-avatar">R</span>
-        <span class="user-name">연구원</span>
+        <span class="user-avatar">{{ userInitial }}</span>
+        <span class="user-name">{{ userName }}</span>
       </div>
       <router-link to="/formulas/new" class="btn btn-primary">+ 새 처방 생성</router-link>
     </div>
@@ -22,8 +22,10 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuthStore } from '../../stores/authStore.js'
 
 const route = useRoute()
+const { user } = useAuthStore()
 
 const formattedDate = computed(() => {
   const d = new Date()
@@ -32,6 +34,8 @@ const formattedDate = computed(() => {
 })
 
 const currentTitle = computed(() => route.meta?.title || 'MyLab')
+const userName = computed(() => user.value?.name || '연구원')
+const userInitial = computed(() => (user.value?.name || 'R')[0].toUpperCase())
 </script>
 
 <style scoped>

@@ -1,0 +1,25 @@
+# Cloudflare Tunnel 설정 파일
+# mylab-beta.kpros.kr → localhost:3001
+#
+# 사전 작업:
+# 1. cloudflared 설치: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+# 2. cloudflared tunnel login  (kpros.kr 도메인 인증)
+# 3. cloudflared tunnel create mylab
+# 4. 아래 tunnel ID와 credentials-file 경로를 실제 값으로 교체
+# 5. Cloudflare DNS: mylab-beta.kpros.kr CNAME → <tunnel-id>.cfargotunnel.com
+# 6. (선택) Windows 서비스 등록: cloudflared service install
+
+tunnel: <TUNNEL_ID>
+credentials-file: C:\Users\user\.cloudflared\<TUNNEL_ID>.json
+
+ingress:
+  - hostname: mylab-beta.kpros.kr
+    service: http://localhost:3001
+  - service: http_status:404
+
+# 실행:
+#   cloudflared tunnel run mylab
+#
+# 서비스 등록 (부팅 시 자동 시작):
+#   cloudflared service install
+#   net start cloudflared

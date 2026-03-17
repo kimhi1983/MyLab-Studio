@@ -1,7 +1,14 @@
 import { computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
+import { makeUserDataApi } from '../lib/userDataApi.js'
 
 const notes = useLocalStorage('mylab:notes', [])
+const api = makeUserDataApi('notes')
+
+export async function loadNotesFromServer() {
+  const data = await api.list()
+  if (data) notes.value = data
+}
 
 function generateId() {
   return 'note-' + String(Date.now()).slice(-8) + Math.random().toString(36).slice(2, 5)
@@ -61,6 +68,7 @@ export function useNoteStore() {
       updated_at: now,
     }
     notes.value = [note, ...notes.value]
+    api.save(note)
     return note
   }
 
@@ -77,11 +85,13 @@ export function useNoteStore() {
     const next = [...notes.value]
     next[idx] = updated
     notes.value = next
+    api.update(id, updated)
     return updated
   }
 
   function deleteNote(id) {
     notes.value = notes.value.filter(n => n.id !== id)
+    api.remove(id)
   }
 
   return {

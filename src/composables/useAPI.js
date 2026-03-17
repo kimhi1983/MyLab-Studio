@@ -1,6 +1,12 @@
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+function getAuthHeader() {
+  const token = localStorage.getItem('mylab:auth-token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 /**
  * COCHING MyLab API 클라이언트
@@ -9,6 +15,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 export function useAPI() {
   const loading = ref(false)
   const error = ref(null)
+  const router = useRouter()
 
   async function fetchJSON(path, options = {}) {
     loading.value = true
@@ -16,9 +23,15 @@ export function useAPI() {
     try {
       const url = `${API_BASE}${path}`
       const res = await fetch(url, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         ...options,
       })
+      if (res.status === 401) {
+        localStorage.removeItem('mylab:auth-token')
+        localStorage.removeItem('mylab:auth-user')
+        router.push('/login')
+        throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || `API ${res.status}`)

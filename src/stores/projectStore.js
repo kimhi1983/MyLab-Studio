@@ -1,8 +1,15 @@
 import { computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
 import { useFormulaStore } from './formulaStore.js'
+import { makeUserDataApi } from '../lib/userDataApi.js'
 
 const projects = useLocalStorage('mylab:projects', [])
+const api = makeUserDataApi('projects')
+
+export async function loadProjectsFromServer() {
+  const data = await api.list()
+  if (data) projects.value = data
+}
 
 function generateId() {
   return 'P-' + String(Date.now()).slice(-6) + Math.random().toString(36).slice(2, 5)
@@ -60,11 +67,13 @@ export function useProjectStore() {
       created_at: new Date().toISOString(),
     }
     projects.value.push(project)
+    api.save(project)
     return project
   }
 
   function deleteProject(id) {
     projects.value = projects.value.filter(p => p.id !== id)
+    api.remove(id)
   }
 
   function updateProject(id, data) {
@@ -72,6 +81,7 @@ export function useProjectStore() {
     if (idx === -1) return null
     projects.value[idx] = { ...projects.value[idx], ...data }
     projects.value = [...projects.value]
+    api.update(id, projects.value[idx])
     return projects.value[idx]
   }
 

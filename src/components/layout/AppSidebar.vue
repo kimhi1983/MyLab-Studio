@@ -21,19 +21,27 @@
         {{ collapsed ? '▶' : '◀' }}
       </button>
       <div v-if="!collapsed" class="user-info">
-        <div class="user-avatar">R</div>
-        <div>
-          <div class="user-name">연구원</div>
+        <div class="user-avatar">{{ userInitial }}</div>
+        <div class="user-meta">
+          <div class="user-name">{{ userName }}</div>
           <div class="user-role">Cosmetic R&D</div>
         </div>
+        <button class="logout-btn" @click="logout" title="로그아웃">⏻</button>
       </div>
     </div>
   </aside>
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useAuthStore } from '../../stores/authStore.js'
+
 defineProps({ collapsed: Boolean })
 defineEmits(['toggle'])
+
+const { user, logout } = useAuthStore()
+const userName = computed(() => user.value?.name || '연구원')
+const userInitial = computed(() => (user.value?.name || 'R')[0].toUpperCase())
 
 const navItems = [
   { to: '/', icon: '◈', label: '대시보드' },
@@ -135,6 +143,20 @@ const navItems = [
 }
 .toggle-btn:hover { background: var(--bg); }
 .user-info { display: flex; align-items: center; gap: 8px; }
+.user-meta { flex: 1; min-width: 0; }
+.logout-btn {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.logout-btn:hover { background: var(--red-bg); color: var(--red); border-color: var(--red); }
 .user-avatar {
   width: 32px; height: 32px;
   border-radius: 50%;

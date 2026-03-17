@@ -9,7 +9,25 @@ dotenv.config({ path: join(__dirname, '.env') })
 
 import express from 'express'
 import cors from 'cors'
+import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
 import pool from './db.js'
+
+const JWT_SECRET = process.env.JWT_SECRET || 'mylab-fallback-secret'
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
+
+// ─── JWT 인증 미들웨어 ───────────────────────────────────────────────────────
+function authenticateToken(req, res, next) {
+  const auth = req.headers['authorization']
+  const token = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null
+  if (!token) return res.status(401).json({ error: '로그인이 필요합니다.' })
+  try {
+    req.user = jwt.verify(token, JWT_SECRET)
+    next()
+  } catch {
+    return res.status(401).json({ error: '토큰이 만료되었거나 유효하지 않습니다.' })
+  }
+}
 
 const app = express()
 app.use(cors())
@@ -4166,6 +4184,221 @@ ${text.slice(0, 6000)}
   }
 })
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── 인증 시스템 ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function initAuthDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      name VARCHAR(100) NOT NULL,
+      role VARCHAR(20) DEFAULT 'user',
+      created_at TIMESTAMP DEFAULT NOW(),
+      last_login TIMESTAMP
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_formulas (
+      id TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_projects (
+      id TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_notes (
+      id TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_stability (
+      id TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      widget_layout JSONB,
+      dashboard_memo TEXT DEFAULT '',
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+}
+
+// ── 회원가입 ──
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body
+    if (!email || !password || !name) return res.status(400).json({ error: '이메일, 비밀번호, 이름을 입력해주세요.' })
+    if (password.length < 6) return res.status(400).json({ error: '비밀번호는 6자 이상이어야 합니다.' })
+
+    const exists = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()])
+    if (exists.rows.length) return res.status(409).json({ error: '이미 사용 중인 이메일입니다.' })
+
+    const password_hash = await bcrypt.hash(password, 10)
+    const { rows } = await pool.query(
+      `INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id, email, name, role, created_at`,
+      [email.toLowerCase(), password_hash, name]
+    )
+    const user = rows[0]
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN })
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } })
+  } catch (err) {
+    console.error('[auth/register]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── 로그인 ──
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body
+    if (!email || !password) return res.status(400).json({ error: '이메일과 비밀번호를 입력해주세요.' })
+
+    const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()])
+    if (!rows.length) return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' })
+
+    const user = rows[0]
+    const valid = await bcrypt.compare(password, user.password_hash)
+    if (!valid) return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' })
+
+    await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id])
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN })
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } })
+  } catch (err) {
+    console.error('[auth/login]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── 내 정보 ──
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, email, name, role, created_at, last_login FROM users WHERE id = $1', [req.user.id])
+    if (!rows.length) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── 사용자별 데이터 API ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 공통 CRUD 헬퍼
+function makeUserDataRouter(tableName) {
+  // GET 목록
+  app.get(`/api/user/${tableName}`, authenticateToken, async (req, res) => {
+    try {
+      const { rows } = await pool.query(`SELECT data FROM user_${tableName} WHERE user_id = $1 ORDER BY updated_at DESC`, [req.user.id])
+      res.json(rows.map(r => r.data))
+    } catch (err) { res.status(500).json({ error: err.message }) }
+  })
+
+  // POST 단건 저장
+  app.post(`/api/user/${tableName}`, authenticateToken, async (req, res) => {
+    try {
+      const item = req.body
+      const id = item.id || crypto.randomUUID()
+      await pool.query(
+        `INSERT INTO user_${tableName} (id, user_id, data, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (id) DO UPDATE SET data = $3, updated_at = NOW()`,
+        [id, req.user.id, JSON.stringify({ ...item, id })]
+      )
+      res.json({ ok: true, id })
+    } catch (err) { res.status(500).json({ error: err.message }) }
+  })
+
+  // POST 배치 저장 (마이그레이션용)
+  app.post(`/api/user/${tableName}/batch`, authenticateToken, async (req, res) => {
+    try {
+      const items = Array.isArray(req.body) ? req.body : []
+      for (const item of items) {
+        const id = item.id || crypto.randomUUID()
+        await pool.query(
+          `INSERT INTO user_${tableName} (id, user_id, data, updated_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (id) DO UPDATE SET data = $3, updated_at = NOW()`,
+          [id, req.user.id, JSON.stringify({ ...item, id })]
+        )
+      }
+      res.json({ ok: true, count: items.length })
+    } catch (err) { res.status(500).json({ error: err.message }) }
+  })
+
+  // PUT 수정
+  app.put(`/api/user/${tableName}/:id`, authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params
+      await pool.query(
+        `UPDATE user_${tableName} SET data = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`,
+        [JSON.stringify({ ...req.body, id }), id, req.user.id]
+      )
+      res.json({ ok: true })
+    } catch (err) { res.status(500).json({ error: err.message }) }
+  })
+
+  // DELETE 삭제
+  app.delete(`/api/user/${tableName}/:id`, authenticateToken, async (req, res) => {
+    try {
+      await pool.query(`DELETE FROM user_${tableName} WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id])
+      res.json({ ok: true })
+    } catch (err) { res.status(500).json({ error: err.message }) }
+  })
+}
+
+makeUserDataRouter('formulas')
+makeUserDataRouter('projects')
+makeUserDataRouter('notes')
+makeUserDataRouter('stability')
+
+// ── 사용자 설정 (위젯 레이아웃, 메모) ──
+app.get('/api/user/settings', authenticateToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT widget_layout, dashboard_memo FROM user_settings WHERE user_id = $1', [req.user.id])
+    res.json(rows[0] || { widget_layout: null, dashboard_memo: '' })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+app.put('/api/user/settings', authenticateToken, async (req, res) => {
+  try {
+    const { widget_layout, dashboard_memo } = req.body
+    await pool.query(
+      `INSERT INTO user_settings (user_id, widget_layout, dashboard_memo, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         widget_layout = COALESCE($2, user_settings.widget_layout),
+         dashboard_memo = COALESCE($3, user_settings.dashboard_memo),
+         updated_at = NOW()`,
+      [req.user.id, widget_layout ? JSON.stringify(widget_layout) : null, dashboard_memo ?? null]
+    )
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
 // ─── 안정성 테스트 (stability_tests) ──────────────────────────────────────
 app.get('/api/stability', async (req, res) => {
   try {
@@ -4234,6 +4467,12 @@ if (existsSync(DIST_DIR)) {
     console.log('[Verification] DB 초기화 완료')
   } catch (err) {
     console.error('[Verification] DB 초기화 실패:', err.message)
+  }
+  try {
+    await initAuthDB()
+    console.log('[Auth] DB 초기화 완료')
+  } catch (err) {
+    console.error('[Auth] DB 초기화 실패:', err.message)
   }
   app.listen(PORT, () => {
     console.log(`[MyLab API] Running on http://localhost:${PORT}`)

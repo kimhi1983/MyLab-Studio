@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
+import { getSettings, saveSettings } from '../lib/userDataApi.js'
 
 export const GRID_COL_NUM = 12
 export const GRID_ROW_HEIGHT = 40
@@ -33,6 +34,13 @@ const DEFAULT_LAYOUT = [
 ]
 
 const savedLayout = useLocalStorage('mylab:dashboard-layout-v4', null)
+
+export async function loadWidgetSettingsFromServer() {
+  const settings = await getSettings()
+  if (settings?.widget_layout) {
+    savedLayout.value = settings.widget_layout
+  }
+}
 
 if (typeof window !== 'undefined') {
   const url = new URL(window.location.href)
@@ -98,6 +106,7 @@ export function useWidgetStore() {
 
   function saveLayout(newLayout) {
     savedLayout.value = sanitizeLayout(newLayout)
+    saveSettings({ widget_layout: savedLayout.value })
   }
 
   function addWidget(widgetId) {
