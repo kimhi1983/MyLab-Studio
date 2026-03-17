@@ -53,7 +53,12 @@
               <td>
                 <span :class="['region-chip', getRegionClass(row.region)]">{{ row.region }}</span>
               </td>
-              <td class="td-name">{{ row.ingredient }}</td>
+              <td class="td-name">
+                {{ row.ingredient }}
+                <span v-if="row.ewg_score" :class="ewgBadgeClass(row.ewg_score)" class="ewg-badge">
+                  EWG {{ row.ewg_score }}
+                </span>
+              </td>
               <td class="td-restrict">
                 <span v-if="row.restrictionShort" class="restrict-text">{{ row.restrictionShort }}</span>
                 <span v-else class="restrict-empty">—</span>
@@ -234,6 +239,12 @@ function ewgClass(score) {
   if (score >= 7) return 'ewg-high'
   if (score >= 4) return 'ewg-mid'
   return 'ewg-low'
+}
+
+function ewgBadgeClass(score) {
+  if (score <= 2) return 'ewg-low'
+  if (score <= 6) return 'ewg-moderate'
+  return 'ewg-high'
 }
 </script>
 
@@ -505,6 +516,9 @@ function ewgClass(score) {
 .ewg-low  { background: rgba(58,144,104,0.15); color: var(--green); }
 .ewg-mid  { background: rgba(184,147,90,0.15);  color: var(--amber); }
 .ewg-high { background: rgba(196,78,78,0.15);   color: var(--red); }
+
+/* 메인 행 EWG 배지 (ewgBadgeClass 전용) */
+.ewg-moderate { background: #fff3cd; color: #856404; }
 
 /* 기능 표시 */
 .expand-fn { color: var(--text-sub); }

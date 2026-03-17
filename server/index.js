@@ -508,6 +508,61 @@ app.get('/api/regulation-sources', async (req, res) => {
   }
 })
 
+// ─── EWG 제품별 등급 ───
+app.get('/api/ewg-product-ratings', async (req, res) => {
+  try {
+    const { hazard, limit = 50, offset = 0 } = req.query
+    let where = []
+    let params = []
+    let idx = 1
+
+    if (hazard) {
+      where.push(`ewg_hazard_level = $${idx++}`)
+      params.push(hazard.toUpperCase())
+    }
+
+    const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : ''
+    const [countRes, dataRes] = await Promise.all([
+      pool.query(`SELECT count(*) FROM ewg_product_ratings ${whereClause}`, params),
+      pool.query(
+        `SELECT product_id, product_name, brand, ewg_avg_score, ewg_max_score,
+                ewg_hazard_level, high_concern_ingredients, ingredient_count,
+                scored_ingredient_count, computed_at
+         FROM ewg_product_ratings ${whereClause}
+         ORDER BY ewg_avg_score DESC NULLS LAST
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit), parseInt(offset)],
+      ),
+    ])
+
+    res.json({
+      total: parseInt(countRes.rows[0].count),
+      items: dataRes.rows,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── EWG 원료별 상세 ───
+app.get('/api/ewg-ingredient/:inci_name', async (req, res) => {
+  try {
+    const { inci_name } = req.params
+    const { rows } = await pool.query(
+      `SELECT e.*, i.ewg_score, i.korean_name
+       FROM ewg_ingredient_detail e
+       LEFT JOIN ingredient_master i ON i.inci_name = e.inci_name
+       WHERE e.inci_name ILIKE $1
+       LIMIT 1`,
+      [inci_name],
+    )
+    if (rows.length === 0) return res.status(404).json({ error: 'Not found' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.get('/api/regulations-quality-summary', async (req, res) => {
   try {
     const columns = await getRegulationCacheColumns()
@@ -3979,6 +4034,63 @@ ${phaseText}
     res.json(result)
   } catch (err) {
     console.error('[verify/process-review]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── API: 파일 텍스트 → AI 성분 파싱 ──
+app.post('/api/verify/parse-formula-text', async (req, res) => {
+  try {
+    const { text, filename = '' } = req.body
+    if (!text || text.trim().length < 5) {
+      return res.status(400).json({ error: '파싱할 텍스트가 없습니다.' })
+    }
+
+    const prompt = `당신은 화장품 처방 데이터 전문 파서입니다.
+아래는 "${filename}" 파일에서 추출한 텍스트입니다.
+이 텍스트에서 화장품 처방의 성분 목록을 추출하여 JSON으로 반환하세요.
+
+규칙:
+- INCI 명칭(영문), 한글명, wt%, Phase(A/B/C/D), 역할을 추출하세요.
+- wt%가 없으면 null로, Phase/역할이 없으면 ""로 두세요.
+- 헤더 행, 합계 행, 빈 행은 제외하세요.
+- 성분이 아닌 텍스트(제품명, 날짜, 메모 등)는 무시하세요.
+- 정확한 INCI 명칭이 확실하지 않으면 원문 그대로 inci_name에 넣으세요.
+
+반드시 아래 JSON 형식만 반환하세요 (다른 텍스트 없이):
+{
+  "product_name": "추출된 제품명 (없으면 null)",
+  "ingredients": [
+    { "inci_name": "Water", "name": "정제수", "wt_pct": 65.5, "phase": "A", "role": "용매" }
+  ]
+}
+
+--- 텍스트 시작 ---
+${text.slice(0, 6000)}
+--- 텍스트 끝 ---`
+
+    // Qwen 먼저 시도 (로컬, 빠름) → 실패 시 Gemini
+    let result = await callQwen(prompt, 'parse-formula')
+    if (!result || !Array.isArray(result.ingredients)) {
+      result = await callGemini(prompt, 'parse-formula', false)
+    }
+
+    if (!result || !Array.isArray(result.ingredients)) {
+      return res.status(503).json({ error: 'AI 파싱 실패. 텍스트 형식을 확인하거나 수동으로 입력해주세요.' })
+    }
+
+    res.json({
+      product_name: result.product_name || null,
+      ingredients: result.ingredients.map(i => ({
+        inci_name: String(i.inci_name || '').trim(),
+        name: String(i.name || '').trim(),
+        wt_pct: i.wt_pct != null ? parseFloat(i.wt_pct) || null : null,
+        phase: String(i.phase || '').trim().toUpperCase(),
+        role: String(i.role || '').trim(),
+      })).filter(i => i.inci_name || i.name)
+    })
+  } catch (err) {
+    console.error('[parse-formula-text]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
