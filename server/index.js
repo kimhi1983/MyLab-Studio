@@ -317,6 +317,8 @@ function parseRestrictionField(restriction) {
       if (obj.summary) textParts.push(obj.summary)
       if (obj.note && obj.note !== 'null') textParts.push(obj.note)
       if (obj.status && !obj.annex_type) textParts.push(obj.status === 'banned' ? '금지' : obj.status === 'restricted' ? '제한' : obj.status)
+      if (obj.country && !obj.annex_type) textParts.unshift(`[${obj.country}]`)
+      if (obj.cir_assessment) textParts.push(`CIR: ${obj.cir_assessment}`)
       return {
         text: textParts.join(' — ') || '',
         ewg_score: typeof obj.ewg_score === 'number' ? obj.ewg_score : null,
