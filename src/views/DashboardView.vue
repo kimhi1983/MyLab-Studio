@@ -38,45 +38,8 @@
       </div>
     </div>
 
-    <!-- 편집 모드: 드래그/리사이즈 가능 (위젯 설정 패널 열릴 때만) -->
-    <component
-      :is="GridLayout"
-      v-if="showAddPanel && GridLayout"
-      v-model:layout="localLayout"
-      :col-num="12"
-      :row-height="40"
-      :is-draggable="true"
-      :is-resizable="true"
-      :margin="[14, 14]"
-      :use-css-transforms="true"
-      @layout-updated="onLayoutUpdated"
-    >
-      <component
-        :is="GridItem"
-        v-for="item in localLayout"
-        :key="item.i"
-        :x="item.x"
-        :y="item.y"
-        :w="item.w"
-        :h="item.h"
-        :i="item.i"
-        :min-w="getMinW(item.i)"
-        :min-h="getMinH(item.i)"
-      >
-        <div class="widget-card edit-mode">
-          <div class="widget-header">
-            <span class="widget-title">{{ getWidgetLabel(item.i) }}</span>
-            <button class="widget-remove" @click.stop="onRemoveWidget(item.i)" title="위젯 제거">×</button>
-          </div>
-          <div class="widget-body">
-            <component :is="widgetComponents[item.i]" />
-          </div>
-        </div>
-      </component>
-    </component>
-
-    <!-- 일반 모드: 정적 CSS Grid -->
-    <div v-else class="widget-grid">
+    <!-- CSS Grid 위젯 레이아웃 -->
+    <div class="widget-grid">
       <div
         v-for="item in sortedLayout"
         :key="item.i"
@@ -96,19 +59,8 @@
 </template>
 
 <script setup>
-import { markRaw, ref, computed, watch, shallowRef, defineAsyncComponent } from 'vue'
+import { markRaw, ref, computed } from 'vue'
 import { useWidgetStore, WIDGET_CATALOG } from '../stores/widgetStore.js'
-
-// grid-layout-plus를 편집 모드 진입 시에만 동적 로드 (전역 이벤트 리스너 방지)
-const GridLayout = shallowRef(null)
-const GridItem = shallowRef(null)
-
-async function loadGridLayoutLib() {
-  if (GridLayout.value) return
-  const mod = await import('grid-layout-plus')
-  GridLayout.value = markRaw(mod.GridLayout)
-  GridItem.value = markRaw(mod.GridItem)
-}
 
 import WidgetKpi from '../components/widgets/WidgetKpi.vue'
 import WidgetRecentFormulas from '../components/widgets/WidgetRecentFormulas.vue'
@@ -150,25 +102,13 @@ const widgetComponents = {
   hlb: markRaw(WidgetHlb),
 }
 
-const { layout, activeWidgetIds, addWidget, removeWidget, resetLayout, saveLayout } = useWidgetStore()
+const { layout, activeWidgetIds, addWidget, removeWidget, resetLayout } = useWidgetStore()
 const showAddPanel = ref(false)
-const localLayout = ref(layout.value.map((item) => ({ ...item })))
 
-// 편집 모드 진입 시 grid-layout-plus 동적 로드 + localLayout 최신화
-async function toggleEditMode() {
-  if (!showAddPanel.value) {
-    await loadGridLayoutLib()
-    localLayout.value = layout.value.map((item) => ({ ...item }))
-  }
+function toggleEditMode() {
   showAddPanel.value = !showAddPanel.value
 }
 
-// 스토어 외부 변경(추가/제거/리셋) 시 localLayout 동기화
-watch(layout, (val) => {
-  localLayout.value = val.map((item) => ({ ...item }))
-}, { deep: true })
-
-// 일반 모드용 정렬된 레이아웃
 const sortedLayout = computed(() =>
   [...layout.value].sort((a, b) => a.y - b.y || a.x - b.x)
 )
@@ -178,10 +118,6 @@ function getWidgetStyle(item) {
     gridColumn: `span ${item.w}`,
     minHeight: `${item.h * 44}px`,
   }
-}
-
-function onLayoutUpdated(newLayout) {
-  saveLayout(newLayout)
 }
 
 function onToggleWidget(id) {
@@ -204,13 +140,6 @@ function getWidgetLabel(id) {
   return widgetLabels[id] || id
 }
 
-function getMinW(id) {
-  return WIDGET_CATALOG.find((w) => w.id === id)?.minW ?? 2
-}
-
-function getMinH(id) {
-  return WIDGET_CATALOG.find((w) => w.id === id)?.minH ?? 2
-}
 </script>
 
 <style scoped>
