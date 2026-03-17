@@ -39,8 +39,9 @@
     </div>
 
     <!-- 편집 모드: 드래그/리사이즈 가능 (위젯 설정 패널 열릴 때만) -->
-    <GridLayout
-      v-if="showAddPanel"
+    <component
+      :is="GridLayout"
+      v-if="showAddPanel && GridLayout"
       v-model:layout="localLayout"
       :col-num="12"
       :row-height="40"
@@ -50,7 +51,8 @@
       :use-css-transforms="true"
       @layout-updated="onLayoutUpdated"
     >
-      <GridItem
+      <component
+        :is="GridItem"
         v-for="item in localLayout"
         :key="item.i"
         :x="item.x"
@@ -64,14 +66,14 @@
         <div class="widget-card edit-mode">
           <div class="widget-header">
             <span class="widget-title">{{ getWidgetLabel(item.i) }}</span>
-            <button class="widget-remove" @click="onRemoveWidget(item.i)" title="위젯 제거">×</button>
+            <button class="widget-remove" @click.stop="onRemoveWidget(item.i)" title="위젯 제거">×</button>
           </div>
           <div class="widget-body">
             <component :is="widgetComponents[item.i]" />
           </div>
         </div>
-      </GridItem>
-    </GridLayout>
+      </component>
+    </component>
 
     <!-- 일반 모드: 정적 CSS Grid -->
     <div v-else class="widget-grid">
@@ -94,9 +96,19 @@
 </template>
 
 <script setup>
-import { markRaw, ref, computed, watch } from 'vue'
-import { GridLayout, GridItem } from 'grid-layout-plus'
+import { markRaw, ref, computed, watch, shallowRef, defineAsyncComponent } from 'vue'
 import { useWidgetStore, WIDGET_CATALOG } from '../stores/widgetStore.js'
+
+// grid-layout-plus를 편집 모드 진입 시에만 동적 로드 (전역 이벤트 리스너 방지)
+const GridLayout = shallowRef(null)
+const GridItem = shallowRef(null)
+
+async function loadGridLayoutLib() {
+  if (GridLayout.value) return
+  const mod = await import('grid-layout-plus')
+  GridLayout.value = markRaw(mod.GridLayout)
+  GridItem.value = markRaw(mod.GridItem)
+}
 
 import WidgetKpi from '../components/widgets/WidgetKpi.vue'
 import WidgetRecentFormulas from '../components/widgets/WidgetRecentFormulas.vue'
@@ -142,9 +154,10 @@ const { layout, activeWidgetIds, addWidget, removeWidget, resetLayout, saveLayou
 const showAddPanel = ref(false)
 const localLayout = ref(layout.value.map((item) => ({ ...item })))
 
-// 편집 모드 진입 시 localLayout 최신화
-function toggleEditMode() {
+// 편집 모드 진입 시 grid-layout-plus 동적 로드 + localLayout 최신화
+async function toggleEditMode() {
   if (!showAddPanel.value) {
+    await loadGridLayoutLib()
     localLayout.value = layout.value.map((item) => ({ ...item }))
   }
   showAddPanel.value = !showAddPanel.value
