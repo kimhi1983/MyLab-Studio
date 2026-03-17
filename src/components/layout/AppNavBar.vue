@@ -21,27 +21,29 @@
 </template>
 
 <script setup>
-const navItems = [
-  // 홈
+import { computed } from 'vue'
+import { useAuthStore } from '../../stores/authStore.js'
+
+const { user } = useAuthStore()
+const isAdmin = computed(() => user.value?.role === 'admin')
+
+const navItems = computed(() => [
   { to: '/', label: '대시보드', exact: true },
-  // 처방 관리
   { to: '/formulas', label: '처방 목록', exact: false },
   { to: '/formulas/new', label: '+ 생성', exact: true },
   { to: '/projects', label: '프로젝트', exact: true },
   { sep: true },
-  // 데이터 · 도구
   { to: '/ingredients', label: '성분 DB', exact: true },
   { to: '/hlb-calc', label: 'HLB 계산기', exact: true },
   { sep: true },
-  // 품질 관리
   { to: '/validation', label: '품질 검증', exact: true },
   { to: '/verify', label: '처방 검증', exact: true },
   { to: '/stability', label: '안정성', exact: true },
   { sep: true },
-  // 기록
   { to: '/journal', label: '일지', exact: true },
   { to: '/notes', label: '연구 노트', exact: true },
-]
+  ...(isAdmin.value ? [{ sep: true }, { to: '/admin', label: '⚙ 관리자', exact: true }] : []),
+])
 </script>
 
 <style scoped>

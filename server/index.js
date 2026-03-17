@@ -4304,6 +4304,94 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ─── 관리자 API ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: '관리자 권한이 필요합니다.' })
+  next()
+}
+
+// 전체 사용자 목록
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT u.id, u.email, u.name, u.role, u.created_at, u.last_login,
+             COUNT(f.id) AS formula_count
+      FROM users u
+      LEFT JOIN user_formulas f ON f.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `)
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// 사용자 역할 변경 (admin ↔ user)
+app.put('/api/admin/users/:id/role', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { role } = req.body
+    if (!['admin', 'user'].includes(role)) return res.status(400).json({ error: '유효하지 않은 역할입니다.' })
+    if (req.params.id === req.user.id) return res.status(400).json({ error: '자신의 역할은 변경할 수 없습니다.' })
+    await pool.query('UPDATE users SET role = $1 WHERE id = $2', [role, req.params.id])
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// 사용자 이름/이메일 수정
+app.put('/api/admin/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, email } = req.body
+    if (!name && !email) return res.status(400).json({ error: '변경할 내용이 없습니다.' })
+    const fields = []
+    const vals = []
+    let i = 1
+    if (name) { fields.push(`name = $${i++}`); vals.push(name) }
+    if (email) { fields.push(`email = $${i++}`); vals.push(email.toLowerCase()) }
+    vals.push(req.params.id)
+    await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${i}`, vals)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// 사용자 삭제 (cascade → 모든 데이터 삭제)
+app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) return res.status(400).json({ error: '자신의 계정은 삭제할 수 없습니다.' })
+    await pool.query('DELETE FROM users WHERE id = $1', [req.params.id])
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// 비밀번호 초기화 (관리자가 임시 비밀번호 설정)
+app.put('/api/admin/users/:id/password', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { password } = req.body
+    if (!password || password.length < 6) return res.status(400).json({ error: '비밀번호는 6자 이상이어야 합니다.' })
+    const hash = await bcrypt.hash(password, 10)
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.params.id])
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 관리자 계정 초기 설정 (서버 .env의 ADMIN_EMAIL로 자동 승격) ───
+async function initAdminAccount() {
+  const adminEmail = process.env.ADMIN_EMAIL
+  if (!adminEmail) return
+  await pool.query(`UPDATE users SET role = 'admin' WHERE email = $1`, [adminEmail.toLowerCase()])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ─── 사용자별 데이터 API ──────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -4473,6 +4561,12 @@ if (existsSync(DIST_DIR)) {
     console.log('[Auth] DB 초기화 완료')
   } catch (err) {
     console.error('[Auth] DB 초기화 실패:', err.message)
+  }
+  try {
+    await initAdminAccount()
+    if (process.env.ADMIN_EMAIL) console.log(`[Auth] 관리자 계정 설정: ${process.env.ADMIN_EMAIL}`)
+  } catch (err) {
+    console.error('[Auth] 관리자 계정 설정 실패:', err.message)
   }
   app.listen(PORT, () => {
     console.log(`[MyLab API] Running on http://localhost:${PORT}`)

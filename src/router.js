@@ -16,6 +16,7 @@ const routes = [
   { path: '/validation', name: 'validation', component: () => import('./views/ValidationView.vue'), meta: { title: '품질 검증', requireAuth: true } },
   { path: '/hlb-calc', name: 'hlb-calc', component: () => import('./views/HlbCalcView.vue'), meta: { title: 'HLB 계산기', requireAuth: true } },
   { path: '/verify', name: 'verify', component: () => import('./views/VerifyView.vue'), meta: { title: '처방 검증', requireAuth: true } },
+  { path: '/admin', name: 'admin', component: () => import('./views/AdminView.vue'), meta: { title: '관리자', requireAuth: true, requireAdmin: true } },
 ]
 
 const router = createRouter({
@@ -25,8 +26,14 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const token = localStorage.getItem('mylab:auth-token')
+  const userStr = localStorage.getItem('mylab:auth-user')
+  const user = userStr ? JSON.parse(userStr) : null
+
   if (to.meta.requireAuth && !token) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.requireAdmin && user?.role !== 'admin') {
+    return { name: 'dashboard' }
   }
   if (to.meta.public && token && (to.name === 'login' || to.name === 'register')) {
     return { name: 'dashboard' }

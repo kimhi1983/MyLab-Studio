@@ -42,8 +42,9 @@ defineEmits(['toggle'])
 const { user, logout } = useAuthStore()
 const userName = computed(() => user.value?.name || '연구원')
 const userInitial = computed(() => (user.value?.name || 'R')[0].toUpperCase())
+const isAdmin = computed(() => user.value?.role === 'admin')
 
-const navItems = [
+const navItems = computed(() => [
   { to: '/', icon: '◈', label: '대시보드' },
   { to: '/formulas', icon: '⚗', label: '처방 목록' },
   { to: '/formulas/new', icon: '+', label: '처방 생성' },
@@ -58,7 +59,8 @@ const navItems = [
   { sep: true },
   { to: '/journal', icon: '▤', label: '일지' },
   { to: '/notes', icon: '▧', label: '연구 노트' },
-]
+  ...(isAdmin.value ? [{ sep: true }, { to: '/admin', icon: '⚙', label: '관리자' }] : []),
+])
 </script>
 
 <style scoped>
