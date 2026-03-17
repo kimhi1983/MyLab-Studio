@@ -135,6 +135,12 @@
                 <div class="detail-kr">{{ detailData.korean_name || selectedItem.korean_name || '-' }}</div>
               </div>
 
+              <!-- 원료 유형 -->
+              <div class="detail-section" v-if="ingredientTypeLabel(detailData.ingredient_type || selectedItem.ingredient_type)">
+                <div class="section-label">원료 유형</div>
+                <div class="detail-value">{{ ingredientTypeLabel(detailData.ingredient_type || selectedItem.ingredient_type) }}</div>
+              </div>
+
               <!-- EWG 점수 -->
               <div class="detail-ewg-block" v-if="selectedItem.ewg_score != null">
                 <div class="ewg-score-label section-label">EWG 안전 등급</div>
@@ -207,6 +213,10 @@
               <div class="detail-name-block">
                 <div class="detail-inci">{{ selectedItem.inci_name }}</div>
                 <div class="detail-kr">{{ selectedItem.korean_name || '-' }}</div>
+              </div>
+              <div class="detail-section" v-if="ingredientTypeLabel(selectedItem.ingredient_type)">
+                <div class="section-label">원료 유형</div>
+                <div class="detail-value">{{ ingredientTypeLabel(selectedItem.ingredient_type) }}</div>
               </div>
               <div class="detail-section" v-if="selectedItem.ewg_score != null">
                 <div class="section-label">EWG 안전 등급</div>
@@ -377,6 +387,29 @@ function regStatusLabel(status) {
   if (status === 'restricted') return '제한'
   if (status === 'allowed') return '허용'
   return status
+}
+
+function ingredientTypeLabel(type) {
+  if (!type) return null
+  const map = {
+    single: '미분류',
+    ACTIVE: '활성 성분',
+    EMOLLIENT: '에몰리언트',
+    HUMECTANT: '보습제',
+    EMULSIFIER: '유화제',
+    SURFACTANT: '계면활성제',
+    PRESERVATIVE: '방부제',
+    PH_ADJUSTER: 'pH 조절제',
+    UV_FILTER_ORGANIC: '유기 자외선 차단제',
+    UV_FILTER_INORGANIC: '무기 자외선 차단제',
+    COLORANT: '착색제',
+    FRAGRANCE: '향료',
+    THICKENER: '점증제',
+    ANTIOXIDANT: '산화방지제',
+    SOLVENT: '용매',
+    OTHER: '기타',
+  }
+  return map[type] || type
 }
 
 function formatDate(iso) {

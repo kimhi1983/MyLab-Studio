@@ -365,15 +365,19 @@ function normalizeRegulationRestrictionText(text, regStatus = '') {
   return cleaned
 }
 
-function isDisplayableRegulationRow({ ingredient, inci_name, restriction, reg_status }) {
+function isDisplayableRegulationRow({ ingredient, inci_name, restriction, reg_status, quality_flag }) {
   const displayName = normalizeRegulationIngredientName(ingredient, inci_name)
   const text = String(restriction || '')
 
   if (!displayName) return false
+  if (quality_flag === 'invalid') return false          // 워크플로우 팀 배치 마킹
   if (reg_status === 'unknown') return false
   if (/유효하지 않은 원료명|원료 정보를 찾을 수 없습니다|해당하는 원료 정보를 찾을 수 없습니다/.test(text)) return false
   if (/^\[?\d+\]?$/.test(displayName)) return false
   if (/^\(?\d+\)?\s*\d{2,}-\d{2,}-\d$/.test(displayName)) return false
+  if (/^\(/.test(displayName)) return false             // (DL, (see note 등 파싱 실패
+  if (/^[,\s]/.test(displayName)) return false          // ,8060-28-4 등
+  if (displayName.length < 2) return false              // 단일 문자
 
   return true
 }
@@ -2873,17 +2877,26 @@ app.post('/api/validate-formula', async (req, res) => {
       detail: violationDetails.length > 0 ? violationDetails.join('; ') : `${regRows.length}건 규제 확인, 이상 없음`,
     })
 
-    // 3. 방부제 존재 여부 확인
+    // 3. 방부제 존재 여부 — DB ingredient_type 조회 (하드코딩 제거)
+    const inciNamesForCheck = ingredients.map(i => (i.inci_name || '').toLowerCase()).filter(Boolean)
+    let preservativeIncis = new Set()
+    let phAdjusterIncis = new Set()
+    if (inciNamesForCheck.length > 0) {
+      const ph = inciNamesForCheck.map((_, i) => `$${i + 1}`).join(',')
+      const { rows: typeRows } = await pool.query(
+        `SELECT lower(inci_name) AS inci, ingredient_type FROM ingredient_master
+         WHERE lower(inci_name) = ANY(ARRAY[${ph}]) AND ingredient_type IN ('PRESERVATIVE','PH_ADJUSTER')`,
+        inciNamesForCheck
+      )
+      for (const r of typeRows) {
+        if (r.ingredient_type === 'PRESERVATIVE') preservativeIncis.add(r.inci)
+        if (r.ingredient_type === 'PH_ADJUSTER') phAdjusterIncis.add(r.inci)
+      }
+    }
     const preservatives = ingredients.filter(i => {
       const name = (i.inci_name || '').toLowerCase()
       const type = (i.type || '').toUpperCase()
-      return type === 'PRESERVATIVE' ||
-        name.includes('phenoxyethanol') ||
-        name.includes('paraben') ||
-        name.includes('benzoic acid') ||
-        name.includes('sorbic acid') ||
-        name.includes('dehydroacetic acid') ||
-        name.includes('benzyl alcohol')
+      return type === 'PRESERVATIVE' || preservativeIncis.has(name)
     })
     const preservativeStatus = preservatives.length > 0 ? 'pass' : 'warn'
     checks.push({
@@ -2895,17 +2908,11 @@ app.post('/api/validate-formula', async (req, res) => {
         : '방부제 성분이 없습니다. 제품 안정성 검토 필요',
     })
 
-    // 4. pH 조절제 존재 여부
+    // 4. pH 조절제 존재 여부 — DB ingredient_type 조회 (하드코딩 제거)
     const phAdjusters = ingredients.filter(i => {
       const name = (i.inci_name || '').toLowerCase()
       const type = (i.type || '').toUpperCase()
-      return type === 'PH_ADJUSTER' ||
-        name.includes('sodium hydroxide') ||
-        name.includes('citric acid') ||
-        name.includes('triethanolamine') ||
-        name.includes('lactic acid') ||
-        name.includes('phosphoric acid') ||
-        name.includes('arginine')
+      return type === 'PH_ADJUSTER' || phAdjusterIncis.has(name)
     })
     const phStatus = phAdjusters.length > 0 ? 'pass' : 'warn'
     checks.push({

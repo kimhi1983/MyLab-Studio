@@ -205,20 +205,23 @@ function toggleExpand(id) {
 }
 
 function getRegulationStatus(r) {
-  // EWG 점수 기반 (GEMINI_SAFETY_* 안전성 데이터)
-  if (r.ewg_score != null) {
-    if (r.ewg_score >= 7) return 'ban'
-    if (r.ewg_score >= 4) return 'limit'
-    return 'monitor'
-  }
-  // reg_status 기반 (coching_legacy / 구조화 JSON)
+  // 1순위: 워크플로우팀 배치 산출 display_status (가장 정확)
+  if (r.display_status === 'ban') return 'ban'
+  if (r.display_status === 'limit') return 'limit'
+  if (r.display_status === 'monitor') return 'monitor'
+
+  // 2순위: reg_status 구조화 값
   if (r.reg_status === 'banned') return 'ban'
   if (r.reg_status === 'restricted') return 'limit'
-  // 텍스트 기반 (기존 방식)
+
+  // 3순위: 텍스트 기반 (기존 방식)
   const restriction = (r.restriction || '').toLowerCase()
   const maxConc = (r.max_concentration || '').toLowerCase()
   if (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit')) return 'ban'
   if (maxConc && maxConc !== '-') return 'limit'
+
+  // EWG 점수는 안전성 등급이지 규제 금지 여부가 아님 — 참고용으로만 사용
+  // (display_status 없을 때만 폴백)
   return 'monitor'
 }
 

@@ -24,6 +24,7 @@ const HIDDEN_PATTERN = /gemini|qwen|llm|openai|claude|chatgpt|gpt/i
 // 완전히 숨겨야 하는 소스 (데이터 행 자체 제외)
 export const HIDDEN_SOURCES = [
   'coching_legacy', 'gem2_kb', 'gemini_kb', 'UNKNOWN', 'REG_MONITOR_ERROR',
+  'REG_MONITOR_US', 'REG_MONITOR_KR',  // 내부 배치용 미정제 데이터
 ]
 
 /**
