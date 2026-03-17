@@ -47,6 +47,8 @@ const userInitial = computed(() => (user.value?.name || 'R')[0].toUpperCase())
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   min-height: 56px;
+  position: relative;
+  z-index: 100;
 }
 
 .header-brand {

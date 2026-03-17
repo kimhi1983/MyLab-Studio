@@ -83,7 +83,7 @@
       >
         <div class="widget-header">
           <span class="widget-title">{{ getWidgetLabel(item.i) }}</span>
-          <button class="widget-remove" @click="onRemoveWidget(item.i)" title="위젯 제거">×</button>
+          <button class="widget-remove hidden-remove" @click="onRemoveWidget(item.i)" title="위젯 제거">×</button>
         </div>
         <div class="widget-body">
           <component :is="widgetComponents[item.i]" />
@@ -378,6 +378,15 @@ function getMinH(id) {
   color: var(--red);
   cursor: pointer;
   flex-shrink: 0;
+}
+
+.hidden-remove {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.widget-card:hover .hidden-remove {
+  opacity: 1;
 }
 
 .widget-body {

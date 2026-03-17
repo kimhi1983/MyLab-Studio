@@ -53,6 +53,8 @@ const navItems = computed(() => [
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   min-height: 38px;
+  position: relative;
+  z-index: 100;
 }
 
 .nav-tabs {
