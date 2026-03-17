@@ -38,45 +38,27 @@
       </div>
     </div>
 
-    <GridLayout
-      v-if="mounted"
-      v-model:layout="localLayout"
-      :col-num="12"
-      :row-height="40"
-      :is-draggable="true"
-      :is-resizable="true"
-      :margin="[14, 14]"
-      :use-css-transforms="true"
-      @layout-updated="onLayoutUpdated"
-    >
-      <GridItem
-        v-for="item in localLayout"
+    <div class="widget-grid">
+      <div
+        v-for="item in sortedLayout"
         :key="item.i"
-        :x="item.x"
-        :y="item.y"
-        :w="item.w"
-        :h="item.h"
-        :i="item.i"
-        :min-w="getMinW(item.i)"
-        :min-h="getMinH(item.i)"
+        class="widget-card"
+        :style="getWidgetStyle(item)"
       >
-        <div class="widget-card">
-          <div class="widget-header">
-            <span class="widget-title">{{ getWidgetLabel(item.i) }}</span>
-            <button class="widget-remove" @click="onRemoveWidget(item.i)" title="위젯 제거">×</button>
-          </div>
-          <div class="widget-body">
-            <component :is="widgetComponents[item.i]" />
-          </div>
+        <div class="widget-header">
+          <span class="widget-title">{{ getWidgetLabel(item.i) }}</span>
+          <button class="widget-remove" @click="onRemoveWidget(item.i)" title="위젯 제거">×</button>
         </div>
-      </GridItem>
-    </GridLayout>
+        <div class="widget-body">
+          <component :is="widgetComponents[item.i]" />
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { markRaw, ref, watch, onMounted } from 'vue'
-import { GridLayout, GridItem } from 'grid-layout-plus'
+import { markRaw, ref, computed } from 'vue'
 import { useWidgetStore, WIDGET_CATALOG } from '../stores/widgetStore.js'
 
 import WidgetKpi from '../components/widgets/WidgetKpi.vue'
@@ -119,20 +101,20 @@ const widgetComponents = {
   hlb: markRaw(WidgetHlb),
 }
 
-const { layout, activeWidgetIds, addWidget, removeWidget, resetLayout, saveLayout } = useWidgetStore()
+const { layout, activeWidgetIds, addWidget, removeWidget, resetLayout } = useWidgetStore()
 const showAddPanel = ref(false)
-const mounted = ref(false)
-const localLayout = ref(layout.value.map((item) => ({ ...item })))
 
-onMounted(() => { mounted.value = true })
+// y → x 순으로 정렬하여 CSS grid 배치
+const sortedLayout = computed(() =>
+  [...layout.value].sort((a, b) => a.y - b.y || a.x - b.x)
+)
 
-// 스토어 외부 변경(추가/제거/리셋) 시 localLayout 동기화
-watch(layout, (val) => {
-  localLayout.value = val.map((item) => ({ ...item }))
-}, { deep: true })
-
-function onLayoutUpdated(newLayout) {
-  saveLayout(newLayout)
+function getWidgetStyle(item) {
+  const rowHeight = 44 // px per h unit
+  return {
+    gridColumn: `span ${item.w}`,
+    minHeight: `${item.h * rowHeight}px`,
+  }
 }
 
 function onToggleWidget(id) {
@@ -153,14 +135,6 @@ function onReset() {
 
 function getWidgetLabel(id) {
   return widgetLabels[id] || id
-}
-
-function getMinW(id) {
-  return WIDGET_CATALOG.find((w) => w.id === id)?.minW ?? 2
-}
-
-function getMinH(id) {
-  return WIDGET_CATALOG.find((w) => w.id === id)?.minH ?? 2
 }
 </script>
 
@@ -313,9 +287,15 @@ function getMinH(id) {
   color: var(--accent);
 }
 
+/* 위젯 그리드 */
+.widget-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 14px;
+}
+
 /* 위젯 카드 */
 .widget-card {
-  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -334,11 +314,6 @@ function getMinH(id) {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  cursor: grab;
-}
-
-.widget-header:active {
-  cursor: grabbing;
 }
 
 .widget-title {
@@ -367,45 +342,26 @@ function getMinH(id) {
   min-height: 0;
 }
 
-/* 드래그 플레이스홀더 (ghost) 스타일 재정의 */
-:deep(.vgl-item--placeholder) {
-  background: var(--accent-light) !important;
-  border: 1.5px dashed var(--accent) !important;
-  border-radius: var(--radius) !important;
-  opacity: 0.6 !important;
-  z-index: 2 !important;
+@media (max-width: 900px) {
+  .widget-grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+  .widget-card[style*="span 8"],
+  .widget-card[style*="span 9"],
+  .widget-card[style*="span 10"],
+  .widget-card[style*="span 11"],
+  .widget-card[style*="span 12"] {
+    grid-column: span 6 !important;
+  }
 }
 
-/* 드래그 중인 위젯 */
-:deep(.vgl-item--dragging) .widget-card {
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-  opacity: 0.85;
-}
-
-:deep(.vgl-item--resizing) .widget-card {
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-}
-
-/* 리사이즈 핸들 스타일 */
-:deep(.vgl-item__resizer) {
-  width: 16px !important;
-  height: 16px !important;
-  border-right: 2px solid var(--accent) !important;
-  border-bottom: 2px solid var(--accent) !important;
-  opacity: 0;
-  transition: opacity 0.2s;
-  border-radius: 0 0 var(--radius) 0;
-}
-
-:deep(.vgl-item:hover .vgl-item__resizer) {
-  opacity: 0.6;
-}
-
-:deep(.vgl-item--resizing .vgl-item__resizer) {
-  opacity: 1;
-}
-
-@media (max-width: 700px) {
+@media (max-width: 600px) {
+  .widget-grid {
+    grid-template-columns: 1fr;
+  }
+  .widget-card {
+    grid-column: span 1 !important;
+  }
   .dash-toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -415,7 +371,6 @@ function getMinH(id) {
 
 <!-- 전역 컨테이너 쿼리: 위젯 크기에 따라 내부 폰트 자동 조정 -->
 <style>
-/* widget 컨테이너 기준 폰트 스케일링 */
 @container widget (max-width: 280px) {
   .widget-body table,
   .widget-body .mini-table { font-size: 10px; }
