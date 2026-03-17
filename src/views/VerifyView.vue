@@ -48,6 +48,29 @@
 
             <!-- 성분 테이블 -->
             <div class="ing-section">
+              <!-- 파일 드래그앤드롭 영역 -->
+              <div
+                class="drop-zone"
+                :class="{ 'drag-over': dragOver, 'importing': importing }"
+                @dragover.prevent="dragOver = true"
+                @dragleave="dragOver = false"
+                @drop.prevent="onDrop"
+              >
+                <template v-if="importing">
+                  <span class="drop-icon">⏳</span>
+                  <span class="drop-text">{{ importStatus || 'AI 분석 중…' }}</span>
+                </template>
+                <template v-else>
+                  <span class="drop-icon">📂</span>
+                  <span class="drop-text">Excel / PDF 파일을 여기에 드래그하거나</span>
+                  <label class="drop-browse">
+                    파일 선택
+                    <input type="file" accept=".xlsx,.xls,.pdf" style="display:none" @change="onFileInput" />
+                  </label>
+                </template>
+                <span v-if="importError" class="drop-error">{{ importError }}</span>
+              </div>
+
               <div class="ing-header">
                 <span class="ing-title">성분 목록</span>
                 <div class="ing-actions">
@@ -108,8 +131,37 @@
           </div>
         </div>
 
-        <!-- 우: 검증 리포트 -->
-        <div v-if="report" class="panel report-panel">
+        <!-- 우: 검증 리포트 (항상 표시) -->
+        <div class="panel report-panel">
+
+          <!-- 빈 상태 -->
+          <template v-if="!report && !verifying">
+            <div class="report-empty">
+              <div class="report-empty-icon">◎</div>
+              <div class="report-empty-title">검증 리포트</div>
+              <div class="report-empty-desc">처방을 입력하고 검증 실행을 누르면<br>규제·배합비·물성·안정성 결과가 여기에 표시됩니다.</div>
+              <div class="report-empty-items">
+                <span>규제 확인</span>
+                <span>배합비</span>
+                <span>물성 예측</span>
+                <span>원가</span>
+                <span>안정성</span>
+                <span>방부 효능</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 검증 중 -->
+          <template v-else-if="verifying">
+            <div class="report-empty">
+              <div class="report-empty-icon verifying-spin">◎</div>
+              <div class="report-empty-title">검증 중…</div>
+              <div class="report-empty-desc">성분 데이터를 분석하고 있습니다.</div>
+            </div>
+          </template>
+
+          <!-- 리포트 내용 -->
+          <template v-else-if="report">
           <div class="panel-header">
             <span class="panel-title">검증 리포트</span>
             <span :class="['status-chip', `status-${report.summary.overall_status.toLowerCase()}`]">
@@ -209,6 +261,8 @@
               {{ loadingProcess ? '분석 중...' : '⑧ 공정 검토' }}
             </button>
           </div>
+          </template>
+
         </div>
 
         <!-- ⑦ 대체 성분 제안 결과 패널 -->
@@ -271,6 +325,75 @@
               <div class="proc-title">품질 확인 항목</div>
               <div v-for="(qc, qi) in processReview.quality_checks" :key="qi" class="qc-row">✓ {{ qc }}</div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── 파일 임포트 미리보기 모달 ─── -->
+    <div v-if="showPreview" class="detail-overlay" @click.self="closePreview">
+      <div class="import-modal">
+        <div class="detail-header">
+          <h2>파일 임포트 미리보기</h2>
+          <div class="import-legend">
+            <span class="match-badge match-exact">DB 일치</span>
+            <span class="match-badge match-fuzzy">DB 유사</span>
+            <span class="match-badge match-none">미인식</span>
+          </div>
+          <button class="btn-del" @click="closePreview">×</button>
+        </div>
+        <div class="import-body">
+          <table class="import-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>파일 원본명</th>
+                <th>DB 매칭 결과</th>
+                <th>한글명</th>
+                <th>wt%</th>
+                <th>Phase</th>
+                <th>역할</th>
+                <th>상태</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in importRows" :key="i" :class="['import-row', row.matchStatus]">
+                <td class="col-no">{{ i + 1 }}</td>
+                <td class="td-orig">
+                  <input v-model="row.inci_name" class="form-input" />
+                </td>
+                <td class="td-match">
+                  <span v-if="row.match" class="match-inci">{{ row.match.inci_name }}</span>
+                  <span v-else class="match-none-text">–</span>
+                </td>
+                <td><input v-model="row.name" class="form-input" /></td>
+                <td><input v-model.number="row.wt_pct" type="number" step="0.01" class="form-input pct-input" /></td>
+                <td>
+                  <select v-model="row.phase" class="form-input phase-sel">
+                    <option value="">-</option>
+                    <option>A</option><option>B</option><option>C</option><option>D</option>
+                  </select>
+                </td>
+                <td><input v-model="row.role" class="form-input" /></td>
+                <td>
+                  <span :class="['match-badge', matchLabel(row.matchStatus).cls]">
+                    {{ matchLabel(row.matchStatus).text }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="import-footer">
+          <div class="import-stats">
+            총 {{ importRows.length }}행 ·
+            <span class="c-exact">일치 {{ importRows.filter(r=>r.matchStatus==='exact').length }}</span> ·
+            <span class="c-fuzzy">유사 {{ importRows.filter(r=>r.matchStatus==='fuzzy').length }}</span> ·
+            <span class="c-none">미인식 {{ importRows.filter(r=>r.matchStatus==='unmatched').length }}</span>
+          </div>
+          <div class="import-btns">
+            <button class="btn-primary" @click="applyImport">처방에 적용</button>
+            <button class="btn-outline" @click="closePreview">취소</button>
           </div>
         </div>
       </div>
@@ -350,6 +473,35 @@
 
 <script setup>
 import { ref, computed, reactive } from 'vue'
+import { useFormulaImport } from '../composables/useFormulaImport.js'
+
+const {
+  importing, importStatus, importRows, importProductName,
+  showPreview, dragOver, importError,
+  onDrop, onFileInput, closePreview,
+} = useFormulaImport()
+
+function applyImport() {
+  const valid = importRows.value.filter((r) => r.inci_name || r.name)
+  form.ingredients = valid.map((r) => ({
+    inci_name: r.inci_name || '',
+    name: r.name || '',
+    wt_pct: r.wt_pct ?? null,
+    phase: r.phase || '',
+    role: r.role || '',
+  }))
+  if (importProductName.value && !form.product_name) {
+    form.product_name = importProductName.value
+  }
+  closePreview()
+}
+
+function matchLabel(status) {
+  if (status === 'exact') return { text: 'DB 일치', cls: 'match-exact' }
+  if (status === 'fuzzy') return { text: 'DB 유사', cls: 'match-fuzzy' }
+  if (status === 'empty') return { text: '–', cls: 'match-empty' }
+  return { text: '미인식', cls: 'match-none' }
+}
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 const tab = ref('input')
@@ -576,8 +728,10 @@ function formatDate(d) { if (!d) return '-'; const dt = new Date(d); return `${d
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 
 /* 레이아웃 */
-.input-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 1199px) { .input-layout { grid-template-columns: 1fr; } }
+.input-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.report-panel { position: sticky; top: 16px; max-height: calc(100vh - 120px); display: flex; flex-direction: column; overflow: hidden; }
+.panel-body { flex: 1; overflow-y: auto; }
+@media (max-width: 1199px) { .input-layout { grid-template-columns: 1fr; } .report-panel { position: static; max-height: none; } }
 
 /* 패널 */
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
@@ -806,6 +960,30 @@ function formatDate(d) { if (!d) return '-'; const dt = new Date(d); return `${d
 .crit-control { font-size: 11px; color: var(--accent); margin-top: 2px; }
 .qc-row { font-size: 12px; color: var(--text); padding: 3px 0; }
 
+/* 리포트 빈 상태 */
+.report-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; min-height: 360px; padding: 40px 24px; text-align: center; gap: 12px;
+}
+.report-empty-icon {
+  font-size: 36px; color: var(--border-mid); line-height: 1;
+}
+.report-empty-title {
+  font-size: 15px; font-weight: 600; color: var(--text-sub);
+}
+.report-empty-desc {
+  font-size: 12px; color: var(--text-dim); line-height: 1.7;
+}
+.report-empty-items {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 8px;
+}
+.report-empty-items span {
+  padding: 3px 10px; border-radius: 10px; font-size: 11px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text-dim);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.verifying-spin { display: inline-block; animation: spin 1.2s linear infinite; color: var(--accent); }
+
 /* 상세 모달 */
 .detail-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200;
@@ -822,8 +1000,76 @@ function formatDate(d) { if (!d) return '-'; const dt = new Date(d); return `${d
 .detail-header h2 { font-size: 16px; font-weight: 700; color: var(--text); margin: 0; }
 .detail-body { padding: 16px 20px; overflow-y: auto; }
 
+/* 드래그앤드롭 영역 */
+.drop-zone {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1.5px dashed var(--border-mid); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 12px; background: var(--bg);
+  transition: border-color 0.15s, background 0.15s; cursor: default;
+}
+.drop-zone.drag-over {
+  border-color: var(--accent); background: var(--accent-light);
+}
+.drop-zone.importing {
+  border-color: var(--blue); background: var(--blue-bg);
+}
+.drop-icon { font-size: 18px; }
+.drop-text { font-size: 12px; color: var(--text-sub); }
+.drop-browse {
+  padding: 4px 12px; font-size: 11px; font-weight: 600;
+  background: var(--surface); border: 1px solid var(--accent);
+  color: var(--accent); border-radius: 4px; cursor: pointer;
+}
+.drop-browse:hover { background: var(--accent-light); }
+.drop-error { font-size: 11px; color: var(--red); width: 100%; margin-top: 4px; }
+
+/* 임포트 모달 */
+.import-modal {
+  width: 92vw; max-width: 1000px; max-height: 85vh;
+  background: var(--surface); border-radius: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.import-legend { display: flex; gap: 6px; margin-left: auto; margin-right: 12px; }
+.import-body { flex: 1; overflow: auto; padding: 0 16px 8px; }
+.import-footer {
+  padding: 12px 16px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.import-stats { font-size: 12px; color: var(--text-dim); }
+.import-btns { display: flex; gap: 8px; }
+.c-exact { color: var(--green); font-weight: 600; }
+.c-fuzzy { color: var(--amber); font-weight: 600; }
+.c-none { color: var(--red); font-weight: 600; }
+
+/* 임포트 테이블 */
+.import-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.import-table th {
+  text-align: left; padding: 6px 6px; font-size: 10px; font-weight: 600;
+  color: var(--text-dim); border-bottom: 1px solid var(--border);
+  background: var(--bg); position: sticky; top: 0;
+}
+.import-table td { padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.import-row.unmatched td:first-child { border-left: 3px solid var(--red); }
+.import-row.fuzzy td:first-child { border-left: 3px solid var(--amber); }
+.import-row.exact td:first-child { border-left: 3px solid var(--green); }
+.td-orig .form-input { color: var(--text); }
+.td-match { font-size: 11px; }
+.match-inci { color: var(--green); font-weight: 500; }
+.match-none-text { color: var(--text-dim); }
+
+/* 매칭 상태 배지 */
+.match-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.match-exact { background: var(--green-bg); color: var(--green); }
+.match-fuzzy { background: var(--amber-bg); color: var(--amber); }
+.match-none { background: var(--red-bg); color: var(--red); }
+.match-empty { background: var(--bg); color: var(--text-dim); }
+
 @media (max-width: 767px) {
   .meta-row { grid-template-columns: 1fr; }
   .detail-modal { width: 95vw; }
+  .import-modal { width: 98vw; }
 }
 </style>
