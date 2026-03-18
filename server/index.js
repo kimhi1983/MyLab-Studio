@@ -5387,6 +5387,27 @@ ${compoundStr}
     }
 
     const usedIngredients = aiResult?.formula_input || baseIngredients
+
+    // ── 15. PRECISION-ARITHMETIC: Aqua 역산으로 100.00% 강제 보정 ──
+    // AI가 Aqua를 고정값으로 설정해서 합계가 100%가 안 되는 경우 교정
+    const balanceKeyFinal = baseStructure?.balance_key || 'Aqua'
+    const aquaIdxFinal = usedIngredients.findIndex(i =>
+      (i.inci_name || '').toLowerCase() === balanceKeyFinal.toLowerCase() ||
+      (i.inci_name || '').toLowerCase() === 'aqua' ||
+      (i.name || '') === '정제수'
+    )
+    if (aquaIdxFinal !== -1) {
+      // 정수 연산으로 정밀도 보장: ×100 → 합산 → 역산
+      const otherSumInt = usedIngredients.reduce((s, i, idx) => {
+        if (idx === aquaIdxFinal) return s
+        return s + Math.round((parseFloat(i.percentage) || 0) * 100)
+      }, 0)
+      const aquaPctInt = 10000 - otherSumInt  // 10000 = 100.00%
+      if (aquaPctInt > 0) {
+        usedIngredients[aquaIdxFinal].percentage = parseFloat((aquaPctInt / 100).toFixed(2))
+      }
+    }
+
     const finalTotal = parseFloat(usedIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2))
 
     res.json({
