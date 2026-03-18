@@ -65,6 +65,10 @@ export function useAPI() {
     return fetchJSON(`/api/ingredients/${id}`)
   }
 
+  async function getIngredientDetailFull(id) {
+    return fetchJSON(`/api/ingredients/${id}/detail`)
+  }
+
   async function getIngredientTypes() {
     return fetchJSON('/api/ingredient-types')
   }
@@ -237,7 +241,7 @@ export function useAPI() {
   return {
     loading, error, fetchJSON,
     getStats,
-    getIngredients, getIngredient, getIngredientTypes, getIngredientsDb,
+    getIngredients, getIngredient, getIngredientDetailFull, getIngredientTypes, getIngredientsDb,
     getCompoundsList, expandInci, phCheck,
     getRegulations, getRegulationSources,
     getKnowledge,
