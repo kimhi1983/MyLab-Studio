@@ -233,6 +233,25 @@ export function useAPI() {
     })
   }
 
+  // ─── Purpose Gate ───
+  async function detectPurpose(product_name) {
+    return fetchJSON('/api/purpose-gate/detect', {
+      method: 'POST',
+      body: JSON.stringify({ product_name }),
+    })
+  }
+
+  async function getPurposeIngredients(purpose, type = 'REQUIRED', limit = 5) {
+    return fetchJSON(`/api/purpose-gate/ingredients?purpose=${encodeURIComponent(purpose)}&type=${type}&limit=${limit}`)
+  }
+
+  async function validatePurposeGate(product_name, ingredients) {
+    return fetchJSON('/api/purpose-gate/validate', {
+      method: 'POST',
+      body: JSON.stringify({ product_name, ingredients }),
+    })
+  }
+
   // ─── 건강 체크 ───
   async function healthCheck() {
     return fetchJSON('/api/health')
@@ -258,6 +277,9 @@ export function useAPI() {
     getCollectionStatus,
     generateFormulaIdea,
     adjustBySpec,
+    detectPurpose,
+    getPurposeIngredients,
+    validatePurposeGate,
     healthCheck,
   }
 }

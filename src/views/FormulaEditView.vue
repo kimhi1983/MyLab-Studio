@@ -114,6 +114,25 @@
             </select>
           </div>
 
+          <!-- Purpose Gate 자동 감지 결과 -->
+          <div v-if="purposeDetectResult" class="purpose-gate-hint">
+            <div class="pg-detect-row">
+              <span class="pg-badge pg-cat">{{ purposeDetectResult.category_key }}</span>
+              <span class="pg-sep">|</span>
+              <span class="pg-label">주 목적</span>
+              <span class="pg-badge pg-purpose">{{ purposeDetectResult.primary_purpose }}</span>
+              <span class="pg-sep">|</span>
+              <span class="pg-label">신뢰도</span>
+              <span class="pg-badge" :class="purposeDetectResult.confidence === 'high' ? 'pg-high' : purposeDetectResult.confidence === 'medium' ? 'pg-med' : 'pg-low'">
+                {{ purposeDetectResult.confidence }}
+              </span>
+            </div>
+            <div v-if="purposeRequiredPreview.length" class="pg-required-row">
+              <span class="pg-req-label">필수 성분</span>
+              <span class="pg-req-list">{{ purposeRequiredPreview.map(i => i.korean_name || i.inci_name).join(', ') }}</span>
+            </div>
+          </div>
+
           <!-- 전성분 자동 채우기 -->
           <div class="form-group ai-fill-group">
             <label class="form-label">추가 요구사항 (선택)</label>
@@ -198,6 +217,28 @@
     <div v-if="ingredientSumWarning" class="sum-warning-banner" :class="ingredientSumClass">
       <span class="sum-icon">⚠</span>
       <span>{{ ingredientSumWarning }}</span>
+    </div>
+
+    <!-- Purpose Gate 검증 결과 배너 -->
+    <div v-if="purposeValidateResult" class="purpose-validate-banner">
+      <div class="pvb-header">
+        <span class="pvb-title">Purpose Gate 검증</span>
+        <span class="pvb-score" :style="{ color: purposeValidateResult.purpose_score >= 70 ? 'var(--green)' : purposeValidateResult.purpose_score >= 40 ? '#f59e0b' : 'var(--red)' }">
+          목적 적합도 {{ purposeValidateResult.purpose_score }}점
+        </span>
+        <button class="pvb-close" @click="purposeValidateResult = null">×</button>
+      </div>
+      <div v-if="purposeValidateResult.warnings?.length" class="pvb-warnings">
+        <div
+          v-for="(w, i) in purposeValidateResult.warnings"
+          :key="i"
+          class="pvb-warn-item"
+          :class="w.startsWith('⛔') ? 'pvb-error' : w.startsWith('⚠') ? 'pvb-warn' : 'pvb-info'"
+        >{{ w }}</div>
+      </div>
+      <div v-if="!purposeValidateResult.warnings?.length" class="pvb-ok">
+        ✓ 처방이 목적 성분 기준을 충족합니다
+      </div>
     </div>
 
     <!-- Ingredient Table -->
@@ -645,6 +686,12 @@ const aiFillStep = ref('')
 const showIdeaModal = ref(false)
 const ideaResult = ref(null)
 
+// Purpose Gate
+const purposeDetectResult = ref(null)
+const purposeRequiredPreview = ref([])
+const purposeValidateResult = ref(null)
+let purposeDebounceTimer = null
+
 // 기능 2: 물성 연동 조정
 const showSpecModal = ref(false)
 const isSpecAdjusting = ref(false)
@@ -780,6 +827,32 @@ const statuses = [
 // 제품 유형 변경 시 물성 기본값 자동 채움
 watch(() => form.product_type, (newType) => {
   if (newType) generatePhysicalProps(newType)
+})
+
+// 제품 유형 변경 시 Purpose Gate 자동 감지 (debounce 500ms)
+watch(() => form.product_type, (newType) => {
+  purposeDetectResult.value = null
+  purposeRequiredPreview.value = []
+  if (!newType) return
+  clearTimeout(purposeDebounceTimer)
+  purposeDebounceTimer = setTimeout(async () => {
+    try {
+      const res = await api.detectPurpose(newType)
+      if (res?.success) {
+        purposeDetectResult.value = res
+        // REQUIRED 성분 미리보기 최대 5개
+        const primary = res.primary_purpose
+        if (primary) {
+          const ingRes = await api.getPurposeIngredients(primary, 'REQUIRED', 5)
+          if (ingRes?.success) {
+            purposeRequiredPreview.value = ingRes.ingredients || []
+          }
+        }
+      }
+    } catch (_) {
+      // Purpose Gate 감지 실패는 조용히 처리
+    }
+  }, 500)
 })
 
 // 물성 값 변경 감지 — 처방 자동 조정 버튼 활성화
@@ -1309,7 +1382,7 @@ async function onGenerateIdea() {
   }
 }
 
-function applyIdeaResult() {
+async function applyIdeaResult() {
   if (!ideaResult.value) return
   const hasIngredients = form.formula_data.ingredients.length > 0
   if (hasIngredients && !confirm('기존 원료 배합표를 덮어씌웁니다. 계속하시겠습니까?')) return
@@ -1336,6 +1409,15 @@ function applyIdeaResult() {
 
   showIdeaModal.value = false
   ideaResult.value = null
+
+  // Purpose Gate 자동 검증
+  const ings = form.formula_data.ingredients
+  if (form.product_type && ings.length) {
+    try {
+      const vRes = await api.validatePurposeGate(form.product_type, ings)
+      if (vRes?.success) purposeValidateResult.value = vRes
+    } catch (_) {}
+  }
 }
 
 // ───────────────────────────────────────────────
@@ -1772,6 +1854,105 @@ async function onAiFill() {
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-dim);
+}
+
+/* ─── Purpose Gate UI ─────────────────────────── */
+.purpose-gate-hint {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.pg-detect-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pg-sep { color: var(--border); }
+.pg-label { color: var(--text-sub); }
+.pg-badge {
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.pg-cat { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.pg-purpose { background: color-mix(in srgb, #10b981 15%, transparent); color: #10b981; }
+.pg-high { background: #d1fae5; color: #065f46; }
+.pg-med { background: #fef3c7; color: #92400e; }
+.pg-low { background: #fee2e2; color: #991b1b; }
+.pg-required-row {
+  margin-top: 5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.pg-req-label {
+  flex-shrink: 0;
+  color: var(--text-sub);
+  font-size: 11px;
+}
+.pg-req-list {
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Purpose Gate 검증 배너 */
+.purpose-validate-banner {
+  margin: 8px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pvb-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.pvb-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-sub);
+  flex: 1;
+}
+.pvb-score {
+  font-size: 13px;
+  font-weight: 700;
+}
+.pvb-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.pvb-warnings {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pvb-warn-item {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 5px;
+}
+.pvb-error { background: #fef2f2; color: #dc2626; }
+.pvb-warn  { background: #fffbeb; color: #d97706; }
+.pvb-info  { background: #eff6ff; color: #2563eb; }
+.pvb-ok {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #059669;
 }
 
 /* 메모 확대 버튼 */
