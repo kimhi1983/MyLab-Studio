@@ -213,6 +213,22 @@ export function useAPI() {
     return fetchJSON(`/api/ingredients/db?${params}`)
   }
 
+  // ─── 처방 아이디어 생성 ───
+  async function generateFormulaIdea(data) {
+    return fetchJSON('/api/formula/generate-idea', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  // ─── 물성 기반 처방 자동 조정 ───
+  async function adjustBySpec(data) {
+    return fetchJSON('/api/formula/adjust-by-spec', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
   // ─── 건강 체크 ───
   async function healthCheck() {
     return fetchJSON('/api/health')
@@ -236,6 +252,8 @@ export function useAPI() {
     searchSimilarProducts,
     calcBatchScale,
     getCollectionStatus,
+    generateFormulaIdea,
+    adjustBySpec,
     healthCheck,
   }
 }

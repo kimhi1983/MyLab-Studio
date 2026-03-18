@@ -117,11 +117,11 @@
           <!-- 전성분 자동 채우기 -->
           <div class="form-group ai-fill-group">
             <label class="form-label">추가 요구사항 (선택)</label>
-            <input v-model="aiRequirements" class="form-input" placeholder="예: 고보습, 민감성 피부, 비건">
+            <input v-model="aiRequirements" class="form-input" placeholder="예: 고보습, 민감성 피부, 비건, EWG 그린">
             <button
               class="btn-ai-fill"
               :disabled="!form.product_type || isAiFilling"
-              @click="onAiFill"
+              @click="onGenerateIdea"
             >
               <span v-if="isAiFilling" class="ai-spinner"></span>
               {{ isAiFilling ? aiFillStep : '스마트 처방 생성' }}
@@ -137,6 +137,14 @@
           <span class="section-label">PHYSICAL SPEC</span>
           <span class="section-title">물성 · 안정성</span>
           <span v-if="!form.product_type" class="props-hint">제품 유형을 선택하면 기본값이 채워집니다</span>
+          <button
+            v-if="form.formula_data.ingredients.length >= 1 && specChangedFields.length > 0"
+            class="btn-spec-adjust"
+            :disabled="isSpecAdjusting"
+            @click="onAdjustBySpec"
+          >
+            {{ isSpecAdjusting ? '조정 중...' : `처방 자동 조정 (${specChangedFields.join('·')})` }}
+          </button>
         </div>
         <div class="props-body">
           <div class="props-grid">
@@ -186,10 +194,16 @@
       </div>
     </div>
 
+    <!-- 배합비 합계 경고 배너 -->
+    <div v-if="ingredientSumWarning" class="sum-warning-banner" :class="ingredientSumClass">
+      <span class="sum-icon">⚠</span>
+      <span>{{ ingredientSumWarning }}</span>
+    </div>
+
     <!-- Ingredient Table -->
-    <div style="margin-top: 16px">
+    <div style="margin-top: 4px">
       <IngredientTable :ingredients="form.formula_data.ingredients" :editable="true"
-        @update:ingredients="val => form.formula_data.ingredients = val" />
+        @update:ingredients="onIngredientsUpdate" />
     </div>
 
     <!-- pH 예측 + 방부제 효력 -->
@@ -444,6 +458,145 @@
       </div>
     </Teleport>
 
+    <!-- AI 처방 아이디어 미리보기 모달 -->
+    <Teleport to="body">
+      <div v-if="showIdeaModal" class="memo-modal-overlay" @click.self="showIdeaModal = false">
+        <div class="memo-modal idea-modal">
+          <div class="memo-modal-header">
+            <span class="memo-modal-title">스마트 처방 미리보기</span>
+            <button class="memo-modal-close" @click="showIdeaModal = false">×</button>
+          </div>
+          <div class="memo-modal-body idea-modal-body">
+
+            <!-- 예상 물성 -->
+            <div v-if="ideaResult" class="idea-spec-bar">
+              <div class="idea-spec-item" v-if="ideaResult.estimated_spec?.ph">
+                <span class="idea-spec-label">예상 pH</span>
+                <span class="idea-spec-val">{{ ideaResult.estimated_spec.ph }}</span>
+              </div>
+              <div class="idea-spec-item" v-if="ideaResult.estimated_spec?.viscosity">
+                <span class="idea-spec-label">예상 점도</span>
+                <span class="idea-spec-val">{{ ideaResult.estimated_spec.viscosity }} cps</span>
+              </div>
+              <div class="idea-spec-item">
+                <span class="idea-spec-label">성분 수</span>
+                <span class="idea-spec-val">{{ ideaResult.ingredients?.length || 0 }}종</span>
+              </div>
+              <div class="idea-spec-item">
+                <span class="idea-spec-label">배합비 합산</span>
+                <span class="idea-spec-val" :style="{ color: Math.abs((ideaResult.totalPercentage||0) - 100) > 0.1 ? 'var(--red)' : 'var(--green)' }">
+                  {{ (ideaResult.totalPercentage || 0).toFixed(2) }}%
+                </span>
+              </div>
+              <div class="idea-spec-item" v-if="ideaResult.filters_applied?.from_cache">
+                <span class="idea-spec-label">소스</span>
+                <span class="idea-spec-val" style="color:var(--green)">캐시 처방 참조</span>
+              </div>
+            </div>
+
+            <!-- 원료 목록 미리보기 -->
+            <div class="idea-table-wrap">
+              <table class="idea-table">
+                <thead>
+                  <tr>
+                    <th>원료명</th>
+                    <th>INCI</th>
+                    <th>배합비 (%)</th>
+                    <th>기능</th>
+                    <th>Phase</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="ing in (ideaResult?.ingredients || [])" :key="ing.inci_name">
+                    <td class="idea-name">{{ ing.name }}</td>
+                    <td class="idea-inci">{{ ing.inci_name }}</td>
+                    <td class="idea-pct">{{ Number(ing.percentage).toFixed(2) }}%</td>
+                    <td class="idea-fn">{{ ing.function }}</td>
+                    <td class="idea-phase">{{ ing.phase }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+          <div class="idea-modal-footer">
+            <button class="btn btn-ghost" @click="showIdeaModal = false">취소</button>
+            <button class="btn btn-primary" @click="applyIdeaResult">처방 적용</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 물성 연동 조정 모달 -->
+    <Teleport to="body">
+      <div v-if="showSpecModal" class="memo-modal-overlay" @click.self="showSpecModal = false">
+        <div class="memo-modal spec-modal">
+          <div class="memo-modal-header">
+            <span class="memo-modal-title">물성 자동 조정 미리보기</span>
+            <button class="memo-modal-close" @click="showSpecModal = false">×</button>
+          </div>
+          <div class="memo-modal-body spec-modal-body" v-if="specAdjustResult">
+
+            <!-- 예상 물성 변화 -->
+            <div v-if="Object.keys(specAdjustResult.preview_spec || {}).length" class="spec-preview-bar">
+              <div class="spec-preview-item" v-for="(val, key) in specAdjustResult.preview_spec" :key="key">
+                <span class="spec-preview-label">{{ key }}</span>
+                <span class="spec-preview-val">{{ val }}</span>
+              </div>
+              <div class="spec-preview-item">
+                <span class="spec-preview-label">배합비 변화</span>
+                <span class="spec-preview-val">
+                  {{ specAdjustResult.original_total }}% → {{ specAdjustResult.adjusted_total }}%
+                </span>
+              </div>
+            </div>
+
+            <!-- 경고 메시지 -->
+            <div v-if="specAdjustResult.warnings?.length" class="spec-warnings">
+              <div v-for="w in specAdjustResult.warnings" :key="w" class="spec-warning-item">
+                <span class="spec-warn-icon">{{ w.startsWith('⚠') ? '' : '→' }}</span>
+                {{ w }}
+              </div>
+            </div>
+
+            <!-- 원료 변경 비교 -->
+            <div class="spec-compare-grid">
+              <div class="spec-col">
+                <div class="spec-col-title">현재 처방</div>
+                <div class="spec-ing-list">
+                  <div v-for="ing in form.formula_data.ingredients" :key="ing.inci_name" class="spec-ing-row">
+                    <span class="spec-ing-name">{{ ing.name }}</span>
+                    <span class="spec-ing-pct">{{ Number(ing.percentage).toFixed(2) }}%</span>
+                  </div>
+                </div>
+              </div>
+              <div class="spec-arrow-col">→</div>
+              <div class="spec-col">
+                <div class="spec-col-title">조정 후 처방</div>
+                <div class="spec-ing-list">
+                  <div
+                    v-for="ing in specAdjustResult.adjusted_ingredients"
+                    :key="ing.inci_name"
+                    class="spec-ing-row"
+                    :class="isSpecChanged(ing) ? 'spec-ing-changed' : ''"
+                  >
+                    <span class="spec-ing-name">{{ ing.name }}</span>
+                    <span class="spec-ing-pct">{{ Number(ing.percentage).toFixed(2) }}%</span>
+                    <span v-if="isSpecNew(ing)" class="spec-ing-new">신규</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+          <div class="idea-modal-footer">
+            <button class="btn btn-ghost" @click="showSpecModal = false">취소</button>
+            <button class="btn btn-primary" @click="applySpecResult">적용</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Actions -->
     <div class="form-actions">
       <router-link to="/formulas" class="btn btn-ghost">취소</router-link>
@@ -487,6 +640,34 @@ const activeCreateTab = ref('new')
 const aiRequirements = ref('')
 const isAiFilling = ref(false)
 const aiFillStep = ref('')
+
+// 기능 1: AI 처방 아이디어 미리보기
+const showIdeaModal = ref(false)
+const ideaResult = ref(null)
+
+// 기능 2: 물성 연동 조정
+const showSpecModal = ref(false)
+const isSpecAdjusting = ref(false)
+const specAdjustResult = ref(null)
+const specChangedFields = ref([])
+const specBaseValues = reactive({ ph: '', viscosity: '', appearance: '' })
+
+// 기능 3: 배합비 합계 경고
+const ingredientSumWarning = computed(() => {
+  const ings = form.formula_data.ingredients
+  if (!ings.length) return null
+  const total = ings.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0)
+  const rounded = Math.round(total * 1000) / 1000
+  if (rounded > 100.01) return `배합비 초과: 현재 합계 ${rounded.toFixed(3)}% (100% 초과)`
+  if (rounded < 99.5 && ings.length > 2) return `배합비 미달: 현재 합계 ${rounded.toFixed(3)}% (정제수 등으로 보충 필요)`
+  return null
+})
+const ingredientSumClass = computed(() => {
+  const ings = form.formula_data.ingredients
+  if (!ings.length) return ''
+  const total = ings.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0)
+  return total > 100.01 ? 'sum-error' : 'sum-warn'
+})
 
 // 메모 모달
 const showMemoModal = ref(false)
@@ -601,6 +782,18 @@ watch(() => form.product_type, (newType) => {
   if (newType) generatePhysicalProps(newType)
 })
 
+// 물성 값 변경 감지 — 처방 자동 조정 버튼 활성화
+watch(
+  () => [physicalProps.ph, physicalProps.viscosity, physicalProps.appearance],
+  ([newPh, newVisc, newApp]) => {
+    const changed = []
+    if (specBaseValues.ph && specBaseValues.ph !== newPh && newPh) changed.push('pH')
+    if (specBaseValues.viscosity && specBaseValues.viscosity !== newVisc && newVisc) changed.push('점도')
+    if (specBaseValues.appearance && specBaseValues.appearance !== newApp && newApp) changed.push('외관')
+    specChangedFields.value = changed
+  }
+)
+
 onMounted(() => {
   if (!isNew.value && route.params.id) {
     const f = getById(route.params.id)
@@ -627,6 +820,8 @@ function loadForm(f) {
     phase: '',
     ...ing,
   }))
+  // 물성 기준값 저장 (변경 감지용)
+  Object.assign(specBaseValues, { ph: physicalProps.ph, viscosity: physicalProps.viscosity, appearance: physicalProps.appearance })
 }
 
 function addTag() {
@@ -1048,6 +1243,160 @@ function onCalcBatch() {
     const targetGrams = ((pct / 100) * target).toFixed(2)
     return { name: ing.name || ing.inci_name || '', percentage: pct.toFixed(1), currentGrams, targetGrams }
   })
+}
+
+// ───────────────────────────────────────────────
+// 기능 3: 원료 변경 시 Aqua 자동 재배분
+// ───────────────────────────────────────────────
+
+function rebalanceAqua(ingredients) {
+  const copy = ingredients.map(i => ({ ...i }))
+  const aquaIdx = copy.findIndex(i =>
+    (i.inci_name || '').toLowerCase() === 'aqua' ||
+    (i.name || '') === '정제수' ||
+    (i.name || '').includes('정제수')
+  )
+  if (aquaIdx === -1) return copy // Aqua 없으면 그대로
+
+  // LRM: 정수 연산으로 합계 10000 유지 (= wt% × 100)
+  const otherTotal = copy.reduce((s, i, idx) => {
+    if (idx === aquaIdx) return s
+    return s + Math.round((parseFloat(i.percentage) || 0) * 100)
+  }, 0)
+  const aquaInt = Math.max(0, 10000 - otherTotal)
+  copy[aquaIdx].percentage = aquaInt / 100
+
+  return copy
+}
+
+function onIngredientsUpdate(newIngredients) {
+  // Aqua 자동 재배분 적용
+  const balanced = rebalanceAqua(newIngredients)
+  form.formula_data.ingredients = balanced
+}
+
+// ───────────────────────────────────────────────
+// 기능 1: AI 처방 아이디어 생성 + 미리보기
+// ───────────────────────────────────────────────
+
+async function onGenerateIdea() {
+  if (!form.product_type || isAiFilling.value) return
+
+  isAiFilling.value = true
+  aiFillStep.value = '처방 아이디어 생성 중...'
+  ideaResult.value = null
+
+  try {
+    const res = await api.generateFormulaIdea({
+      product_type: form.product_type,
+      formula_name: form.title || '',
+      requirements: aiRequirements.value || '',
+    })
+
+    if (res?.success && res.data?.ingredients?.length) {
+      ideaResult.value = res.data
+      showIdeaModal.value = true
+    } else {
+      // DB 처방이 없으면 기존 AI 처방 생성으로 폴백
+      aiFillStep.value = 'AI 처방 생성 중...'
+      await onAiFill()
+    }
+  } catch (err) {
+    alert('처방 아이디어 생성 실패: ' + (err.message || '서버 오류'))
+  } finally {
+    isAiFilling.value = false
+    aiFillStep.value = ''
+  }
+}
+
+function applyIdeaResult() {
+  if (!ideaResult.value) return
+  const hasIngredients = form.formula_data.ingredients.length > 0
+  if (hasIngredients && !confirm('기존 원료 배합표를 덮어씌웁니다. 계속하시겠습니까?')) return
+
+  form.formula_data.ingredients = (ideaResult.value.ingredients || []).map(ing => ({
+    name: ing.name || '',
+    inci_name: ing.inci_name || '',
+    percentage: parseFloat(ing.percentage) || 0,
+    function: ing.function || '',
+    phase: ing.phase || '',
+  }))
+  form.formula_data.total_percentage = ideaResult.value.totalPercentage || 100
+
+  if (!form.title.trim()) form.title = `${form.product_type} 처방`
+  if (!form.tags.includes('스마트처방')) form.tags.push('스마트처방')
+
+  // 예상 물성 반영
+  if (ideaResult.value.estimated_spec?.ph && !physicalProps.ph) {
+    physicalProps.ph = String(ideaResult.value.estimated_spec.ph)
+  }
+  if (ideaResult.value.estimated_spec?.viscosity && !physicalProps.viscosity) {
+    physicalProps.viscosity = String(ideaResult.value.estimated_spec.viscosity)
+  }
+
+  showIdeaModal.value = false
+  ideaResult.value = null
+}
+
+// ───────────────────────────────────────────────
+// 기능 2: 물성 변경 시 처방 자동 조정
+// ───────────────────────────────────────────────
+
+async function onAdjustBySpec() {
+  if (!form.formula_data.ingredients.length || isSpecAdjusting.value) return
+
+  isSpecAdjusting.value = true
+  specAdjustResult.value = null
+
+  try {
+    const changedFields = specChangedFields.value
+    const targetSpec = {}
+    if (changedFields.includes('pH')) targetSpec.ph = physicalProps.ph
+    if (changedFields.includes('점도')) targetSpec.viscosity = physicalProps.viscosity
+    if (changedFields.includes('외관')) targetSpec.appearance = physicalProps.appearance
+
+    const res = await api.adjustBySpec({
+      current_ingredients: form.formula_data.ingredients,
+      target_spec: targetSpec,
+      changed_fields: changedFields.map(f => f === 'pH' ? 'ph' : f === '점도' ? 'viscosity' : 'appearance'),
+    })
+
+    if (res?.success && res.data) {
+      specAdjustResult.value = res.data
+      showSpecModal.value = true
+    } else {
+      alert('처방 조정 실패: ' + (res?.error || '서버 오류'))
+    }
+  } catch (err) {
+    alert('서버 연결 오류: ' + err.message)
+  } finally {
+    isSpecAdjusting.value = false
+  }
+}
+
+function applySpecResult() {
+  if (!specAdjustResult.value) return
+  form.formula_data.ingredients = specAdjustResult.value.adjusted_ingredients.map(i => ({
+    phase: '',
+    ...i,
+    percentage: parseFloat(i.percentage) || 0,
+  }))
+  // 기준값 갱신
+  Object.assign(specBaseValues, { ph: physicalProps.ph, viscosity: physicalProps.viscosity, appearance: physicalProps.appearance })
+  specChangedFields.value = []
+  showSpecModal.value = false
+  specAdjustResult.value = null
+}
+
+function isSpecChanged(ing) {
+  if (!specAdjustResult.value) return false
+  const orig = form.formula_data.ingredients.find(i => i.inci_name === ing.inci_name)
+  if (!orig) return false
+  return Math.abs(parseFloat(orig.percentage) - parseFloat(ing.percentage)) > 0.001
+}
+
+function isSpecNew(ing) {
+  return !form.formula_data.ingredients.some(i => i.inci_name === ing.inci_name)
 }
 
 // ───────────────────────────────────────────────
@@ -2023,4 +2372,114 @@ async function onAiFill() {
   font-weight: 600;
   background: var(--accent-light);
 }
+
+/* ─── 배합비 합계 경고 배너 ─── */
+.sum-warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 12px;
+  border: 1px solid;
+}
+.sum-error { background: var(--red-bg, rgba(196,78,78,0.1)); border-color: rgba(196,78,78,0.3); color: var(--red); }
+.sum-warn { background: var(--amber-bg, rgba(176,120,32,0.1)); border-color: rgba(176,120,32,0.3); color: var(--amber); }
+.sum-icon { font-size: 14px; }
+
+/* ─── 물성 조정 버튼 ─── */
+.btn-spec-adjust {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-dim, rgba(184,147,90,0.4));
+  background: var(--accent-light, rgba(184,147,90,0.1));
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.btn-spec-adjust:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.btn-spec-adjust:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── AI 아이디어 모달 ─── */
+.idea-modal { width: min(720px, 95vw); max-height: 80vh; display: flex; flex-direction: column; }
+.idea-modal-body { overflow-y: auto; padding: 16px 20px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.idea-spec-bar {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-wrap: wrap;
+}
+.idea-spec-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  padding: 8px 12px;
+  border-right: 1px solid var(--border);
+  min-width: 80px;
+}
+.idea-spec-item:last-child { border-right: none; }
+.idea-spec-label { font-size: 9px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; }
+.idea-spec-val { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; font-family: var(--font-mono); }
+.idea-table-wrap { overflow-x: auto; }
+.idea-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.idea-table th { text-align: left; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+.idea-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); }
+.idea-name { font-weight: 600; color: var(--text); min-width: 100px; }
+.idea-inci { font-family: var(--font-mono); font-size: 11px; color: var(--text-sub); min-width: 120px; }
+.idea-pct { font-family: var(--font-mono); font-weight: 700; color: var(--accent); text-align: right; min-width: 60px; }
+.idea-fn { font-size: 11px; color: var(--text-dim); }
+.idea-phase { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); text-align: center; }
+.idea-modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ─── 물성 조정 모달 ─── */
+.spec-modal { width: min(760px, 95vw); max-height: 82vh; display: flex; flex-direction: column; }
+.spec-modal-body { overflow-y: auto; padding: 16px 20px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.spec-preview-bar {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-wrap: wrap;
+}
+.spec-preview-item {
+  display: flex; flex-direction: column; align-items: center; flex: 1;
+  padding: 8px 12px; border-right: 1px solid var(--border); min-width: 90px;
+}
+.spec-preview-item:last-child { border-right: none; }
+.spec-preview-label { font-size: 9px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; }
+.spec-preview-val { font-size: 12px; font-weight: 700; color: var(--text); margin-top: 2px; font-family: var(--font-mono); }
+.spec-warnings { display: flex; flex-direction: column; gap: 4px; }
+.spec-warning-item {
+  font-size: 12px; color: var(--amber); padding: 4px 10px;
+  background: var(--amber-bg, rgba(176,120,32,0.08));
+  border-left: 3px solid var(--amber);
+  border-radius: 2px;
+}
+.spec-warn-icon { margin-right: 4px; }
+.spec-compare-grid { display: grid; grid-template-columns: 1fr 28px 1fr; gap: 0; }
+.spec-col { display: flex; flex-direction: column; gap: 4px; }
+.spec-col-title { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; padding: 4px 0; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.spec-arrow-col { display: flex; align-items: center; justify-content: center; font-size: 16px; color: var(--text-dim); }
+.spec-ing-list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
+.spec-ing-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; font-size: 11px; }
+.spec-ing-row:hover { background: var(--bg); }
+.spec-ing-changed { background: var(--amber-bg, rgba(176,120,32,0.08)); border-left: 2px solid var(--amber); }
+.spec-ing-name { flex: 1; color: var(--text); }
+.spec-ing-pct { font-family: var(--font-mono); font-weight: 600; color: var(--text-sub); min-width: 44px; text-align: right; }
+.spec-ing-new { font-size: 9px; font-weight: 700; color: var(--green); background: rgba(58,144,104,0.12); padding: 1px 5px; border-radius: 3px; }
 </style>

@@ -4870,6 +4870,364 @@ app.get('/api/ingredients/db', async (req, res) => {
   }
 })
 
+// ─── POST /api/formula/generate-idea — 키워드 기반 처방 아이디어 생성 ───────
+app.post('/api/formula/generate-idea', async (req, res) => {
+  try {
+    const { product_type = '', formula_name = '', requirements = '' } = req.body
+    const kw = (formula_name + ' ' + requirements).toLowerCase()
+
+    // 1. 키워드 필터 파싱
+    const excludeTypes = []
+    if (kw.includes('비건')) excludeTypes.push('animal_derived')
+    if (kw.includes('방부제프리') || kw.includes('방부제 프리')) excludeTypes.push('preservative')
+    const ewgFilter = kw.includes('ewg 그린') || kw.includes('ewg그린') || kw.includes('ewg green')
+    const sensitiveFilter = kw.includes('민감성')
+    const retinolMode = kw.includes('레티놀') || kw.includes('retinol')
+
+    // 2. guide_cache에서 기존 처방 참조
+    let refIngredients = []
+    try {
+      const cached = await pool.query(
+        `SELECT ingredients FROM guide_cache
+         WHERE lower(product_type) = lower($1) AND ingredients IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1`,
+        [product_type]
+      )
+      if (cached.rows.length > 0) {
+        const raw = cached.rows[0].ingredients
+        refIngredients = Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw) : [])
+      }
+    } catch (_) {}
+
+    // 3. ingredient_master에서 물성 기반 원료 조회
+    const conditions = ['im.inci_name IS NOT NULL', `im.ingredient_type NOT IN ('pharma_prohibited')`]
+    const params = []
+    let idx = 1
+
+    if (excludeTypes.length > 0) {
+      conditions.push(`im.ingredient_type NOT IN (${excludeTypes.map(() => `$${idx++}`).join(', ')})`)
+      params.push(...excludeTypes)
+    }
+    if (ewgFilter) {
+      conditions.push(`(im.ewg_score IS NULL OR im.ewg_score <= 2)`)
+    }
+    if (sensitiveFilter) {
+      conditions.push(`(im.comedogenic_rating IS NULL OR im.comedogenic_rating <= 1)`)
+    }
+
+    const { rows: dbIngredients } = await pool.query(
+      `SELECT im.inci_name, im.korean_name, im.ingredient_type,
+              im.ph_min, im.ph_max, im.usage_level, im.ewg_score,
+              im.comedogenic_rating, im.function_inci
+       FROM ingredient_master im
+       WHERE ${conditions.join(' AND ')}
+       LIMIT 200`,
+      params
+    )
+
+    // 4. purpose_ingredient_map에서 REQUIRED/FORBIDDEN 조회 (테이블 존재 시)
+    let required = [], forbidden = []
+    try {
+      const { rows: purposeRows } = await pool.query(
+        `SELECT inci_name, role FROM purpose_ingredient_map
+         WHERE lower(product_type) = lower($1) OR product_type = 'ALL'`,
+        [product_type]
+      )
+      required = purposeRows.filter(r => r.role === 'REQUIRED').map(r => r.inci_name)
+      forbidden = purposeRows.filter(r => r.role === 'FORBIDDEN').map(r => r.inci_name)
+    } catch (_) {}
+
+    // 5. 레티놀 모드: 레티놀 + 안정화 원료 자동 포함
+    const retinolExtras = retinolMode
+      ? [
+          { inci_name: 'Retinol', korean_name: '레티놀', ingredient_type: 'active', pct: 0.05 },
+          { inci_name: 'Tocopherol', korean_name: '토코페롤 (레티놀 안정화)', ingredient_type: 'active', pct: 0.5 },
+          { inci_name: 'BHT', korean_name: 'BHT (산화방지)', ingredient_type: 'antioxidant', pct: 0.02 },
+        ]
+      : []
+
+    // 6. 기본 처방 골격 구성 (가이드 캐시가 있으면 우선 사용)
+    let baseIngredients
+    if (refIngredients.length > 0) {
+      baseIngredients = refIngredients.map(i => ({
+        name: i.korean_name || i.name || i.inci_name || '',
+        inci_name: i.inci_name || '',
+        percentage: parseFloat(i.percentage || i.wt_pct || 0),
+        function: i.function || i.function_inci || '',
+        phase: i.phase || '',
+      }))
+    } else {
+      // 기본 골격: Aqua 기반
+      baseIngredients = [
+        { name: '정제수', inci_name: 'Aqua', percentage: 70.0, function: '용매', phase: 'A' },
+        { name: '글리세린', inci_name: 'Glycerin', percentage: 5.0, function: '보습제', phase: 'A' },
+        { name: '부틸렌글라이콜', inci_name: 'Butylene Glycol', percentage: 3.0, function: '보습제', phase: 'A' },
+        { name: '히알루론산나트륨', inci_name: 'Sodium Hyaluronate', percentage: 0.5, function: '보습제', phase: 'C' },
+        { name: '나이아신아마이드', inci_name: 'Niacinamide', percentage: 2.0, function: '미백/기능성', phase: 'C' },
+        { name: '판테놀', inci_name: 'Panthenol', percentage: 0.5, function: '피부컨디셔너', phase: 'C' },
+        { name: '카보머', inci_name: 'Carbomer', percentage: 0.3, function: '점도조절', phase: 'A' },
+        { name: '트리에탄올아민', inci_name: 'Triethanolamine', percentage: 0.2, function: 'pH 조절', phase: 'A' },
+        { name: '1,2-헥산다이올', inci_name: '1,2-Hexanediol', percentage: 1.0, function: '방부보조', phase: 'D' },
+        { name: '페녹시에탄올', inci_name: 'Phenoxyethanol', percentage: 0.5, function: '방부제', phase: 'D' },
+      ]
+      // 정제수를 100%에 맞게 조정
+      const otherSum = baseIngredients.slice(1).reduce((s, i) => s + i.percentage, 0)
+      baseIngredients[0].percentage = Math.max(0, parseFloat((100 - otherSum).toFixed(2)))
+    }
+
+    // 7. FORBIDDEN 원료 제거
+    if (forbidden.length > 0) {
+      baseIngredients = baseIngredients.filter(i =>
+        !forbidden.some(f => i.inci_name.toLowerCase() === f.toLowerCase())
+      )
+    }
+
+    // 8. 레티놀 추가분 삽입 + Aqua 재조정
+    for (const extra of retinolExtras) {
+      if (!baseIngredients.some(i => i.inci_name === extra.inci_name)) {
+        baseIngredients.push({
+          name: extra.korean_name,
+          inci_name: extra.inci_name,
+          percentage: extra.pct,
+          function: extra.ingredient_type,
+          phase: 'C',
+        })
+      }
+    }
+
+    // 9. 비건 필터 — DB에서 animal_derived 타입 목록 추출 후 제거
+    if (excludeTypes.includes('animal_derived') && dbIngredients.length > 0) {
+      const animalINCIs = new Set(
+        dbIngredients.filter(d => d.ingredient_type === 'animal_derived').map(d => d.inci_name.toLowerCase())
+      )
+      baseIngredients = baseIngredients.filter(i => !animalINCIs.has((i.inci_name || '').toLowerCase()))
+    }
+
+    // 10. 합계 100% 유지 (LRM 보정)
+    const aquaIdx = baseIngredients.findIndex(i => i.inci_name === 'Aqua' || i.name === '정제수')
+    if (aquaIdx !== -1) {
+      const otherSum = baseIngredients.reduce((s, i, idx) => idx === aquaIdx ? s : s + (parseFloat(i.percentage) || 0), 0)
+      baseIngredients[aquaIdx].percentage = parseFloat(Math.max(0, 100 - otherSum).toFixed(2))
+    }
+
+    // 11. 예상 물성 계산
+    const phIngredients = baseIngredients.map(i => ({ inci_name: i.inci_name, wt_pct: i.percentage }))
+    let estimated_spec = { ph: null, viscosity: null }
+    try {
+      const phRows = await pool.query(
+        `SELECT inci_name, ph_min, ph_max FROM ingredient_master WHERE inci_name = ANY($1)`,
+        [phIngredients.map(i => i.inci_name).filter(Boolean)]
+      )
+      const phMap = {}
+      for (const r of phRows.rows) phMap[r.inci_name] = { min: parseFloat(r.ph_min), max: parseFloat(r.ph_max) }
+      let wSum = 0, wPh = 0
+      for (const i of phIngredients) {
+        const ph = phMap[i.inci_name]
+        if (ph && !isNaN(ph.min) && !isNaN(ph.max)) {
+          const mid = (ph.min + ph.max) / 2
+          wPh += mid * i.wt_pct
+          wSum += i.wt_pct
+        }
+      }
+      if (wSum > 0) estimated_spec.ph = Math.round((wPh / wSum) * 10) / 10
+    } catch (_) {}
+
+    // 점도는 Carbomer/HEC/증점제 농도로 추정
+    const thickenerPct = baseIngredients.reduce((s, i) => {
+      const fn = (i.function || '').toLowerCase()
+      return fn.includes('점도') || fn.includes('thicken') || fn.includes('gelling')
+        ? s + (parseFloat(i.percentage) || 0)
+        : s
+    }, 0)
+    if (thickenerPct > 0) {
+      estimated_spec.viscosity = thickenerPct < 0.2 ? '500~2,000'
+        : thickenerPct < 0.5 ? '2,000~10,000'
+        : thickenerPct < 1.0 ? '10,000~30,000'
+        : '30,000~80,000'
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ingredients: baseIngredients,
+        estimated_spec,
+        totalPercentage: parseFloat(baseIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2)),
+        filters_applied: {
+          keywords: kw,
+          exclude_types: excludeTypes,
+          ewg_filter: ewgFilter,
+          sensitive_filter: sensitiveFilter,
+          retinol_mode: retinolMode,
+          from_cache: refIngredients.length > 0,
+        },
+      },
+    })
+  } catch (err) {
+    console.error('[generate-idea]', err.message)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// ─── POST /api/formula/adjust-by-spec — 물성 변경 시 처방 자동 조정 ────────
+app.post('/api/formula/adjust-by-spec', async (req, res) => {
+  try {
+    const { current_ingredients = [], target_spec = {}, changed_fields = [] } = req.body
+    if (!current_ingredients.length) {
+      return res.status(400).json({ success: false, error: 'current_ingredients 필요' })
+    }
+
+    const adjusted = current_ingredients.map(i => ({ ...i }))
+    const warnings = []
+    const preview_spec = {}
+
+    // 헬퍼: 원료 찾기 (inci_name 또는 name)
+    const findIng = (inciName) =>
+      adjusted.findIndex(i => (i.inci_name || '').toLowerCase() === inciName.toLowerCase())
+
+    // 헬퍼: 원료 추가 또는 증량
+    const upsertIng = (name, inci_name, pct, fn, phase) => {
+      const idx = findIng(inci_name)
+      if (idx !== -1) {
+        adjusted[idx].percentage = parseFloat((parseFloat(adjusted[idx].percentage || 0) + pct).toFixed(3))
+      } else {
+        adjusted.push({ name, inci_name, percentage: pct, function: fn, phase })
+      }
+    }
+
+    // 헬퍼: 원료 감량
+    const reduceIng = (inci_name, amount) => {
+      const idx = findIng(inci_name)
+      if (idx !== -1) {
+        adjusted[idx].percentage = parseFloat(Math.max(0, parseFloat(adjusted[idx].percentage || 0) - amount).toFixed(3))
+      }
+    }
+
+    // 헬퍼: Aqua로 100% 맞추기
+    const rebalanceAqua = () => {
+      const aquaIdx = adjusted.findIndex(i =>
+        (i.inci_name || '').toLowerCase() === 'aqua' || i.name === '정제수'
+      )
+      if (aquaIdx !== -1) {
+        const otherSum = adjusted.reduce((s, i, idx) => idx === aquaIdx ? s : s + (parseFloat(i.percentage) || 0), 0)
+        adjusted[aquaIdx].percentage = parseFloat(Math.max(0, 100 - otherSum).toFixed(3))
+      }
+    }
+
+    // ── pH 변경 ──
+    if (changed_fields.includes('ph') && target_spec.ph) {
+      const targetPh = typeof target_spec.ph === 'string'
+        ? parseFloat(target_spec.ph.split('~')[0])
+        : parseFloat(target_spec.ph)
+
+      if (!isNaN(targetPh)) {
+        if (targetPh < 5.5) {
+          // 산성 방향: Citric Acid 또는 Lactic Acid 추가
+          const acidAmount = targetPh < 4.0 ? 0.5 : 0.2
+          const existCitric = findIng('Citric Acid') !== -1
+          const existLactic = findIng('Lactic Acid') !== -1
+          if (!existCitric && !existLactic) {
+            upsertIng('구연산 (pH 조절)', 'Citric Acid', acidAmount, 'pH 조절제', 'D')
+            warnings.push(`pH ${targetPh} 목표 → Citric Acid ${acidAmount}% 추가`)
+          } else {
+            const acid = existCitric ? 'Citric Acid' : 'Lactic Acid'
+            upsertIng('', acid, acidAmount * 0.5, 'pH 조절제', 'D')
+            warnings.push(`pH ${targetPh} 목표 → ${acid} 증량`)
+          }
+          // TEA 감량 (중화제 줄이기)
+          reduceIng('Triethanolamine', 0.1)
+          preview_spec.ph = targetPh
+        } else if (targetPh > 7.0) {
+          // 알칼리 방향: TEA 또는 NaOH 추가
+          upsertIng('트리에탄올아민', 'Triethanolamine', 0.1, 'pH 조절제', 'D')
+          warnings.push(`pH ${targetPh} 목표 → Triethanolamine 추가/증량`)
+          preview_spec.ph = targetPh
+        } else {
+          preview_spec.ph = targetPh
+          warnings.push(`pH ${targetPh} — 현재 처방으로 달성 가능한 범위입니다.`)
+        }
+        rebalanceAqua()
+      }
+    }
+
+    // ── 점도 변경 ──
+    if (changed_fields.includes('viscosity') && target_spec.viscosity) {
+      const viscStr = String(target_spec.viscosity).replace(/,/g, '')
+      const targetVisc = parseFloat(viscStr.split('~')[0]) || parseFloat(viscStr)
+
+      if (!isNaN(targetVisc)) {
+        const carbomerIdx = findIng('Carbomer')
+        const currentCarbomer = carbomerIdx !== -1 ? parseFloat(adjusted[carbomerIdx].percentage || 0) : 0
+
+        if (targetVisc < 5000) {
+          // 점도 낮추기: Carbomer 감량
+          if (currentCarbomer > 0.1) {
+            reduceIng('Carbomer', Math.min(currentCarbomer * 0.3, 0.2))
+            warnings.push(`점도 ${targetVisc}cps 목표 → Carbomer 감량`)
+          }
+          preview_spec.viscosity = `${targetVisc}~${targetVisc * 2}`
+        } else if (targetVisc >= 20000) {
+          // 점도 높이기: Carbomer 또는 HEC 증량
+          if (currentCarbomer > 0) {
+            upsertIng('카보머', 'Carbomer', 0.15, '점도조절', 'A')
+            warnings.push(`점도 ${targetVisc}cps 목표 → Carbomer 증량`)
+          } else {
+            upsertIng('하이드록시에틸셀룰로오스', 'Hydroxyethylcellulose', 0.3, '점도조절', 'A')
+            warnings.push(`점도 ${targetVisc}cps 목표 → HEC 추가`)
+          }
+          preview_spec.viscosity = `${targetVisc}~${targetVisc * 1.5}`
+        } else {
+          preview_spec.viscosity = `${targetVisc}~${targetVisc * 2}`
+        }
+        rebalanceAqua()
+      }
+    }
+
+    // ── 외관 변경 (크림 → 젤) ──
+    if (changed_fields.includes('appearance') && target_spec.appearance) {
+      const app = String(target_spec.appearance).toLowerCase()
+      if (app.includes('젤') || app.includes('gel')) {
+        // 유성원료 축소: 유화제/오일류 감량
+        for (const ing of adjusted) {
+          const fn = (ing.function || '').toLowerCase()
+          if (fn.includes('emollient') || fn.includes('에몰리언트') || fn.includes('오일') || fn.includes('oil')) {
+            ing.percentage = parseFloat(Math.max(0, parseFloat(ing.percentage) * 0.5).toFixed(3))
+          }
+        }
+        // 수성 증점제 확대
+        upsertIng('카보머', 'Carbomer', 0.2, '점도조절 (젤화)', 'A')
+        warnings.push('외관 → 젤 타입: 유성원료 50% 감량, Carbomer 증량')
+        preview_spec.appearance = '투명~반투명 젤'
+        rebalanceAqua()
+      } else if (app.includes('크림') || app.includes('cream')) {
+        upsertIng('세테아릴알코올', 'Cetearyl Alcohol', 1.0, '점도조절/유화안정', 'B')
+        warnings.push('외관 → 크림 타입: 왁스류 추가')
+        preview_spec.appearance = '유백색 크림'
+        rebalanceAqua()
+      }
+    }
+
+    // 최종 합계 검증
+    const finalTotal = parseFloat(adjusted.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(3))
+    if (Math.abs(finalTotal - 100) > 0.1) {
+      warnings.push(`⚠ 최종 합산 ${finalTotal}% — 정제수(Aqua)를 추가하여 100%로 조정하세요.`)
+    }
+
+    res.json({
+      success: true,
+      data: {
+        adjusted_ingredients: adjusted,
+        preview_spec,
+        warnings,
+        original_total: parseFloat(current_ingredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(3)),
+        adjusted_total: finalTotal,
+      },
+    })
+  } catch (err) {
+    console.error('[adjust-by-spec]', err.message)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 // ─── 서버 시작 ────────────────────────────────────────────────────────────
 const PORT = process.env.API_PORT || 3001
 const DIST_DIR = join(__dirname, '..', 'dist')
