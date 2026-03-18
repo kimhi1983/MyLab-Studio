@@ -306,8 +306,8 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
   try {
     // 1. ingredient_master 기본 정보
     const { rows: masterRows } = await pool.query(
-      `SELECT id, inci_name, korean_name, cas_number, ingredient_type, category,
-              ph_min, ph_max, usage_min, usage_max, ewg_score, data_source, updated_at
+      `SELECT id, inci_name, korean_name, cas_number, ec_number, ingredient_type,
+              description, origin, ewg_score, purpose, source AS data_source, updated_at
        FROM ingredient_master WHERE id = $1`,
       [id]
     )
@@ -4662,11 +4662,8 @@ app.get('/api/ingredients/search', async (req, res) => {
 
     params.push(lim)
     const { rows } = await pool.query(
-      `SELECT inci_name, korean_name, ingredient_type, ph_min, ph_max,
-              viscosity_type, solubility, function_inci,
-              usage_level_min, usage_level_max, ewg_score,
-              comedogenic_rating, max_concentration_kr, max_concentration_eu,
-              skin_type_suitability
+      `SELECT inci_name, korean_name, ingredient_type, ewg_score,
+              skin_type, description, purpose
        FROM ingredient_master
        WHERE ${where.join(' AND ')}
        ORDER BY inci_name
@@ -4916,21 +4913,12 @@ app.get('/api/ingredients/db', async (req, res) => {
     params.push(lim, off)
     const { rows } = await pool.query(
       `SELECT inci_name, korean_name, cas_number, ingredient_type, ewg_score,
-              max_concentration_kr, max_concentration_eu,
-              usage_level_min, usage_level_max, function_inci,
-              ph_min, ph_max, comedogenic_rating,
-              skin_type_suitability
+              skin_type, description, purpose
        FROM ingredient_master
        ${whereClause}
        ORDER BY (
-         CASE WHEN function_inci IS NOT NULL AND function_inci != '' THEN 2 ELSE 0 END +
-         CASE WHEN ph_min IS NOT NULL THEN 1 ELSE 0 END +
-         CASE WHEN ph_max IS NOT NULL THEN 1 ELSE 0 END +
-         CASE WHEN usage_level_min IS NOT NULL THEN 1 ELSE 0 END +
-         CASE WHEN usage_level_max IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN description IS NOT NULL AND description != '' THEN 2 ELSE 0 END +
          CASE WHEN ewg_score IS NOT NULL AND ewg_score > 0 THEN 1 ELSE 0 END +
-         CASE WHEN max_concentration_kr IS NOT NULL THEN 1 ELSE 0 END +
-         CASE WHEN max_concentration_eu IS NOT NULL THEN 1 ELSE 0 END +
          CASE WHEN korean_name IS NOT NULL THEN 1 ELSE 0 END
        ) DESC, inci_name ASC
        LIMIT $${idx} OFFSET $${idx + 1}`,
