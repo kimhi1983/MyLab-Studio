@@ -299,6 +299,94 @@ app.get('/api/ingredients', async (req, res) => {
   }
 })
 
+// ─── 원료 풀 상세 (멀티테이블 조인: 기본정보 + 규제 + 배합가이드 + 호환성) ───
+app.get('/api/ingredients/:id/detail', async (req, res) => {
+  const { id } = req.params
+  if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid id' })
+  try {
+    // 1. ingredient_master 기본 정보
+    const { rows: masterRows } = await pool.query(
+      `SELECT id, inci_name, korean_name, cas_number, ingredient_type, category,
+              ph_min, ph_max, usage_min, usage_max, ewg_score, data_source, updated_at
+       FROM ingredient_master WHERE id = $1`,
+      [id]
+    )
+    if (!masterRows.length) return res.status(404).json({ error: 'Not found' })
+    const master = masterRows[0]
+
+    // 2. regulation_cache — KR/EU/US 분류
+    let regulations = { KR: [], EU: [], US: [] }
+    try {
+      const { rows: regRows } = await pool.query(
+        `SELECT source, ingredient, inci_name, max_concentration, restriction, updated_at
+         FROM regulation_cache
+         WHERE (ingredient ILIKE $1 OR inci_name ILIKE $1)
+           AND source NOT IN ('coching_legacy','gemini_kb','gem2_kb')
+         ORDER BY source`,
+        [master.inci_name]
+      )
+      for (const r of regRows) {
+        const src = (r.source || '').toUpperCase()
+        const parsed = parseRestrictionField(r.restriction)
+        const entry = {
+          source: r.source,
+          max_concentration: r.max_concentration || null,
+          restriction_text: parsed.text || (typeof r.restriction === 'string' ? r.restriction : null),
+          reg_status: parsed.reg_status || null,
+          updated_at: r.updated_at,
+        }
+        if (/MFDS|KR|KOREA/.test(src)) regulations.KR.push(entry)
+        else if (/EU|COSING|SCCS/.test(src)) regulations.EU.push(entry)
+        else if (/US|FDA/.test(src)) regulations.US.push(entry)
+        else regulations.KR.push(entry) // fallback
+      }
+    } catch (_) {}
+
+    // 3. purpose_ingredient_map — 배합 가이드
+    let formulationGuide = []
+    try {
+      const { rows: pimRows } = await pool.query(
+        `SELECT purpose_key, role, fn, default_pct_int, max_pct_int, reason, phase
+         FROM purpose_ingredient_map
+         WHERE inci_name ILIKE $1
+         ORDER BY role, purpose_key`,
+        [master.inci_name]
+      )
+      formulationGuide = pimRows
+    } catch (_) {}
+
+    // 4. compatibility_rules — 호환성
+    let compatibility = []
+    try {
+      const { rows: compatRows } = await pool.query(
+        `SELECT ingredient_a, ingredient_b, severity, reason, ph_condition, source
+         FROM compatibility_rules
+         WHERE lower(ingredient_a) = lower($1) OR lower(ingredient_b) = lower($1)
+         ORDER BY severity`,
+        [master.inci_name]
+      )
+      // 항상 partner가 상대방 성분이 되도록 정규화
+      compatibility = compatRows.map(r => ({
+        partner: r.ingredient_a.toLowerCase() === master.inci_name.toLowerCase()
+          ? r.ingredient_b : r.ingredient_a,
+        severity: r.severity,
+        reason: r.reason,
+        ph_condition: r.ph_condition,
+        source: r.source,
+      }))
+    } catch (_) {}
+
+    res.json({
+      ...master,
+      regulations,
+      formulationGuide,
+      compatibility,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 원료 상세 (ingredient_master 기반 + properties + functions + regulations) ───
 app.get('/api/ingredients/:id', async (req, res, next) => {
   const { id } = req.params
@@ -5789,6 +5877,235 @@ app.post('/api/formula/adjust-by-spec', async (req, res) => {
     })
   } catch (err) {
     console.error('[adjust-by-spec]', err.message)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// ─── Purpose Gate REST API ─────────────────────────────────────────────────
+
+// POST /api/purpose-gate/detect — 제품명 → 카테고리 + 목적 자동 판별
+app.post('/api/purpose-gate/detect', async (req, res) => {
+  try {
+    const { product_name } = req.body
+    if (!product_name) return res.status(400).json({ success: false, error: 'product_name 필요' })
+
+    const pt = product_name.toLowerCase()
+
+    // 1. product_categories 키워드 매칭 (priority DESC)
+    const { rows: catRows } = await pool.query(
+      'SELECT category_key, keywords, priority, description FROM product_categories ORDER BY priority DESC'
+    )
+    let matchedCategory = null
+    let matchedKeyword = null
+    for (const row of catRows) {
+      for (const kw of row.keywords) {
+        if (pt.includes(kw.toLowerCase())) {
+          matchedCategory = row.category_key
+          matchedKeyword = kw
+          break
+        }
+      }
+      if (matchedCategory) break
+    }
+    const confidence = matchedCategory
+      ? (matchedKeyword && matchedKeyword.length >= 2 ? 'high' : 'medium')
+      : 'low'
+    if (!matchedCategory) matchedCategory = '크림'
+
+    // 2. category_purpose_link → 목적 감지
+    const { rows: linkRows } = await pool.query(
+      `SELECT cpl.purpose_key, cpl.weight, cpl.is_primary, fp.purpose_code, fp.name_ko
+       FROM category_purpose_link cpl
+       JOIN formulation_purposes fp ON fp.purpose_key = cpl.purpose_key
+       WHERE cpl.category_key = $1 ORDER BY cpl.weight DESC`,
+      [matchedCategory]
+    )
+    const purposes = linkRows.map(r => ({
+      purpose_key: r.purpose_key,
+      purpose_code: r.purpose_code,
+      name_ko: r.name_ko,
+      weight: r.weight,
+      is_primary: r.is_primary,
+    }))
+    if (!purposes.find(p => p.purpose_key === '방부공통')) {
+      purposes.push({ purpose_key: '방부공통', purpose_code: 'PRESERVATION', name_ko: '방부', weight: 60, is_primary: false })
+    }
+
+    const primaryPurpose = purposes.find(p => p.is_primary) || purposes[0]
+
+    res.json({
+      success: true,
+      category_key: matchedCategory,
+      confidence,
+      matched_keyword: matchedKeyword,
+      primary_purpose: primaryPurpose?.purpose_key || null,
+      purposes,
+    })
+  } catch (err) {
+    console.error('[purpose-gate/detect]', err.message)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// GET /api/purpose-gate/ingredients — 목적별 성분 풀 조회
+// ?purpose=보습&type=REQUIRED  (type: REQUIRED | RECOMMENDED | FORBIDDEN | ALL)
+app.get('/api/purpose-gate/ingredients', async (req, res) => {
+  try {
+    const { purpose, type = 'ALL', limit = 100 } = req.query
+    if (!purpose) return res.status(400).json({ success: false, error: 'purpose 파라미터 필요' })
+
+    const lim = Math.min(parseInt(limit) || 100, 500)
+    const params = [purpose]
+    let roleFilter = ''
+    if (type && type !== 'ALL') {
+      roleFilter = ' AND role = $2'
+      params.push(type.toUpperCase())
+    }
+
+    const { rows } = await pool.query(
+      `SELECT pim.inci_name, pim.korean_name, pim.role, pim.ingredient_type,
+              pim.phase, pim.fn, pim.default_pct_int, pim.max_pct_int,
+              pim.reason, pim.priority,
+              im.ewg_score, im.cas_number
+       FROM purpose_ingredient_map pim
+       LEFT JOIN ingredient_master im ON lower(im.inci_name) = lower(pim.inci_name)
+       WHERE pim.purpose_key = $1${roleFilter}
+       ORDER BY pim.role, pim.priority DESC
+       LIMIT ${lim}`,
+      params
+    )
+
+    const grouped = { REQUIRED: [], RECOMMENDED: [], FORBIDDEN: [] }
+    for (const r of rows) {
+      const entry = {
+        inci_name: r.inci_name,
+        korean_name: r.korean_name,
+        ingredient_type: r.ingredient_type,
+        phase: r.phase?.trim(),
+        fn: r.fn,
+        default_pct: r.default_pct_int != null ? r.default_pct_int / 100 : null,
+        max_pct: r.max_pct_int != null ? r.max_pct_int / 100 : null,
+        reason: r.reason,
+        priority: r.priority,
+        ewg_score: r.ewg_score,
+        cas_number: r.cas_number,
+      }
+      if (grouped[r.role]) grouped[r.role].push(entry)
+    }
+
+    res.json({
+      success: true,
+      purpose,
+      type: type.toUpperCase(),
+      total: rows.length,
+      required_count: grouped.REQUIRED.length,
+      recommended_count: grouped.RECOMMENDED.length,
+      forbidden_count: grouped.FORBIDDEN.length,
+      ingredients: type === 'ALL' ? grouped : (grouped[type.toUpperCase()] || []),
+    })
+  } catch (err) {
+    console.error('[purpose-gate/ingredients]', err.message)
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
+// POST /api/purpose-gate/validate — 처방 결과에 Purpose Gate 검증 적용
+app.post('/api/purpose-gate/validate', async (req, res) => {
+  try {
+    const { product_name, ingredients = [] } = req.body
+    if (!product_name) return res.status(400).json({ success: false, error: 'product_name 필요' })
+    if (!ingredients.length) return res.status(400).json({ success: false, error: 'ingredients 필요' })
+
+    // 1. 카테고리 감지
+    const pt = product_name.toLowerCase()
+    const { rows: catRows } = await pool.query(
+      'SELECT category_key, keywords FROM product_categories ORDER BY priority DESC'
+    )
+    let matchedCategory = '크림'
+    for (const row of catRows) {
+      if (row.keywords.some(kw => pt.includes(kw.toLowerCase()))) {
+        matchedCategory = row.category_key
+        break
+      }
+    }
+
+    // 2. 목적 감지
+    const { rows: linkRows } = await pool.query(
+      `SELECT purpose_key FROM category_purpose_link WHERE category_key = $1 ORDER BY weight DESC`,
+      [matchedCategory]
+    )
+    const purposeKeys = linkRows.map(r => r.purpose_key)
+    if (!purposeKeys.includes('방부공통')) purposeKeys.push('방부공통')
+
+    // 3. REQUIRED / FORBIDDEN 성분 로드
+    const { rows: pimRows } = await pool.query(
+      `SELECT purpose_key, inci_name, korean_name, role, ingredient_type, fn, default_pct_int, max_pct_int
+       FROM purpose_ingredient_map
+       WHERE purpose_key = ANY($1) AND role IN ('REQUIRED','FORBIDDEN')
+       ORDER BY role, purpose_key`,
+      [purposeKeys]
+    )
+
+    const requiredIngs = pimRows.filter(r => r.role === 'REQUIRED')
+    const forbiddenIngs = pimRows.filter(r => r.role === 'FORBIDDEN')
+    const ingredientIncis = ingredients.map(i => (i.inci_name || '').toLowerCase())
+
+    // 4. FORBIDDEN 검사
+    const forbiddenFound = forbiddenIngs.filter(f =>
+      ingredientIncis.includes(f.inci_name.toLowerCase())
+    )
+
+    // 5. REQUIRED 충족 검사
+    const requiredMet = requiredIngs.filter(r =>
+      ingredientIncis.includes(r.inci_name.toLowerCase())
+    )
+    const requiredMissed = requiredIngs.filter(r =>
+      !ingredientIncis.includes(r.inci_name.toLowerCase())
+    )
+
+    // 6. purpose_score (0~100)
+    const reqTotal = requiredIngs.length
+    const reqScore = reqTotal > 0 ? Math.round((requiredMet.length / reqTotal) * 60) : 60
+    const forbidPenalty = forbiddenFound.length * 20
+    const purposeScore = Math.max(0, Math.min(100, reqScore + 40 - forbidPenalty))
+
+    // 7. 경고
+    const warnings = []
+    if (forbiddenFound.length > 0) {
+      warnings.push(`⛔ FORBIDDEN 성분 포함: ${forbiddenFound.map(f => f.inci_name).join(', ')}`)
+    }
+    if (requiredMet.length < 2 && reqTotal >= 2) {
+      warnings.push(`⚠ REQUIRED 성분 ${requiredMet.length}/${reqTotal}개만 포함 (최소 2개 권장)`)
+    }
+    const missingTop = requiredMissed.slice(0, 3)
+    if (missingTop.length > 0) {
+      warnings.push(`💡 추가 권장 필수 성분: ${missingTop.map(r => r.korean_name || r.inci_name).join(', ')}`)
+    }
+
+    res.json({
+      success: true,
+      product_name,
+      category_key: matchedCategory,
+      detected_purposes: purposeKeys,
+      purpose_score: purposeScore,
+      valid: forbiddenFound.length === 0 && requiredMet.length >= Math.min(2, reqTotal),
+      summary: {
+        required_total: reqTotal,
+        required_met: requiredMet.length,
+        forbidden_found: forbiddenFound.length,
+      },
+      forbidden_found: forbiddenFound.map(f => ({ inci_name: f.inci_name, purpose: f.purpose_key })),
+      required_met: requiredMet.map(r => ({ inci_name: r.inci_name, purpose: r.purpose_key })),
+      required_missed: requiredMissed.map(r => ({
+        inci_name: r.inci_name,
+        korean_name: r.korean_name,
+        purpose: r.purpose_key,
+        default_pct: r.default_pct_int != null ? r.default_pct_int / 100 : null,
+      })),
+      warnings,
+    })
+  } catch (err) {
+    console.error('[purpose-gate/validate]', err.message)
     res.status(500).json({ success: false, error: err.message })
   }
 })
