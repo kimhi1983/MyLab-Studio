@@ -291,9 +291,10 @@ app.get('/api/ingredients', async (req, res) => {
 })
 
 // ─── 원료 상세 (ingredient_master 기반 + properties + functions + regulations) ───
-app.get('/api/ingredients/:id', async (req, res) => {
+app.get('/api/ingredients/:id', async (req, res, next) => {
+  const { id } = req.params
+  if (!/^\d+$/.test(id)) return next()  // 숫자 아닌 경우 /search, /db 등 후속 라우트로 통과
   try {
-    const { id } = req.params
     const { rows } = await pool.query('SELECT * FROM ingredient_master WHERE id = $1', [id])
     if (!rows.length) return res.status(404).json({ error: 'Not found' })
 
