@@ -968,6 +968,230 @@ export const FORMULA_RULES = {
     key_categories: ['surfactant', 'foam_booster'],
     typical_structure: 'Aqua 55-65% + 계면활성제 20-30% + 보습제 3-8%',
   },
+  '클렌징오일': {
+    aqua_max: 2,
+    must_include: ['Oil', 'Ester', 'PEG', 'Polysorbate', 'Glyceryl', 'Emulsifier'],
+    must_include_msg: '오일 베이스 + 유화계면활성제 반드시 포함',
+    base_type: '오일/에스터',
+    key_categories: ['plant_oil', 'emollient_ester', 'surfactant'],
+    typical_structure: '오일베이스 60-80% + 유화계면활성제 10-15% + 기능성 1-5%',
+  },
+  '미셀라워터': {
+    aqua_max: 97,
+    must_include: ['Poloxamer', 'PEG', 'Polysorbate', 'Cetyl', 'Micellar', 'Surfactant'],
+    must_include_msg: '미셀라 계면활성제 (Poloxamer 또는 저자극 계면활성제) 반드시 포함',
+    base_type: '수성 미셀라',
+    key_categories: ['surfactant', 'humectant_active'],
+    typical_structure: 'Aqua 90-95% + 보습제 3-5% + 미셀라 계면활성제 0.5-2%',
+  },
+  '아이크림': {
+    aqua_max: 80,
+    must_include: ['Caffeine', 'Peptide', 'Retinol', 'Niacinamide', 'Vitamin', 'Hyaluronate'],
+    must_include_msg: '눈가 케어 기능성 (카페인/펩타이드/나이아신아마이드 등) 반드시 포함',
+    base_type: 'O/W 에멀전',
+    key_categories: ['peptide', 'biomimetic_active', 'humectant_active'],
+    typical_structure: 'Aqua 65-75% + 에멀전베이스 + 기능성(카페인/펩타이드) 1-3%',
+  },
+  '넥크림': {
+    aqua_max: 78,
+    must_include: ['Peptide', 'Collagen', 'Hyaluronate', 'Niacinamide', 'Adenosine', 'Retinol'],
+    must_include_msg: '피부 탄력 기능성 (펩타이드/콜라겐/아데노신 등) 반드시 포함',
+    base_type: 'O/W 에멀전',
+    key_categories: ['peptide', 'emulsifier', 'humectant_active'],
+    typical_structure: 'Aqua 62-72% + 에멀전 베이스 + 고기능성 2-5%',
+  },
+  '핸드크림': {
+    aqua_max: 70,
+    must_include: ['Shea', 'Glycerin', 'Emulsifier', 'Cetearyl', 'Glyceryl', 'Allantoin'],
+    must_include_msg: '집중 보습제 (시어버터/글리세린/알란토인) 반드시 포함',
+    base_type: 'O/W 에멀전',
+    key_categories: ['emulsifier', 'humectant_active', 'plant_oil'],
+    typical_structure: 'Aqua 55-65% + 에몰리언트 10-20% + 유화제 4-8%',
+  },
+  '풋크림': {
+    aqua_max: 65,
+    must_include: ['Urea', 'Salicylic', 'Lactic', 'Shea', 'Allantoin', 'Peppermint'],
+    must_include_msg: '각질연화 성분 (Urea 또는 Salicylic Acid 또는 Lactic Acid) 반드시 포함',
+    base_type: 'O/W 에멀전',
+    key_categories: ['humectant_active', 'emullient_ester', 'emulsifier'],
+    typical_structure: 'Aqua 50-60% + Urea 5-10% + 에몰리언트 10-15% + 유화제 4-8%',
+  },
+  '마스크팩': {
+    aqua_max: 88,
+    must_include: ['Hyaluronate', 'Niacinamide', 'Glycerin', 'Panthenol', 'Extract', 'Allantoin'],
+    must_include_msg: '보습/기능성 (히알루론산/나이아신아마이드/추출물) 반드시 포함',
+    base_type: '수성/시트',
+    key_categories: ['humectant_active', 'biomimetic_active', 'extract'],
+    typical_structure: 'Aqua 75-85% + 보습제 8-15% + 기능성 2-5%',
+  },
+  '마스크팩(워시오프)': {
+    aqua_max: 70,
+    must_include: ['Kaolin', 'Bentonite', 'Clay', 'AHA', 'BHA', 'Lactic', 'Glycolic'],
+    must_include_msg: '클레이 또는 AHA/BHA 각질제거 성분 반드시 포함',
+    base_type: '클레이/겔',
+    key_categories: ['mineral_inorganic', 'humectant_active'],
+    typical_structure: 'Clay 20-40% + 보습제 10-20% + 활성성분 2-5%',
+  },
+  '필링젤': {
+    aqua_max: 85,
+    must_include: ['AHA', 'BHA', 'Lactic', 'Glycolic', 'Salicylic', 'Cellulose', 'Polyquaternium'],
+    must_include_msg: 'AHA/BHA 각질제거 성분 또는 물리적 각질제거제 반드시 포함',
+    base_type: '수성 겔',
+    key_categories: ['humectant_active', 'polymer_film_former'],
+    typical_structure: 'Aqua 70-80% + 보습제 5-10% + 각질제거성분 3-8%',
+  },
+  '스크럽': {
+    aqua_max: 60,
+    must_include: ['Sugar', 'Salt', 'Walnut', 'Apricot', 'Silica', 'Scrub', 'Pumice'],
+    must_include_msg: '물리적 각질제거 스크럽제 반드시 포함',
+    base_type: '에멀전/페이스트',
+    key_categories: ['mineral_inorganic', 'emollient_ester'],
+    typical_structure: '스크럽제 30-50% + 오일베이스 20-30% + 보습제 10-15%',
+  },
+  '클렌징워터': {
+    aqua_max: 97,
+    must_include: ['Polysorbate', 'PEG', 'Cucumis', 'Glycerin', 'Allantoin', 'Surfactant'],
+    must_include_msg: '저자극 계면활성제 + 진정/보습제 반드시 포함',
+    base_type: '수성',
+    key_categories: ['surfactant', 'humectant_active'],
+    typical_structure: 'Aqua 85-93% + 보습제 3-5% + 저자극 계면활성제 1-3%',
+  },
+  'BB크림': {
+    aqua_max: 60,
+    must_include: ['Iron Oxide', 'Titanium Dioxide', 'Zinc Oxide', 'Mica', 'CI 77'],
+    must_include_msg: '안료 (Iron Oxide + Titanium Dioxide) 반드시 포함',
+    base_type: 'O/W 에멀전',
+    key_categories: ['colorant', 'uv_filter', 'emulsifier'],
+    typical_structure: 'Aqua 50-60% + 안료 8-15% + UV필터 3-8% + 에멀전 베이스',
+  },
+  'CC크림': {
+    aqua_max: 65,
+    must_include: ['Iron Oxide', 'Titanium Dioxide', 'Zinc Oxide', 'Niacinamide', 'CI 77'],
+    must_include_msg: '안료 + UV필터 + 기능성 (나이아신아마이드 등) 반드시 포함',
+    base_type: 'O/W 에멀전',
+    key_categories: ['colorant', 'uv_filter', 'emulsifier', 'humectant_active'],
+    typical_structure: 'Aqua 52-62% + 안료 5-12% + UV필터 5-10% + 기능성',
+  },
+  '쿠션파운데이션': {
+    aqua_max: 60,
+    must_include: ['Iron Oxide', 'Titanium Dioxide', 'Cyclopentasiloxane', 'Dimethicone', 'CI 77'],
+    must_include_msg: '안료 + 실리콘 베이스 반드시 포함',
+    base_type: 'W/O 에멀전',
+    key_categories: ['colorant', 'uv_filter', 'silicone'],
+    typical_structure: '안료 10-18% + 실리콘 8-15% + UV필터 + 에멀전 베이스',
+  },
+  '컨실러': {
+    aqua_max: 50,
+    must_include: ['Iron Oxide', 'Titanium Dioxide', 'Kaolin', 'Talc', 'CI 77'],
+    must_include_msg: '고커버력 안료 (Titanium Dioxide 고함량 + Iron Oxide) 반드시 포함',
+    base_type: 'O/W 또는 W/O 에멀전',
+    key_categories: ['colorant', 'mineral_inorganic'],
+    typical_structure: '안료 15-25% + 바인더 + 에멀전 베이스',
+  },
+  '아이섀도우': {
+    aqua_max: 5,
+    must_include: ['Mica', 'Iron Oxide', 'Talc', 'CI 77', 'Pigment'],
+    must_include_msg: '펄/안료 (Mica + Iron Oxide + Talc) 반드시 포함',
+    base_type: '파우더',
+    key_categories: ['colorant', 'mineral_inorganic'],
+    typical_structure: 'Mica 40-60% + Talc 15-25% + 안료 10-20% + 바인더 3-6%',
+  },
+  '마스카라': {
+    aqua_max: 30,
+    must_include: ['Beeswax', 'Carnauba', 'Black Iron', 'CI 77266', 'Carbon Black', 'Wax'],
+    must_include_msg: '왁스 필름 포머 + 블랙 안료 반드시 포함',
+    base_type: '에멀전/왁스',
+    key_categories: ['colorant', 'wax'],
+    typical_structure: '왁스류 20-30% + 블랙안료 8-15% + 필름형성제 + 에멀전',
+  },
+  '아이라이너': {
+    aqua_max: 60,
+    must_include: ['Black Iron', 'CI 77266', 'Carbon Black', 'Acrylates', 'Film Former'],
+    must_include_msg: '블랙 안료 + 피막형성제 반드시 포함',
+    base_type: '수성/겔',
+    key_categories: ['colorant', 'polymer_film_former'],
+    typical_structure: 'Aqua 45-55% + 피막형성제 10-20% + 블랙안료 8-15%',
+  },
+  '블러셔': {
+    aqua_max: 5,
+    must_include: ['Mica', 'Iron Oxide', 'Talc', 'CI 77491', 'CI 77', 'Pigment'],
+    must_include_msg: '컬러 안료 (Iron Oxide) + 체질안료 (Mica/Talc) 반드시 포함',
+    base_type: '파우더',
+    key_categories: ['colorant', 'mineral_inorganic'],
+    typical_structure: 'Mica 45-60% + Talc 15-25% + 색상 Iron Oxide 8-15%',
+  },
+  '하이라이터': {
+    aqua_max: 5,
+    must_include: ['Mica', 'Titanium Dioxide', 'Talc', 'Silica', 'Pearl', 'Shimmer'],
+    must_include_msg: '하이라이트 펄 (Mica 고함량 + Titanium Dioxide) 반드시 포함',
+    base_type: '파우더',
+    key_categories: ['colorant', 'mineral_inorganic'],
+    typical_structure: 'Mica 60-70% + Talc 10-20% + TiO2 5-10% + 바인더',
+  },
+  '세팅파우더': {
+    aqua_max: 2,
+    must_include: ['Talc', 'Silica', 'Nylon', 'Mica', 'Starch'],
+    must_include_msg: '체질안료 (Talc/Silica/Nylon) 반드시 포함',
+    base_type: '파우더',
+    key_categories: ['mineral_inorganic', 'polymer_film_former'],
+    typical_structure: 'Talc 50-60% + Silica 8-15% + Mica 15-20% + Nylon 5-10%',
+  },
+  '브로우제품': {
+    aqua_max: 40,
+    must_include: ['Iron Oxide', 'CI 77499', 'CI 77491', 'Acrylates', 'Beeswax', 'Wax'],
+    must_include_msg: '브라운 계열 안료 + 피막형성제 또는 왁스 반드시 포함',
+    base_type: '겔/에멀전/파우더',
+    key_categories: ['colorant', 'wax', 'polymer_film_former'],
+    typical_structure: '안료 15-25% + 왁스 또는 피막형성제 + 기본 베이스',
+  },
+  '헤어에센스': {
+    aqua_max: 50,
+    must_include: ['Cyclopentasiloxane', 'Dimethicone', 'Amodimethicone', 'Silicone', 'Argan', 'Keratin'],
+    must_include_msg: '실리콘 또는 아르간오일 등 모발 코팅 성분 반드시 포함',
+    base_type: '실리콘/오일 혼합',
+    key_categories: ['silicone', 'plant_oil'],
+    typical_structure: '실리콘 30-50% + 식물성오일 10-20% + 기능성',
+  },
+  '헤어오일': {
+    aqua_max: 3,
+    must_include: ['Cyclopentasiloxane', 'Dimethicone', 'Argan', 'Camellia', 'Oil'],
+    must_include_msg: '실리콘 베이스 + 식물성 오일 반드시 포함',
+    base_type: '실리콘/오일',
+    key_categories: ['silicone', 'plant_oil'],
+    typical_structure: '실리콘 40-55% + 식물성오일 20-35% + 기능성',
+  },
+  '헤어미스트': {
+    aqua_max: 93,
+    must_include: ['Panthenol', 'Hydrolyzed Silk', 'Hydrolyzed Keratin', 'Dimethicone', 'Glycerin'],
+    must_include_msg: '모발 보습/광택 성분 (판테놀/가수분해케라틴/실크) 반드시 포함',
+    base_type: '수성',
+    key_categories: ['humectant_active', 'silicone', 'hydrolyzed_protein'],
+    typical_structure: 'Aqua 85-90% + 보습제 3-5% + 모발케어 기능성 1-3%',
+  },
+  '두피토닉': {
+    aqua_max: 90,
+    must_include: ['Menthol', 'Salicylic', 'Zinc', 'Niacinamide', 'Biotin', 'Caffeine', 'Piroctone'],
+    must_include_msg: '두피 케어 기능성 (멘톨/살리실산/카페인/징크 등) 반드시 포함',
+    base_type: '수성/알코올',
+    key_categories: ['humectant_active', 'amino_acid'],
+    typical_structure: 'Aqua+알코올 베이스 80-90% + 두피케어 기능성 2-5%',
+  },
+  '바디워시': {
+    aqua_max: 80,
+    must_include: ['Sodium Laureth', 'Cocamidopropyl', 'Betaine', 'Cocoyl', 'Surfactant'],
+    must_include_msg: '세정용 계면활성제 반드시 포함',
+    base_type: '계면활성제',
+    key_categories: ['surfactant', 'humectant_active'],
+    typical_structure: 'Aqua 60-70% + 계면활성제 15-20% + 보습제 3-5%',
+  },
+  '바디스크럽': {
+    aqua_max: 50,
+    must_include: ['Sugar', 'Salt', 'Coffee', 'Walnut Shell', 'Silica', 'Pumice', 'Scrub'],
+    must_include_msg: '물리적 각질제거 스크럽제 반드시 포함',
+    base_type: '오일/에멀전',
+    key_categories: ['mineral_inorganic', 'plant_oil', 'surfactant'],
+    typical_structure: '스크럽제 30-50% + 오일베이스 20-30% + 계면활성제 5-10%',
+  },
 }
 
 // ── getFormulaRules (product_type → FORMULA_RULES 검증규칙 반환) ──
@@ -980,19 +1204,50 @@ export function getFormulaRules(product_type) {
   if (pt.includes('립틴트') || pt.includes('lip tint') || pt.includes('틴트')) return FORMULA_RULES['립틴트']
   // 선케어
   if (pt.includes('선크림') || pt.includes('선스크린') || pt.includes('sunscreen') || pt.includes('spf')) return FORMULA_RULES['선크림']
-  // 베이스 메이크업
-  if (pt.includes('파운데이션') || pt.includes('foundation') || pt.includes('bb크림') || pt.includes('cc크림')) return FORMULA_RULES['파운데이션']
-  // 헤어
+  // 베이스 메이크업 (구체적인 것 먼저)
+  if (pt.includes('쿠션')) return FORMULA_RULES['쿠션파운데이션']
+  if (pt.includes('bb크림') || pt.includes('bb cream')) return FORMULA_RULES['BB크림']
+  if (pt.includes('cc크림') || pt.includes('cc cream')) return FORMULA_RULES['CC크림']
+  if (pt.includes('컨실러') || pt.includes('concealer')) return FORMULA_RULES['컨실러']
+  if (pt.includes('파운데이션') || pt.includes('foundation')) return FORMULA_RULES['파운데이션']
+  // 아이 메이크업
+  if (pt.includes('아이섀도') || pt.includes('eyeshadow') || pt.includes('eye shadow')) return FORMULA_RULES['아이섀도우']
+  if (pt.includes('마스카라') || pt.includes('mascara')) return FORMULA_RULES['마스카라']
+  if (pt.includes('아이라이너') || pt.includes('eyeliner')) return FORMULA_RULES['아이라이너']
+  if (pt.includes('아이브로우') || pt.includes('브로우') || pt.includes('eyebrow')) return FORMULA_RULES['브로우제품']
+  // 치크/파우더
+  if (pt.includes('블러셔') || pt.includes('blusher') || pt.includes('blush')) return FORMULA_RULES['블러셔']
+  if (pt.includes('하이라이터') || pt.includes('highlighter')) return FORMULA_RULES['하이라이터']
+  if (pt.includes('세팅파우더') || pt.includes('파우더') || pt.includes('powder')) return FORMULA_RULES['세팅파우더']
+  // 클렌징 (구체적인 것 먼저)
+  if (pt.includes('클렌징오일') || pt.includes('cleansing oil')) return FORMULA_RULES['클렌징오일']
+  if (pt.includes('클렌징워터') || pt.includes('cleansing water') || pt.includes('micellar water')) return FORMULA_RULES['클렌징워터']
+  if (pt.includes('미셀라') || pt.includes('micellar')) return FORMULA_RULES['미셀라워터']
+  if (pt.includes('클렌징') || pt.includes('폼클렌') || pt.includes('foam cleanser') || pt.includes('cleansing foam')) return FORMULA_RULES['클렌징폼']
+  // 헤어케어 (구체적인 것 먼저)
+  if (pt.includes('두피토닉') || pt.includes('scalp tonic')) return FORMULA_RULES['두피토닉']
+  if (pt.includes('헤어에센스') || pt.includes('hair essence')) return FORMULA_RULES['헤어에센스']
+  if (pt.includes('헤어오일') || pt.includes('hair oil')) return FORMULA_RULES['헤어오일']
+  if (pt.includes('헤어미스트') || pt.includes('hair mist')) return FORMULA_RULES['헤어미스트']
   if (pt.includes('트리트먼트') || pt.includes('헤어팩') || pt.includes('treatment')) return FORMULA_RULES['트리트먼트']
   if (pt.includes('샴푸') || pt.includes('shampoo')) return FORMULA_RULES['샴푸']
-  // 클렌징
-  if (pt.includes('클렌징') || pt.includes('폼클렌') || pt.includes('foam cleanser') || pt.includes('cleansing foam')) return FORMULA_RULES['클렌징폼']
-  // 스킨케어
+  // 스킨케어 특수 (구체적인 것 먼저)
+  if (pt.includes('마스크팩(워시오프)') || pt.includes('wash off') || pt.includes('clay mask')) return FORMULA_RULES['마스크팩(워시오프)']
+  if (pt.includes('마스크팩') || pt.includes('mask pack') || pt.includes('sheet mask') || pt.includes('시트마스크')) return FORMULA_RULES['마스크팩']
+  if (pt.includes('필링젤') || pt.includes('peeling gel')) return FORMULA_RULES['필링젤']
+  if (pt.includes('스크럽') || pt.includes('scrub')) return FORMULA_RULES['스크럽']
+  if (pt.includes('바디스크럽') || pt.includes('body scrub')) return FORMULA_RULES['바디스크럽']
+  if (pt.includes('바디워시') || pt.includes('body wash')) return FORMULA_RULES['바디워시']
+  if (pt.includes('바디로션') || pt.includes('바디크림') || pt.includes('body lotion') || pt.includes('body cream')) return FORMULA_RULES['바디로션']
+  if (pt.includes('풋크림') || pt.includes('foot cream')) return FORMULA_RULES['풋크림']
+  if (pt.includes('핸드크림') || pt.includes('hand cream')) return FORMULA_RULES['핸드크림']
+  if (pt.includes('넥크림') || pt.includes('neck cream')) return FORMULA_RULES['넥크림']
+  if (pt.includes('아이크림') || pt.includes('eye cream')) return FORMULA_RULES['아이크림']
+  // 스킨케어 일반
   if (pt.includes('에센스') || pt.includes('앰플') || pt.includes('essence') || pt.includes('ampoule')) return FORMULA_RULES['에센스']
   if (pt.includes('세럼') || pt.includes('serum')) return FORMULA_RULES['세럼']
   if (pt.includes('토너') || pt.includes('스킨') || pt.includes('toner')) return FORMULA_RULES['토너']
-  if (pt.includes('바디로션') || pt.includes('바디크림') || pt.includes('body lotion') || pt.includes('body cream')) return FORMULA_RULES['바디로션']
-  if (pt.includes('수분크림') || pt.includes('아이크림') || pt.includes('나이트크림') || pt.includes('moisture cream')) return FORMULA_RULES['수분크림']
+  if (pt.includes('수분크림') || pt.includes('나이트크림') || pt.includes('moisture cream')) return FORMULA_RULES['수분크림']
   if (pt.includes('로션') || pt.includes('lotion')) return FORMULA_RULES['로션']
   if (pt.includes('크림') || pt.includes('cream')) return FORMULA_RULES['수분크림']
   return null

@@ -20,7 +20,8 @@
         <div class="stat-badges">
           <span class="stat-badge badge-ban">금지 {{ stats.ban }}</span>
           <span class="stat-badge badge-limit">제한 {{ stats.limit }}</span>
-          <span class="stat-badge badge-monitor">모니터링 {{ stats.monitor }}</span>
+          <span class="stat-badge badge-allowed">허용 {{ stats.allowed }}</span>
+          <span class="stat-badge badge-unknown">미확인 {{ stats.unknown }}</span>
         </div>
       </div>
     </div>
@@ -181,9 +182,10 @@ const regionTabs = computed(() =>
 const stats = computed(() => {
   const base = allData.value.filter(r => r.region === selectedRegion.value)
   return {
-    ban: base.filter(r => r.status === 'ban').length,
-    limit: base.filter(r => r.status === 'limit').length,
-    monitor: base.filter(r => r.status === 'monitor').length,
+    ban:     base.filter(r => r.status === 'ban').length,
+    limit:   base.filter(r => r.status === 'limit').length,
+    allowed: base.filter(r => r.status === 'allowed').length,
+    unknown: base.filter(r => r.status === 'unknown').length,
   }
 })
 
@@ -250,18 +252,51 @@ function openPanel(row) { panelRow.value = row }
 function closePanel() { panelRow.value = null }
 
 function getRegulationStatus(r) {
-  if (r.display_status === 'ban') return 'ban'
-  if (r.display_status === 'limit') return 'limit'
-  if (r.display_status === 'monitor') return 'monitor'
-  if (r.reg_status === 'allowed') return 'monitor'
-  if (r.reg_status === 'banned') return 'ban'
+  // 1. 명시적 override
+  if (r.display_status === 'ban')     return 'ban'
+  if (r.display_status === 'limit')   return 'limit'
+  if (r.display_status === 'allowed') return 'allowed'
+  if (r.display_status === 'monitor') return 'unknown'
+
+  // 2. reg_status 영문 표준값
+  if (r.reg_status === 'prohibited') return 'ban'
   if (r.reg_status === 'restricted') return 'limit'
-  const restriction = (r.restriction || '').toLowerCase()
+  if (r.reg_status === 'allowed')    return 'allowed'
+
+  const restriction = (r.restriction || '')
   const maxConc = (r.max_concentration || '').toLowerCase()
-  const isNegated = /없음|not in|목록에 없|not prohibited|not restricted/.test(restriction)
-  if (!isNegated && (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit'))) return 'ban'
+
+  // 3. EU Annex 코드 (coching_legacy: II/xxx=금지, III/xxx=제한, V/xxx=보존제제한)
+  if (/^II\//.test(restriction))  return 'ban'
+  if (/^III\//.test(restriction)) return 'limit'
+  if (/^V\//.test(restriction))   return 'limit'
+  if (/^CMR/.test(restriction))   return 'ban'
+  if (/^Annex\s*II[^I]/i.test(restriction) && !/화장품 등급|cosmetic grade|조건부 허용/.test(restriction)) return 'ban'
+  if (/^Annex\s*III/i.test(restriction)) return 'limit'
+  if (/^Annex\s*V/i.test(restriction))   return 'limit'
+
+  // 4. GEMINI_SAFETY JSON restriction
+  if (restriction.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(restriction)
+      if (parsed?.status === 'prohibited') return 'ban'
+      if (parsed?.status === 'restricted') return 'limit'
+      if (parsed?.status === 'allowed')    return 'allowed'
+    } catch { /* ignore parse error */ }
+  }
+
+  // 5. 자유 텍스트 — 전면 금지 표현만 'ban' (부분 금지 표현은 'limit')
+  const isFullyProhibited = /사용할\s*수\s*없는\s*원료|전면\s*금지|완전히\s*금지|prohibited substance/.test(restriction)
+  if (isFullyProhibited) return 'ban'
+
+  // 6. 제한 판단: 농도 한도 or 배합 한도 명시
   if (maxConc && maxConc !== '-') return 'limit'
-  return 'monitor'
+  if (/배합\s*한도|사용\s*한도|최대\s*농도|Max\.|max\s+\d|Annex\s*(III|V)/i.test(restriction)) return 'limit'
+
+  // 7. 규제 없음 명시
+  if (/규제\s*없음|제한\s*없음|No\s*restrictions?/i.test(restriction)) return 'allowed'
+
+  return 'unknown'
 }
 
 function getRegionClass(region) {
@@ -269,11 +304,11 @@ function getRegionClass(region) {
 }
 
 function getStatusClass(status) {
-  return { ban: 'chip-red', limit: 'chip-amber', monitor: 'chip-purple' }[status] || ''
+  return { ban: 'chip-red', limit: 'chip-amber', allowed: 'chip-green', unknown: 'chip-gray' }[status] || ''
 }
 
 function getStatusLabel(status) {
-  return { ban: '금지', limit: '제한', monitor: '모니터링' }[status] || status
+  return { ban: '금지', limit: '제한', allowed: '허용', unknown: '미확인' }[status] || status
 }
 
 function ewgNumClass(score) {
@@ -381,9 +416,10 @@ function typeLabel(type) {
 
 .stat-badges { display: flex; gap: 4px; }
 .stat-badge { padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; }
-.badge-ban    { background: rgba(196,78,78,0.12);   color: var(--red); }
-.badge-limit  { background: rgba(184,147,90,0.12);  color: var(--amber); }
-.badge-monitor{ background: rgba(124,92,191,0.12);  color: var(--purple); }
+.badge-ban     { background: rgba(196,78,78,0.12);   color: var(--red); }
+.badge-limit   { background: rgba(184,147,90,0.12);  color: var(--amber); }
+.badge-allowed { background: rgba(58,144,104,0.12);  color: var(--green); }
+.badge-unknown { background: rgba(128,128,128,0.12); color: var(--text-dim); }
 
 /* ── 테이블 ── */
 .reg-table-wrap { flex: 1; overflow-y: auto; overflow-x: auto; }
@@ -527,9 +563,10 @@ function typeLabel(type) {
   padding: 2px 7px; border-radius: 3px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap;
 }
-.chip-red    { background: rgba(196,78,78,0.15);   color: var(--red); }
-.chip-amber  { background: rgba(184,147,90,0.15);  color: var(--amber); }
-.chip-purple { background: rgba(124,92,191,0.15);  color: var(--purple); }
+.chip-red   { background: rgba(196,78,78,0.15);   color: var(--red); }
+.chip-amber { background: rgba(184,147,90,0.15);  color: var(--amber); }
+.chip-green { background: rgba(58,144,104,0.15);  color: var(--green); }
+.chip-gray  { background: rgba(128,128,128,0.12); color: var(--text-dim); }
 
 /* 갱신일 */
 .td-date.mono { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }

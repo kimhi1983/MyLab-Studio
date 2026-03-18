@@ -51,9 +51,10 @@
 
       <select v-model="selectedRegStatus" class="filter-select" @change="onFilterChange">
         <option value="">규제 전체</option>
-        <option value="허용">허용</option>
-        <option value="제한">제한</option>
-        <option value="금지">금지</option>
+        <option value="allowed">허용</option>
+        <option value="restricted">제한</option>
+        <option value="prohibited">금지</option>
+        <option value="unknown">미확인</option>
       </select>
 
       <label class="pharma-toggle">
@@ -124,8 +125,9 @@
                   </td>
                   <td class="cell-reg">
                     <div class="reg-badges">
-                      <span v-if="item.regulation_status_kr" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_kr)">KR {{ item.regulation_status_kr }}</span>
-                      <span v-if="item.regulation_status_eu" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_eu)">EU {{ item.regulation_status_eu }}</span>
+                      <span v-if="item.regulation_status_kr && item.regulation_status_kr !== 'unknown'" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_kr)">KR {{ regStatusLabel(item.regulation_status_kr) }}</span>
+                      <span v-if="item.regulation_status_eu && item.regulation_status_eu !== 'unknown'" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_eu)">EU {{ regStatusLabel(item.regulation_status_eu) }}</span>
+                      <span v-if="item.regulation_status_kr === 'unknown' || item.regulation_status_eu === 'unknown'" class="reg-badge badge-gray">미확인</span>
                       <span v-if="!item.regulation_status_kr && !item.regulation_status_eu" class="cell-empty">-</span>
                     </div>
                   </td>
@@ -271,11 +273,11 @@
                 <div class="detail-props-grid">
                   <template v-if="selectedItem.regulation_status_kr">
                     <span class="prop-label">한국 (KR)</span>
-                    <span class="prop-val" :class="regStatusBadgeClass(selectedItem.regulation_status_kr)">{{ selectedItem.regulation_status_kr }}</span>
+                    <span class="prop-val reg-badge" :class="regStatusBadgeClass(selectedItem.regulation_status_kr)">{{ regStatusLabel(selectedItem.regulation_status_kr) }}</span>
                   </template>
                   <template v-if="selectedItem.regulation_status_eu">
                     <span class="prop-label">유럽 (EU)</span>
-                    <span class="prop-val" :class="regStatusBadgeClass(selectedItem.regulation_status_eu)">{{ selectedItem.regulation_status_eu }}</span>
+                    <span class="prop-val reg-badge" :class="regStatusBadgeClass(selectedItem.regulation_status_eu)">{{ regStatusLabel(selectedItem.regulation_status_eu) }}</span>
                   </template>
                   <template v-if="selectedItem.max_concentration_kr">
                     <span class="prop-label">KR 최대 농도</span>
@@ -515,37 +517,34 @@ function ewgDesc(score) {
   return '위험'
 }
 
-// 규제 상태 배지 클래스 (regulation_status_kr/eu 값 기반)
+// 규제 상태 배지 클래스 (prohibited/restricted/allowed/unknown 및 한글 동시 처리)
 function regStatusBadgeClass(status) {
   if (!status) return ''
-  if (status === '금지') return 'badge-red'
-  if (status === '제한') return 'badge-amber'
-  if (status === '허용') return 'badge-green'
+  const s = status.toLowerCase()
+  if (s === 'prohibited' || s === '금지') return 'badge-red'
+  if (s === 'restricted' || s === '제한') return 'badge-amber'
+  if (s === 'allowed' || s === '허용') return 'badge-green'
+  if (s === 'unknown' || s === '미확인') return 'badge-gray'
   return ''
 }
 
-// 규제 배지 클래스 (단순: 있으면 표시)
-function regBadgeClass(val) {
-  if (!val) return ''
-  const lower = val.toLowerCase()
-  if (lower.includes('금지') || lower.includes('prohibited') || lower.includes('banned')) return 'badge-red'
-  if (lower.includes('제한') || lower.includes('restricted') || lower.includes('limit')) return 'badge-amber'
-  return 'badge-green'
+// 규제 상태 한글 라벨
+function regStatusLabel(status) {
+  if (!status) return ''
+  const s = status.toLowerCase()
+  if (s === 'prohibited' || s === '금지') return '금지'
+  if (s === 'restricted' || s === '제한') return '제한'
+  if (s === 'allowed' || s === '허용') return '허용'
+  if (s === 'unknown' || s === '미확인') return '미확인'
+  return status
 }
 
-// 규제 상태 칩
+// 규제 상태 칩 (레거시 호환)
 function regStatusClass(status) {
-  if (status === 'banned') return 'status-banned'
+  if (status === 'banned' || status === 'prohibited') return 'status-banned'
   if (status === 'restricted') return 'status-restricted'
   if (status === 'allowed') return 'status-allowed'
   return ''
-}
-
-function regStatusLabel(status) {
-  if (status === 'banned') return '금지'
-  if (status === 'restricted') return '제한'
-  if (status === 'allowed') return '허용'
-  return status
 }
 
 function ingredientTypeLabel(type) {
@@ -881,12 +880,7 @@ function formatDate(iso) {
 .badge-green { background: var(--green-bg); color: var(--green); border-color: #b8dece; }
 .badge-amber { background: var(--amber-bg); color: var(--amber); border-color: #e8d4a0; }
 .badge-red   { background: var(--red-bg);   color: var(--red);   border-color: #e8b8b8; }
-/* 기본 (알 수 없는 규제): 파란 계열 */
-.reg-badge:not(.badge-green):not(.badge-amber):not(.badge-red) {
-  background: var(--blue-bg);
-  color: var(--blue);
-  border-color: #b8cce8;
-}
+.badge-gray  { background: var(--border);   color: var(--text-dim); border-color: var(--border); }
 
 /* ─── 스켈레톤 로딩 ─── */
 .skeleton-row {
