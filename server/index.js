@@ -4928,7 +4928,7 @@ app.post('/api/formula/generate-idea', async (req, res) => {
 
     const { rows: dbIngredients } = await pool.query(
       `SELECT im.inci_name, im.korean_name, im.ingredient_type,
-              im.ph_min, im.ph_max, im.usage_level, im.ewg_score,
+              im.ph_min, im.ph_max, im.usage_level_min AS usage_level, im.ewg_score,
               im.comedogenic_rating, im.function_inci
        FROM ingredient_master im
        WHERE ${conditions.join(' AND ')}
