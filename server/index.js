@@ -1762,7 +1762,7 @@ async function _fetchGemini(prompt) {
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.3,
+          temperature: 0.1,
           responseMimeType: 'application/json',
           thinkingConfig: { thinkingBudget: 0 },
         },
@@ -4827,7 +4827,7 @@ app.get('/api/ingredients/db', async (req, res) => {
     const countRes = await pool.query(`SELECT COUNT(*) FROM ingredient_master ${whereClause}`, params.slice(0, idx - 1))
     params.push(lim, off)
     const { rows } = await pool.query(
-      `SELECT inci_name, korean_name, ingredient_type, ewg_score,
+      `SELECT inci_name, korean_name, cas_number, ingredient_type, ewg_score,
               max_concentration_kr, max_concentration_eu,
               usage_level_min, usage_level_max, function_inci,
               ph_min, ph_max, comedogenic_rating,
@@ -4931,7 +4931,7 @@ const PRODUCT_BASE = {
     ],
   },
   '립틴트': {
-    aqua_max: 50,
+    aqua_max: 75,
     balance_key: 'Aqua',
     base_ingredients: [
       { inci: 'Aqua',                   korean: '정제수',                pct: 45.0, function: '용매',    phase: 'A' },
@@ -5004,18 +5004,114 @@ const PRODUCT_BASE = {
       { inci: 'Phenoxyethanol',          korean: '페녹시에탄올',         pct:  0.5, function: '방부제',     phase: 'D' },
     ],
   },
+  '아이섀도우': {
+    aqua_max: 5,
+    balance_key: 'Mica',
+    base_ingredients: [
+      { inci: 'Mica',           korean: '마이카',            pct: 50.0, function: '베이스/광택',   phase: 'A' },
+      { inci: 'Talc',           korean: '탈크',              pct: 20.0, function: '충전제/흡수',   phase: 'A' },
+      { inci: 'Dimethicone',    korean: '디메티콘',          pct:  5.0, function: '에몰리언트',    phase: 'B' },
+      { inci: 'Isopropyl Myristate', korean: '이소프로필미리스테이트', pct: 3.0, function: '에몰리언트', phase: 'B' },
+      { inci: 'Phenoxyethanol', korean: '페녹시에탄올',      pct:  0.5, function: '방부제',       phase: 'D' },
+    ],
+  },
+  '헤어오일': {
+    aqua_max: 3,
+    balance_key: 'Cyclopentasiloxane',
+    base_ingredients: [
+      { inci: 'Cyclopentasiloxane',            korean: '사이클로펜타실록세인',    pct: 45.0, function: '실리콘베이스', phase: 'A' },
+      { inci: 'Dimethicone',                   korean: '디메티콘',                pct: 10.0, function: '실리콘',      phase: 'A' },
+      { inci: 'Argania Spinosa Kernel Oil',    korean: '아르간오일',              pct: 25.0, function: '식물성오일',  phase: 'A' },
+      { inci: 'Camellia Japonica Seed Oil',    korean: '카멜리아씨드오일',        pct: 10.0, function: '식물성오일',  phase: 'A' },
+      { inci: 'Tocopherol',                    korean: '토코페롤',                pct:  0.5, function: '산화방지',   phase: 'B' },
+    ],
+  },
+  '트리트먼트': {
+    aqua_max: 80,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',                          korean: '정제수',                  pct: 65.0, function: '용매',       phase: 'A' },
+      { inci: 'Cetearyl Alcohol',              korean: '세테아릴알코올',          pct:  8.0, function: '유화안정제', phase: 'B' },
+      { inci: 'Behentrimonium Methosulfate',   korean: '베헨트리모늄메소설페이트', pct: 5.0, function: '유화/컨디셔닝', phase: 'B' },
+      { inci: 'Glycerin',                      korean: '글리세린',                pct:  5.0, function: '보습제',     phase: 'A' },
+      { inci: 'Phenoxyethanol',                korean: '페녹시에탄올',            pct:  0.5, function: '방부제',     phase: 'D' },
+    ],
+  },
+  '클렌징폼': {
+    aqua_max: 80,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',                          korean: '정제수',                  pct: 60.0, function: '용매',       phase: 'A' },
+      { inci: 'Sodium Cocoyl Isethionate',     korean: '소듐코코일이세티오네이트', pct: 10.0, function: '계면활성제', phase: 'A' },
+      { inci: 'Cocamidopropyl Betaine',        korean: '코카미도프로필베타인',    pct: 10.0, function: '계면활성제', phase: 'A' },
+      { inci: 'Glycerin',                      korean: '글리세린',                pct:  5.0, function: '보습제',     phase: 'A' },
+      { inci: 'Phenoxyethanol',                korean: '페녹시에탄올',            pct:  0.5, function: '방부제',     phase: 'D' },
+    ],
+  },
+  '클렌징오일': {
+    aqua_max: 2,
+    balance_key: 'Caprylic/Capric Triglyceride',
+    base_ingredients: [
+      { inci: 'Caprylic/Capric Triglyceride',  korean: '카프릴릭트리글리세라이드', pct: 60.0, function: '베이스오일',  phase: 'A' },
+      { inci: 'Sorbeth-30 Tetraoleate',        korean: '소르베스-30테트라올레이트', pct: 12.0, function: '유화제',     phase: 'A' },
+      { inci: 'Isopropyl Myristate',           korean: '이소프로필미리스테이트',  pct: 10.0, function: '에몰리언트',  phase: 'A' },
+      { inci: 'Polysorbate 60',                korean: '폴리소르베이트60',        pct:  3.0, function: '계면활성제',  phase: 'A' },
+      { inci: 'Tocopherol',                    korean: '토코페롤',                pct:  0.5, function: '산화방지',   phase: 'B' },
+    ],
+  },
+  '바디로션': {
+    aqua_max: 80,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',              korean: '정제수',          pct: 70.0, function: '용매',       phase: 'A' },
+      { inci: 'Glycerin',         korean: '글리세린',         pct:  5.0, function: '보습제',     phase: 'A' },
+      { inci: 'Butylene Glycol',  korean: '부틸렌글라이콜',  pct:  3.0, function: '보습제',     phase: 'A' },
+      { inci: 'Cetearyl Alcohol', korean: '세테아릴알코올',  pct:  5.0, function: '유화안정제', phase: 'B' },
+      { inci: 'Glyceryl Stearate', korean: '글리세릴스테아레이트', pct: 3.0, function: '유화제', phase: 'B' },
+      { inci: 'Phenoxyethanol',   korean: '페녹시에탄올',    pct:  0.5, function: '방부제',     phase: 'D' },
+    ],
+  },
+  '바디워시': {
+    aqua_max: 80,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',                    korean: '정제수',              pct: 65.0, function: '용매',       phase: 'A' },
+      { inci: 'Sodium Laureth Sulfate',  korean: '소듐라우레스설페이트', pct: 10.0, function: '계면활성제', phase: 'A' },
+      { inci: 'Cocamidopropyl Betaine',  korean: '코카미도프로필베타인', pct:  8.0, function: '계면활성제', phase: 'A' },
+      { inci: 'Glycerin',                korean: '글리세린',             pct:  4.0, function: '보습제',     phase: 'A' },
+      { inci: 'Phenoxyethanol',          korean: '페녹시에탄올',         pct:  0.5, function: '방부제',     phase: 'D' },
+    ],
+  },
 }
 
 function getBaseKey(product_type) {
   const pt = (product_type || '').toLowerCase()
+  // 색조 (구체적인 것 먼저)
   if (pt.includes('립스틱') || pt.includes('lipstick')) return '립스틱'
   if (pt.includes('립글로스') || pt.includes('lipgloss') || pt.includes('lip gloss')) return '립글로스'
-  if (pt.includes('립틴트') || pt.includes('lip tint')) return '립틴트'
+  if (pt.includes('립틴트') || pt.includes('lip tint') || pt.includes('틴트')) return '립틴트'
+  if (pt.includes('아이섀도') || pt.includes('eye shadow') || pt.includes('eyeshadow')) return '아이섀도우'
+  if (pt.includes('파운데이션') || pt.includes('foundation')) return '파운데이션'
+  if (pt.includes('bb크림') || pt.includes('bb cream')) return 'BB크림'
+  if (pt.includes('쿠션') || pt.includes('cushion')) return '쿠션'
+  if (pt.includes('블러셔') || pt.includes('blusher') || pt.includes('blush')) return '블러셔'
+  // 선케어
   if (pt.includes('선크림') || pt.includes('선스크린') || pt.includes('sunscreen') || pt.includes('sunblock') || pt.includes('spf')) return '선크림'
+  // 클렌징 (구체적인 것 먼저)
+  if (pt.includes('클렌징오일') || pt.includes('cleansing oil')) return '클렌징오일'
+  if (pt.includes('클렌징폼') || pt.includes('cleansing foam') || pt.includes('폼클렌') || pt.includes('foam cleanser')) return '클렌징폼'
+  // 헤어
+  if (pt.includes('헤어오일') || pt.includes('hair oil')) return '헤어오일'
+  if (pt.includes('샴푸') || pt.includes('shampoo')) return '샴푸'
+  if (pt.includes('트리트먼트') || pt.includes('treatment')) return '트리트먼트'
+  // 바디
+  if (pt.includes('바디워시') || pt.includes('body wash')) return '바디워시'
+  if (pt.includes('바디로션') || pt.includes('body lotion')) return '바디로션'
+  if (pt.includes('바디크림') || pt.includes('body cream')) return '바디크림'
+  // 스킨케어
   if (pt.includes('수분크림') || pt.includes('모이스처') || pt.includes('크림') || pt.includes('cream')) return '수분크림'
   if (pt.includes('에센스') || pt.includes('세럼') || pt.includes('essence') || pt.includes('serum') || pt.includes('앰플')) return '에센스'
   if (pt.includes('토너') || pt.includes('스킨') || pt.includes('toner')) return '토너'
-  if (pt.includes('샴푸') || pt.includes('shampoo')) return '샴푸'
   return null
 }
 
@@ -5387,24 +5483,55 @@ ${colorantStr}
   }
 }`
 
-    try {
-      console.log('[generate-idea] Gemini 호출 시작...')
-      // callGemini는 이미 파싱된 JSON 객체를 반환 (null 또는 object)
-      const parsed = await callGemini(aiPrompt, 'generate-idea', false)
-      if (parsed && Array.isArray(parsed.formula_input) && parsed.formula_input.length > 0) {
-        // formula_input → 내부 ingredients 포맷으로 정규화
-        parsed.formula_input = parsed.formula_input.map(i => ({
-          name: i.korean_name || i.name || '',
-          inci_name: i.inci || i.inci_name || '',
-          percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
-          function: i.function || '',
-          phase: i.phase || 'A',
-        }))
-        aiResult = parsed
-        console.log(`[generate-idea] Gemini 성공 — ${parsed.formula_input.length}종, total=${parsed.total_wt}%`)
+    // ── llm_cache 키: product_type + requirements 조합 (프롬프트 전체 해시 X → 재현성) ──
+    const ideaCacheKey = makeCacheKey('gemini', 'generate-idea',
+      `${product_type}|${(requirements || '').trim()}|${excludeTypes.join(',')}|${ewgFilter}|${sensitiveFilter}`
+    )
+
+    // 캐시 확인
+    const cachedResult = await getCached(ideaCacheKey)
+    if (cachedResult && Array.isArray(cachedResult.formula_input) && cachedResult.formula_input.length > 0) {
+      console.log('[generate-idea] 캐시 히트 — 저장된 처방 반환')
+      aiResult = cachedResult
+    } else {
+      // 캐시 없음 → Gemini 호출 (최대 3회, 색소 필수 검증)
+      const MAX_RETRY = 3
+      for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+        try {
+          console.log(`[generate-idea] Gemini 호출 (시도 ${attempt + 1}/${MAX_RETRY})...`)
+          const parsed = await callGemini(aiPrompt, 'generate-idea', false)
+          if (!parsed || !Array.isArray(parsed.formula_input) || parsed.formula_input.length === 0) continue
+
+          // formula_input → 내부 포맷 정규화
+          parsed.formula_input = parsed.formula_input.map(i => ({
+            name: i.korean_name || i.name || '',
+            inci_name: i.inci || i.inci_name || '',
+            percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
+            function: i.function || '',
+            phase: i.phase || 'A',
+          }))
+
+          // 색조 제형 색소 필수 검증
+          if (needsColorant) {
+            const hasColorant = parsed.formula_input.some(i =>
+              /CI\s*\d+|Iron Oxide|Mica|Carmine|Titanium Dioxide/i.test(i.inci_name || '')
+            )
+            if (!hasColorant) {
+              console.warn(`[generate-idea] 색소 누락 (시도 ${attempt + 1}) — 재시도`)
+              continue
+            }
+          }
+
+          aiResult = parsed
+          console.log(`[generate-idea] Gemini 성공 — ${parsed.formula_input.length}종, total=${parsed.total_wt}%`)
+
+          // 캐시 저장 (30일)
+          await setCached(ideaCacheKey, 'gemini', 'generate-idea', aiResult)
+          break
+        } catch (geminiErr) {
+          console.warn(`[generate-idea] Gemini 실패 (시도 ${attempt + 1}):`, geminiErr.message)
+        }
       }
-    } catch (geminiErr) {
-      console.warn('[generate-idea] Gemini 실패, 룰기반 폴백:', geminiErr.message)
     }
 
     // ── 14. 서버사이드 검증: 필수원료 포함 여부 ──
@@ -5430,6 +5557,22 @@ ${colorantStr}
     }
 
     const usedIngredients = aiResult?.formula_input || baseIngredients
+
+    // ── 14-b. 무수(anhydrous) 제형: AI가 추가한 Aqua 제거 ──
+    // balance_key가 Aqua가 아닌 제형(오일/왁스/파우더 베이스)에서만 Aqua 완전 제거
+    // 수성 제형(balance_key=Aqua)은 Step 15에서 역산으로 자동 보정
+    if (baseStructure?.aqua_max != null && baseStructure?.balance_key !== 'Aqua') {
+      const aquaIdxCheck = usedIngredients.findIndex(i =>
+        (i.inci_name || '').toLowerCase() === 'aqua' || (i.name || '') === '정제수'
+      )
+      if (aquaIdxCheck !== -1) {
+        const aquaPct = parseFloat(usedIngredients[aquaIdxCheck].percentage) || 0
+        if (aquaPct > baseStructure.aqua_max) {
+          usedIngredients.splice(aquaIdxCheck, 1)
+          console.log(`[generate-idea] Aqua ${aquaPct}% > aqua_max(${baseStructure.aqua_max}%) — Aqua 제거 (balance_key: ${baseStructure.balance_key})`)
+        }
+      }
+    }
 
     // ── 15. PRECISION-ARITHMETIC: Aqua 역산으로 100.00% 강제 보정 ──
     // AI가 Aqua를 고정값으로 설정해서 합계가 100%가 안 되는 경우 교정
