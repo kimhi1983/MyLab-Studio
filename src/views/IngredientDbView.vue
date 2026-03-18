@@ -97,7 +97,7 @@
                     <span v-else class="cell-empty">-</span>
                   </td>
                   <td class="cell-ewg">
-                    <span v-if="item.ewg_score != null" class="ewg-chip" :class="ewgClass(item.ewg_score)">
+                    <span v-if="item.ewg_score != null && item.ewg_score > 0" class="ewg-chip" :class="ewgClass(item.ewg_score)">
                       {{ item.ewg_score }}
                     </span>
                     <span v-else class="cell-empty">-</span>
@@ -201,7 +201,7 @@
               </div>
 
               <!-- EWG 점수 -->
-              <div class="detail-ewg-block" v-if="selectedItem.ewg_score != null">
+              <div class="detail-ewg-block" v-if="selectedItem.ewg_score != null && selectedItem.ewg_score > 0">
                 <div class="ewg-score-label section-label">EWG 안전 등급</div>
                 <div class="ewg-score-display" :class="ewgClass(selectedItem.ewg_score)">
                   <span class="ewg-number">{{ selectedItem.ewg_score }}</span>
@@ -323,7 +323,7 @@
                 <div class="section-label">원료 유형</div>
                 <div class="detail-value">{{ ingredientTypeLabel(selectedItem.ingredient_type) }}</div>
               </div>
-              <div class="detail-section" v-if="selectedItem.ewg_score != null">
+              <div class="detail-section" v-if="selectedItem.ewg_score != null && selectedItem.ewg_score > 0">
                 <div class="section-label">EWG 안전 등급</div>
                 <div class="ewg-score-display" :class="ewgClass(selectedItem.ewg_score)">
                   <span class="ewg-number">{{ selectedItem.ewg_score }}</span>
