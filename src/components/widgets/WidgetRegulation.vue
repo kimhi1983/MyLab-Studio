@@ -420,8 +420,7 @@ function ewgBadgeClass(score) {
 }
 .reg-row:hover { background: var(--bg); }
 .reg-row.row-expanded { background: var(--bg); }
-.reg-row.row-ban td { border-left: 2px solid var(--red); }
-.reg-row.row-ban td:first-child { border-left: none; }
+.reg-row.row-ban td:nth-child(2) { border-left: 2px solid var(--red); }
 
 .reg-row td {
   padding: 6px 8px;
