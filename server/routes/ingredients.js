@@ -213,7 +213,7 @@ router.get('/ingredients/db', async (req, res) => {
     const countRes = await pool.query(`SELECT COUNT(*) FROM ingredient_master ${whereClause}`, params.slice(0, idx - 1))
     params.push(lim, off)
     const { rows } = await pool.query(
-      `SELECT inci_name, korean_name, ingredient_type, ewg_score,
+      `SELECT id, inci_name, korean_name, cas_number, ingredient_type, ewg_score,
               max_concentration_kr, max_concentration_eu,
               usage_level_min, usage_level_max, function_inci,
               ph_min, ph_max, comedogenic_rating,

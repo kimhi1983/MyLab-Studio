@@ -71,10 +71,23 @@
           <!-- 테이블 헤더 -->
           <div class="table-wrap">
             <table class="data-table">
+              <colgroup>
+                <col class="col-inci" />
+                <col class="col-kr" />
+                <col class="col-cas" />
+                <col class="col-type" />
+                <col class="col-func" />
+                <col class="col-ewg" />
+                <col class="col-ph" />
+                <col class="col-usage" />
+                <col class="col-reg" />
+                <col class="col-conc" />
+              </colgroup>
               <thead>
                 <tr>
                   <th class="col-inci">INCI Name</th>
                   <th class="col-kr">한글명</th>
+                  <th class="col-cas">CAS No</th>
                   <th class="col-type">카테고리</th>
                   <th class="col-func">기능</th>
                   <th class="col-ewg">EWG</th>
@@ -94,14 +107,30 @@
                 >
                   <td class="cell-inci">{{ item.inci_name || '-' }}</td>
                   <td class="cell-kr">{{ item.korean_name || '-' }}</td>
+                  <td class="cell-cas">
+                    <a
+                      v-if="item.cas_number"
+                      :href="`https://pubchem.ncbi.nlm.nih.gov/#query=${item.cas_number}`"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="cas-link"
+                      @click.stop
+                    >{{ item.cas_number }}</a>
+                    <span v-else class="cell-empty">-</span>
+                  </td>
                   <td class="cell-type">
                     <span v-if="item.ingredient_type" class="type-chip">{{ ingredientTypeLabel(item.ingredient_type) }}</span>
                     <span v-else class="cell-empty">-</span>
                   </td>
                   <td class="cell-func">
                     <template v-if="item.function_inci">
-                      <span v-for="fn in funcList(item.function_inci).slice(0, 2)" :key="fn" class="func-tag">{{ fn }}</span>
-                      <span v-if="funcList(item.function_inci).length > 2" class="func-more">+{{ funcList(item.function_inci).length - 2 }}</span>
+                      <div
+                        class="func-cell-wrap"
+                        :title="funcList(item.function_inci).length > 2 ? funcList(item.function_inci).join(', ') : ''"
+                      >
+                        <span v-for="fn in funcList(item.function_inci).slice(0, 2)" :key="fn" class="func-tag">{{ fn }}</span>
+                        <span v-if="funcList(item.function_inci).length > 2" class="func-more">+{{ funcList(item.function_inci).length - 2 }}</span>
+                      </div>
                     </template>
                     <span v-else class="cell-empty">-</span>
                   </td>
@@ -141,14 +170,14 @@
               </tbody>
               <tbody v-else-if="loading">
                 <tr v-for="n in 8" :key="n">
-                  <td colspan="8">
+                  <td colspan="10">
                     <div class="skeleton-row"></div>
                   </td>
                 </tr>
               </tbody>
               <tbody v-else>
                 <tr>
-                  <td colspan="8" class="empty-cell">
+                  <td colspan="10" class="empty-cell">
                     <div class="empty-state">
                       <div class="empty-icon">◎</div>
                       <div class="empty-title">{{ errorMessage ? 'API 서버에 연결하지 못했습니다' : '검색 결과가 없습니다' }}</div>
@@ -726,7 +755,8 @@ function formatDate(iso) {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 560px;
+  min-width: 700px;
+  table-layout: fixed;
 }
 .data-table th {
   background: var(--bg);
@@ -758,25 +788,54 @@ function formatDate(iso) {
   background: var(--accent-light);
 }
 
-.col-inci  { width: 22%; }
-.col-kr    { width: 14%; }
-.col-type  { width: 9%; }
-.col-func  { width: 14%; }
-.col-ewg   { width: 6%; text-align: center; }
-.col-ph    { width: 9%; }
-.col-usage { width: 9%; }
-.col-reg   { width: 16%; }
-.col-conc  { width: 14%; }
+.col-inci  { width: 180px; max-width: 180px; }
+.col-kr    { width: 120px; max-width: 120px; }
+.col-cas   { width: 100px; max-width: 100px; }
+.col-type  { width: 90px; }
+.col-func  { width: 200px; max-width: 200px; }
+.col-ewg   { width: 55px; text-align: center; }
+.col-ph    { width: 85px; }
+.col-usage { width: 90px; }
+.col-reg   { width: 130px; }
+.col-conc  { width: 100px; }
 
 .cell-inci {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
-  word-break: break-word;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cell-kr {
   font-size: 12.5px;
   color: var(--text-sub);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-cas {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cas-link {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cas-link:hover {
+  text-decoration: underline;
+  color: var(--accent);
 }
 .cell-ewg { text-align: center; }
 .cell-type { }
@@ -813,7 +872,18 @@ function formatDate(iso) {
   white-space: nowrap;
 }
 
-.cell-func { vertical-align: middle; }
+.cell-func {
+  vertical-align: middle;
+  max-width: 200px;
+  overflow: hidden;
+}
+.func-cell-wrap {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
+  overflow: hidden;
+  max-width: 100%;
+}
 .func-tags-wrap { display: flex; flex-wrap: wrap; gap: 3px; }
 .func-tag {
   display: inline-flex;
@@ -1248,6 +1318,9 @@ function formatDate(iso) {
 
 @media (max-width: 900px) {
   .col-ph, .cell-ph, .col-usage, .cell-usage { display: none; }
+}
+@media (max-width: 800px) {
+  .col-cas, .cell-cas { display: none; }
 }
 @media (max-width: 700px) {
   .col-type, .cell-type, .col-conc, .cell-conc { display: none; }
