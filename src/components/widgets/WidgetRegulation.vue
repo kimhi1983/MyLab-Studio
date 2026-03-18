@@ -55,6 +55,7 @@
               </td>
               <td class="td-name">
                 {{ row.ingredient }}
+                <span v-if="row.ingredient_type" class="type-badge">{{ typeLabel(row.ingredient_type) }}</span>
                 <span v-if="row.ewg_score" :class="ewgBadgeClass(row.ewg_score)" class="ewg-badge">
                   EWG {{ row.ewg_score }}
                 </span>
@@ -168,11 +169,17 @@ async function loadData() {
     if (!data?.items) return
 
     allData.value = data.items
-      .filter(r => (r.displayable ?? true) && (r.ingredient || r.inci_name) && isVisibleSource(r.source))
+      .filter(r => {
+        if (!(r.displayable ?? true)) return false
+        if (!(r.ingredient || r.inci_name)) return false
+        if (!isVisibleSource(r.source)) return false
+        // pharma_prohibited, extract 제외
+        if (r.ingredient_type === 'pharma_prohibited' || r.ingredient_type === 'extract') return false
+        return true
+      })
       .map((r, i) => {
         const region = mapRegulationSource(r.source)
         const restriction = r.restriction || ''
-        // GEMINI_SAFETY_* 부가 정보 (ewg_score, concerns) 활용
         const ewgTag = r.ewg_score != null ? `EWG ${r.ewg_score}` : ''
         const concernTag = r.concerns?.length ? r.concerns.slice(0, 1).join('') : ''
         const displayRestriction = restriction || [ewgTag, concernTag].filter(Boolean).join(' · ')
@@ -180,6 +187,7 @@ async function loadData() {
           id: i,
           region,
           ingredient: r.ingredient || r.inci_name,
+          ingredient_type: r.ingredient_type || '',
           restriction: displayRestriction,
           restrictionShort: displayRestriction.length > 40 ? displayRestriction.slice(0, 40) + '…' : displayRestriction,
           status: getRegulationStatus(r),
@@ -190,6 +198,13 @@ async function loadData() {
         }
       })
       .filter(r => r.region !== '기타')
+      .sort((a, b) => {
+        // ingredient_type 우선 정렬, 그 다음 성분명 알파벳 순
+        if (a.ingredient_type && b.ingredient_type && a.ingredient_type !== b.ingredient_type) {
+          return a.ingredient_type.localeCompare(b.ingredient_type)
+        }
+        return a.ingredient.localeCompare(b.ingredient)
+      })
   } catch (err) {
     console.error('[WidgetRegulation] 데이터 로드 실패:', err.message)
   }
@@ -233,6 +248,21 @@ function getStatusClass(status) {
 
 function getStatusLabel(status) {
   return { ban: '금지', limit: '제한', monitor: '모니터링' }[status] || status
+}
+
+const INGREDIENT_TYPE_LABELS = {
+  preservative: '방부제', uv_filter: '자외선차단', surfactant: '계면활성제',
+  silicone: '실리콘', peptide: '펩타이드', colorant: '색소', fragrance: '향료',
+  emulsifier: '유화제', thickener: '점증제', humectant_active: '보습/활성',
+  emollient_ester: '에몰리언트', antioxidant: '산화방지제', polymer_film_former: '폴리머',
+  plant_oil: '식물유', mineral_inorganic: '무기물', solvent: '용매',
+  chelator_ph: 'pH조절', biomimetic_active: '바이오미메틱', amino_acid: '아미노산',
+  hair_colorant: '모발색소', hydrolyzed_protein: '가수분해단백', vitamin: '비타민',
+}
+
+function typeLabel(type) {
+  if (!type) return ''
+  return INGREDIENT_TYPE_LABELS[type] || type
 }
 
 function ewgClass(score) {
@@ -522,6 +552,22 @@ function ewgBadgeClass(score) {
 
 /* 기능 표시 */
 .expand-fn { color: var(--text-sub); }
+
+/* 원료 타입 배지 */
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  margin-left: 6px;
+  vertical-align: middle;
+  letter-spacing: 0.2px;
+}
 
 /* 빈 상태 */
 .empty {

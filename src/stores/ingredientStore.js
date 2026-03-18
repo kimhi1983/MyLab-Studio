@@ -43,6 +43,11 @@ export function useIngredientStore() {
     return api.getIngredient(id)
   }
 
+  // 성분DB 페이지 (확장 필드: ingredient_type, ph, usage_level, function_inci 등)
+  async function searchIngredientsDb({ page = 1, limit = 50, type, search } = {}) {
+    return api.getIngredientsDb({ page, limit, type, search })
+  }
+
   // 규제 검색
   async function searchRegulations({ source, q, limit = 50, offset = 0 } = {}) {
     return api.getRegulations({ source, q, limit, offset })
@@ -95,6 +100,7 @@ export function useIngredientStore() {
     init,
     searchIngredients,
     getIngredientDetail,
+    searchIngredientsDb,
     searchRegulations,
     searchKnowledge,
     searchProducts,

@@ -40,6 +40,40 @@
       <div class="loading-text">품질 검증 항목 확인 중...</div>
     </div>
 
+    <!-- DB 자동 검증 패널 -->
+    <div v-if="autoChecks.length || autoChecksLoading" class="panel db-auto-panel">
+      <div class="panel-header">
+        <div>
+          <span class="section-label">DB AUTO-CHECK</span>
+          <span class="section-title">DB 자동 검증 (8항목)</span>
+        </div>
+        <span v-if="autoChecksLoading" class="auto-loading-badge">분석 중...</span>
+        <span v-else class="auto-done-badge">
+          🟢 {{ autoPassCount }} &nbsp; 🟡 {{ autoWarnCount }} &nbsp; 🔴 {{ autoFailCount }}
+        </span>
+      </div>
+      <div class="auto-checks-grid">
+        <div v-if="autoChecksLoading" v-for="n in 8" :key="n" class="auto-check-row skeleton">
+          <div class="auto-icon">·</div>
+          <div class="auto-body"><div class="auto-name skeleton-line"></div></div>
+        </div>
+        <div
+          v-for="chk in autoChecks"
+          :key="chk.name"
+          class="auto-check-row"
+          :class="`acheck-${chk.status}`"
+        >
+          <div class="auto-icon">{{ autoIcon(chk.status) }}</div>
+          <div class="auto-body">
+            <div class="auto-name">{{ chk.name }}</div>
+            <div class="auto-msg">{{ chk.message }}</div>
+            <div v-if="chk.detail" class="auto-detail">{{ chk.detail }}</div>
+          </div>
+          <div class="auto-badge" :class="`abadge-${chk.status}`">{{ autoLabel(chk.status) }}</div>
+        </div>
+      </div>
+    </div>
+
     <!-- 자동 검증 결과 -->
     <div v-if="validationResult" class="result-section">
 
@@ -180,6 +214,197 @@ const validationResult = ref(null)
 const apiError = ref(false)
 const stabilityStatus = ref(null)
 
+// ─── DB 자동 검증 ───
+const autoChecks = ref([])
+const autoChecksLoading = ref(false)
+const autoPassCount = computed(() => autoChecks.value.filter(c => c.status === 'pass').length)
+const autoWarnCount = computed(() => autoChecks.value.filter(c => c.status === 'warn').length)
+const autoFailCount = computed(() => autoChecks.value.filter(c => c.status === 'fail').length)
+
+function autoIcon(status) {
+  if (status === 'pass') return '🟢'
+  if (status === 'warn') return '🟡'
+  return '🔴'
+}
+function autoLabel(status) {
+  if (status === 'pass') return '통과'
+  if (status === 'warn') return '주의'
+  return '오류'
+}
+
+async function runAutoChecks(ingredients) {
+  autoChecksLoading.value = true
+  autoChecks.value = []
+  const checks = []
+
+  // API 호출: expand-inci, ph-check, regulation-limits 병렬 실행
+  // expand-inci는 name/wt_pct 형식으로 변환
+  const inciIngredients = ingredients.map(i => ({
+    name: i.inci_name,
+    wt_pct: parseFloat(i.percentage) || 0,
+  }))
+  const phIngredients = ingredients.map(i => ({
+    inci_name: i.inci_name,
+    wt_pct: parseFloat(i.percentage) || 0,
+  }))
+
+  const [inciRes, phRes, regRes] = await Promise.all([
+    api.expandInci(inciIngredients).catch(() => null),
+    api.phCheck(phIngredients).catch(() => null),
+    api.checkRegulationLimits(ingredients).catch(() => null),
+  ])
+
+  // ① COMPOUND-EXPANSION: 복합원료 전개 여부
+  if (inciRes && !inciRes.error) {
+    const expanded = (inciRes.formula_inci || []).filter(r => r.source_trade_name)
+    const compounds = [...new Set(expanded.map(r => r.source_trade_name))].filter(Boolean)
+    if (compounds.length > 0) {
+      checks.push({
+        name: '① 복합원료 전개',
+        status: 'warn',
+        message: `${compounds.length}개 복합원료 포함 — INCI 전개 완료`,
+        detail: compounds.join(', '),
+      })
+    } else {
+      checks.push({
+        name: '① 복합원료 전개',
+        status: 'pass',
+        message: '복합원료 없음 — 단일 원료로만 구성',
+        detail: null,
+      })
+    }
+  } else {
+    checks.push({ name: '① 복합원료 전개', status: 'warn', message: 'compound_master 조회 불가', detail: null })
+  }
+
+  // ② PRECISION-ARITHMETIC: 배합비 합산 정밀도
+  const total = ingredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0)
+  const totalR = Math.round(total * 1000) / 1000
+  if (inciRes?.validation?.total_wt !== undefined) {
+    const serverTotal = inciRes.validation.total_wt
+    const diff = Math.abs(serverTotal - 100)
+    if (serverTotal > 100.01) {
+      checks.push({ name: '② 배합비 정밀도', status: 'fail', message: `합산 ${serverTotal}% — 100% 초과`, detail: null })
+    } else if (diff > 0.5) {
+      checks.push({ name: '② 배합비 정밀도', status: 'warn', message: `합산 ${serverTotal}% — 100%에 미달`, detail: null })
+    } else {
+      checks.push({ name: '② 배합비 정밀도', status: 'pass', message: `합산 ${serverTotal}% — 정상`, detail: null })
+    }
+  } else {
+    if (totalR > 100.01) {
+      checks.push({ name: '② 배합비 정밀도', status: 'fail', message: `합산 ${totalR.toFixed(3)}% — 100% 초과`, detail: null })
+    } else if (totalR < 99.0) {
+      checks.push({ name: '② 배합비 정밀도', status: 'warn', message: `합산 ${totalR.toFixed(3)}% — 미달`, detail: null })
+    } else {
+      checks.push({ name: '② 배합비 정밀도', status: 'pass', message: `합산 ${totalR.toFixed(3)}% — 정상`, detail: null })
+    }
+  }
+
+  // ③ 사용농도 적정: 규제 한도 경고 항목 확인
+  if (regRes?.success && regRes.data) {
+    const warnings = regRes.data.warnings || []
+    if (warnings.length > 0) {
+      checks.push({
+        name: '③ 사용농도 적정',
+        status: 'warn',
+        message: `${warnings.length}개 성분 한도 근접`,
+        detail: warnings.slice(0, 2).map(w => `${w.inci_name} ${w.percentage}% (한도 ${w.max_allowed}%)`).join(' / '),
+      })
+    } else {
+      checks.push({ name: '③ 사용농도 적정', status: 'pass', message: '전 성분 사용 농도 기준 이내', detail: null })
+    }
+  } else {
+    checks.push({ name: '③ 사용농도 적정', status: 'warn', message: '사용농도 DB 조회 불가', detail: null })
+  }
+
+  // ④ pH 충돌 감지
+  if (phRes && !phRes.error) {
+    const conflicts = phRes.conflicts || []
+    if (conflicts.length > 0) {
+      checks.push({
+        name: '④ pH 충돌 감지',
+        status: 'fail',
+        message: `${conflicts.length}건 pH 범위 충돌 검출`,
+        detail: conflicts.slice(0, 2).map(c => `${c.inci_a} ↔ ${c.inci_b}`).join(' / '),
+      })
+    } else if (phRes.estimated_ph !== null) {
+      const ph = phRes.estimated_ph
+      const inRange = ph >= 3.5 && ph <= 8.5
+      checks.push({
+        name: '④ pH 충돌 감지',
+        status: inRange ? 'pass' : 'warn',
+        message: `추정 pH ${ph} — ${inRange ? '정상 범위' : '범위 외 확인 필요'}`,
+        detail: inRange ? null : `권장 pH 3.5~8.5 / 조정제: ${phRes.recommended_adjuster || '확인 필요'}`,
+      })
+    } else {
+      checks.push({ name: '④ pH 충돌 감지', status: 'pass', message: 'pH 데이터 없음 (직접 측정 필요)', detail: null })
+    }
+  } else {
+    checks.push({ name: '④ pH 충돌 감지', status: 'warn', message: 'pH 데이터 조회 불가', detail: null })
+  }
+
+  // ⑤ 규제 위반
+  if (regRes?.success && regRes.data) {
+    const violations = regRes.data.violations || []
+    if (violations.length > 0) {
+      checks.push({
+        name: '⑤ 규제 한도 위반',
+        status: 'fail',
+        message: `${violations.length}건 규제 한도 초과`,
+        detail: violations.slice(0, 2).map(v => `${v.inci_name} ${v.percentage}% (한도 ${v.max_allowed}%, ${v.source})`).join(' / '),
+      })
+    } else {
+      checks.push({ name: '⑤ 규제 한도 위반', status: 'pass', message: '규제 위반 없음', detail: null })
+    }
+  } else {
+    checks.push({ name: '⑤ 규제 한도 위반', status: 'warn', message: '규제 DB 조회 불가', detail: null })
+  }
+
+  // ⑥ 피부타입 부적합: skin_type_suitability 기반 — 직접 검사 불가 시 pass
+  // (현재 batch API 없음 → 개별 조회 비용 높아 warn 처리)
+  checks.push({
+    name: '⑥ 피부타입 적합성',
+    status: 'warn',
+    message: '성분별 skin_type_suitability 확인 권장',
+    detail: '원료DB 페이지에서 개별 성분 상세 확인',
+  })
+
+  // ⑦ 금지원료 포함: pharma_prohibited 타입 INCI명 매칭
+  // expand-inci 결과에서 확인하거나 별도 조회 없이 규제 제한 항목에서 유추
+  const pharmaViolations = (regRes?.data?.violations || []).filter(v =>
+    v.message && v.message.includes('금지')
+  )
+  // regulation_cache의 restriction에 '금지' 포함인 성분 중 현재 처방에 포함된 것 확인
+  // (checkRegulationLimits는 농도 기반이라 금지성분 직접 검출 어려움 → warn 처리)
+  if (pharmaViolations.length > 0) {
+    checks.push({
+      name: '⑦ 금지원료 포함',
+      status: 'fail',
+      message: `${pharmaViolations.length}건 금지 성분 포함`,
+      detail: pharmaViolations.map(v => v.inci_name).join(', '),
+    })
+  } else {
+    checks.push({
+      name: '⑦ 금지원료 포함',
+      status: 'warn',
+      message: '금지원료 자동 검출 불완전 — 규제위반 ⑤ 항목 참조',
+      detail: '원료DB → 금지물질 필터로 처방 원료 수동 확인 권장',
+    })
+  }
+
+  // ⑧ 배합비 100% 합산 검증 (최종 확인)
+  if (totalR > 100.01) {
+    checks.push({ name: '⑧ 배합비 합계 100%', status: 'fail', message: `총합 ${totalR.toFixed(3)}% — 100% 초과`, detail: '성분 비율을 재조정하세요.' })
+  } else if (totalR < 99.5) {
+    checks.push({ name: '⑧ 배합비 합계 100%', status: 'warn', message: `총합 ${totalR.toFixed(3)}% — 미달 (정제수 등으로 보충)`, detail: null })
+  } else {
+    checks.push({ name: '⑧ 배합비 합계 100%', status: 'pass', message: `총합 ${totalR.toFixed(3)}% — 유효`, detail: null })
+  }
+
+  autoChecks.value = checks
+  autoChecksLoading.value = false
+}
+
 // ─── 안정성 시험 데이터 연동 ───
 function getStabilityData() {
   try {
@@ -228,6 +453,7 @@ async function runValidation() {
   isValidating.value = true
   validationResult.value = null
   apiError.value = false
+  autoChecks.value = []
 
   // 선택된 처방의 원료 목록을 서버에 전달
   const formula = formulas.value.find(f => f.id === selectedFormulaId.value)
@@ -236,6 +462,10 @@ async function runValidation() {
     percentage: i.percentage,
     phase: i.phase || '',
   }))
+
+  // DB 자동 검증 병렬 실행 (서버 검증과 동시)
+  const autoPromise = runAutoChecks(ingredients)
+
   const res = await api.validateFormula(ingredients)
   isValidating.value = false
 
@@ -386,6 +616,8 @@ watch(selectedFormulaId, () => {
   validationResult.value = null
   apiError.value = false
   stabilityStatus.value = null
+  autoChecks.value = []
+  autoChecksLoading.value = false
   loadChecklist()
 })
 
@@ -549,6 +781,56 @@ loadChecklist()
 .badge-pass { background: rgba(58,144,104,0.12); color: var(--green); }
 .badge-warn { background: rgba(176,120,32,0.12); color: var(--amber); }
 .badge-fail { background: rgba(196,78,78,0.12); color: var(--red); }
+
+/* ─── DB 자동 검증 패널 ─── */
+.db-auto-panel { }
+.auto-loading-badge {
+  font-size: 11px; font-family: var(--font-mono); color: var(--text-dim);
+  background: var(--bg); border: 1px solid var(--border);
+  padding: 3px 10px; border-radius: 20px; animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+.auto-done-badge {
+  font-size: 12px; font-family: var(--font-mono); font-weight: 600;
+  background: var(--bg); border: 1px solid var(--border);
+  padding: 3px 12px; border-radius: 20px;
+}
+.auto-checks-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0;
+  padding: 8px 12px 12px;
+}
+.auto-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+.auto-check-row:hover { background: var(--bg); }
+.acheck-pass { }
+.acheck-warn { }
+.acheck-fail { }
+.auto-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; line-height: 1.3; }
+.auto-body { flex: 1; min-width: 0; }
+.auto-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.auto-msg { font-size: 11px; color: var(--text-sub); margin-top: 2px; }
+.auto-detail { font-size: 10px; color: var(--text-dim); margin-top: 3px; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auto-badge {
+  font-size: 9px; font-family: var(--font-mono); font-weight: 700;
+  padding: 2px 7px; border-radius: 4px; flex-shrink: 0; align-self: flex-start; margin-top: 2px;
+}
+.abadge-pass { background: rgba(58,144,104,0.12); color: var(--green); }
+.abadge-warn { background: rgba(176,120,32,0.12); color: var(--amber); }
+.abadge-fail { background: rgba(196,78,78,0.12); color: var(--red); }
+.skeleton .auto-name.skeleton-line {
+  height: 12px; background: var(--border); border-radius: 4px; width: 60%; margin: 4px 0;
+}
+@media (max-width: 1199px) {
+  .auto-checks-grid { grid-template-columns: 1fr; }
+}
 
 /* ─── API 안내 ─── */
 .api-notice {

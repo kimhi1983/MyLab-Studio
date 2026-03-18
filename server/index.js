@@ -136,7 +136,8 @@ app.get('/api/health', async (req, res) => {
 // ─── 통계 (KPI 위젯용) ───
 app.get('/api/stats', async (req, res) => {
   try {
-    const [kbAll, kbIngredients, regulations, ingredients, products, companies, compounds, guideFormulas, copyFormulas] = await Promise.all([
+    const [kbAll, kbIngredients, regulations, ingredients, products, companies, compounds, guideFormulas, copyFormulas,
+           enrichedIngredients, regulationCovered] = await Promise.all([
       pool.query('SELECT count(*) as cnt FROM coching_knowledge_base'),
       pool.query("SELECT count(*) as cnt FROM coching_knowledge_base WHERE category = 'INGREDIENT_REGULATION'"),
       pool.query('SELECT count(*) as cnt FROM regulation_cache'),
@@ -146,6 +147,8 @@ app.get('/api/stats', async (req, res) => {
       pool.query('SELECT count(*) as cnt FROM compound_master').catch(() => ({ rows: [{ cnt: 0 }] })),
       pool.query('SELECT count(*) as cnt FROM guide_cache').catch(() => ({ rows: [{ cnt: 0 }] })),
       pool.query('SELECT count(*) as cnt FROM guide_cache_copy').catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query('SELECT count(*) as cnt FROM ingredient_master WHERE ph_min IS NOT NULL').catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query(`SELECT COUNT(DISTINCT lower(im.inci_name)) as cnt FROM ingredient_master im WHERE EXISTS (SELECT 1 FROM regulation_cache rc WHERE lower(rc.inci_name) = lower(im.inci_name))`).catch(() => ({ rows: [{ cnt: 0 }] })),
     ])
     const [sourceBreakdown, typeBreakdown, collectionStatus] = await Promise.all([
       pool.query('SELECT source, count(*) as cnt FROM regulation_cache GROUP BY source ORDER BY cnt DESC'),
@@ -162,6 +165,8 @@ app.get('/api/stats', async (req, res) => {
       totalGuideFormulas: parseInt(guideFormulas.rows[0].cnt),
       totalCopyFormulas: parseInt(copyFormulas.rows[0].cnt),
       kbIngredients: parseInt(kbIngredients.rows[0].cnt),
+      enrichedIngredients: parseInt(enrichedIngredients.rows[0].cnt),
+      regulationCoveredIngredients: parseInt(regulationCovered.rows[0].cnt),
       regulationsBySource: sourceBreakdown.rows.map(r => ({ source: r.source, count: parseInt(r.cnt) })),
       ingredientsByType: typeBreakdown.rows.map(r => ({ type: r.ingredient_type, count: parseInt(r.cnt) })),
       collectionStatus: collectionStatus.rows,
@@ -467,7 +472,8 @@ app.get('/api/regulations', async (req, res) => {
       ${hasDisplayName ? 'display_name' : 'NULL::text AS display_name'},
       ${hasDisplayStatus ? 'display_status' : 'NULL::text AS display_status'},
       ${hasDisplayRestriction ? 'display_restriction' : 'NULL::text AS display_restriction'},
-      ${hasQualityFlag ? 'quality_flag' : 'NULL::text AS quality_flag'}
+      ${hasQualityFlag ? 'quality_flag' : 'NULL::text AS quality_flag'},
+      (SELECT im.ingredient_type FROM ingredient_master im WHERE lower(im.inci_name) = lower(regulation_cache.inci_name) LIMIT 1) AS ingredient_type
       FROM regulation_cache ${whereClause}
       ORDER BY ingredient
       LIMIT $${idx} OFFSET $${idx + 1}`
@@ -4523,6 +4529,342 @@ app.get('/api/stability', async (req, res) => {
       })
     }
     res.json({ data: [...map.values()] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 워크플로우팀 신규 API (2026-03-18)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── 원료 사전 검색 ────────────────────────────────────────────────────────
+// GET /api/ingredients/search?q=&type=&limit=20
+app.get('/api/ingredients/search', async (req, res) => {
+  try {
+    const { q, type, limit = 20 } = req.query
+    const lim = Math.min(parseInt(limit) || 20, 100)
+    let where = [
+      `inci_name NOT LIKE '%#REF%'`,
+      `(korean_name IS NULL OR korean_name NOT LIKE '%#REF%')`,
+    ]
+    let params = []
+    let idx = 1
+
+    if (q) {
+      where.push(`(inci_name ILIKE $${idx} OR korean_name ILIKE $${idx})`)
+      params.push(`%${q}%`)
+      idx++
+    }
+    if (type && type !== 'ALL') {
+      where.push(`ingredient_type = $${idx}`)
+      params.push(type)
+      idx++
+    }
+
+    params.push(lim)
+    const { rows } = await pool.query(
+      `SELECT inci_name, korean_name, ingredient_type, ph_min, ph_max,
+              viscosity_type, solubility, function_inci,
+              usage_level_min, usage_level_max, ewg_score,
+              comedogenic_rating, max_concentration_kr, max_concentration_eu,
+              skin_type_suitability
+       FROM ingredient_master
+       WHERE ${where.join(' AND ')}
+       ORDER BY inci_name
+       LIMIT $${idx}`,
+      params
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 복합원료 조회 ─────────────────────────────────────────────────────────
+// GET /api/compounds/list
+app.get('/api/compounds/list', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT trade_name, supplier, category,
+              jsonb_array_length(components) AS component_count
+       FROM compound_master
+       ORDER BY trade_name`
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/compounds/:trade_name
+app.get('/api/compounds/:trade_name', async (req, res) => {
+  try {
+    const { trade_name } = req.params
+    const { rows } = await pool.query(
+      `SELECT trade_name, supplier, category, components, notes
+       FROM compound_master
+       WHERE lower(trade_name) = lower($1)`,
+      [trade_name]
+    )
+    if (!rows.length) return res.status(404).json({ error: 'Not found' })
+    res.json(rows[0])
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 전성분 전개 API ────────────────────────────────────────────────────────
+// POST /api/formula/expand-inci
+// Body: { ingredients: [{name, wt_pct, is_compound}] }
+app.post('/api/formula/expand-inci', async (req, res) => {
+  try {
+    const { ingredients } = req.body
+    if (!Array.isArray(ingredients) || !ingredients.length) {
+      return res.status(400).json({ error: 'ingredients 배열이 필요합니다' })
+    }
+
+    // compound_master 전체 로드
+    const { rows: compounds } = await pool.query(
+      `SELECT lower(trade_name) AS key, components FROM compound_master`
+    )
+    const compoundMap = {}
+    for (const c of compounds) {
+      compoundMap[c.key] = c.components
+    }
+
+    const formula_input = []
+    const inciAccum = {}  // inci_name → wt_pct 합산
+
+    for (const ing of ingredients) {
+      const name = (ing.name || '').trim()
+      const wt = parseFloat(ing.wt_pct) || 0
+      formula_input.push({ name, wt_pct: wt })
+
+      const key = name.toLowerCase()
+      if (ing.is_compound && compoundMap[key]) {
+        // 복합원료 전개
+        for (const comp of compoundMap[key]) {
+          const expandedWt = Math.round(wt * comp.fraction * 10000) / 10000
+          inciAccum[comp.inci] = (inciAccum[comp.inci] || 0) + expandedWt
+        }
+      } else {
+        inciAccum[name] = (inciAccum[name] || 0) + wt
+      }
+    }
+
+    // 내림차순 정렬
+    const formula_inci = Object.entries(inciAccum)
+      .map(([inci_name, wt_pct]) => ({ inci_name, wt_pct: Math.round(wt_pct * 10000) / 10000 }))
+      .sort((a, b) => b.wt_pct - a.wt_pct)
+
+    const total_wt = formula_inci.reduce((s, r) => s + r.wt_pct, 0)
+    const is_valid = Math.abs(total_wt - 100) < 0.1
+
+    res.json({
+      formula_input,
+      formula_inci,
+      validation: {
+        total_wt: Math.round(total_wt * 100) / 100,
+        is_valid,
+        errors: is_valid ? [] : [`총 wt% = ${Math.round(total_wt * 100) / 100} (100이어야 함)`],
+      },
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── pH 충돌 감지 ──────────────────────────────────────────────────────────
+// POST /api/formula/ph-check
+// Body: { ingredients: [{inci_name, wt_pct}] }
+app.post('/api/formula/ph-check', async (req, res) => {
+  try {
+    const { ingredients } = req.body
+    if (!Array.isArray(ingredients) || !ingredients.length) {
+      return res.status(400).json({ error: 'ingredients 배열이 필요합니다' })
+    }
+
+    const inciNames = ingredients.map(i => i.inci_name).filter(Boolean)
+    const { rows } = await pool.query(
+      `SELECT inci_name, ph_min, ph_max FROM ingredient_master
+       WHERE inci_name = ANY($1)`,
+      [inciNames]
+    )
+    const phMap = {}
+    for (const r of rows) {
+      phMap[r.inci_name] = { ph_min: parseFloat(r.ph_min), ph_max: parseFloat(r.ph_max) }
+    }
+
+    // 가중 평균 pH 추정
+    let totalWt = 0, weightedPh = 0
+    for (const ing of ingredients) {
+      const ph = phMap[ing.inci_name]
+      if (ph && !isNaN(ph.ph_min) && !isNaN(ph.ph_max)) {
+        const mid = (ph.ph_min + ph.ph_max) / 2
+        weightedPh += mid * ing.wt_pct
+        totalWt += ing.wt_pct
+      }
+    }
+    const estimated_ph = totalWt > 0
+      ? Math.round((weightedPh / totalWt) * 10) / 10
+      : null
+
+    // 충돌 감지 (pH 범위 겹치지 않는 쌍)
+    const conflicts = []
+    const withPh = ingredients.filter(i => phMap[i.inci_name])
+    for (let i = 0; i < withPh.length; i++) {
+      for (let j = i + 1; j < withPh.length; j++) {
+        const a = phMap[withPh[i].inci_name]
+        const b = phMap[withPh[j].inci_name]
+        if (a.ph_max < b.ph_min || b.ph_max < a.ph_min) {
+          conflicts.push({
+            inci_a: withPh[i].inci_name,
+            inci_b: withPh[j].inci_name,
+            reason: `pH 범위 비호환 (${a.ph_min}–${a.ph_max} vs ${b.ph_min}–${b.ph_max})`,
+          })
+        }
+      }
+    }
+
+    res.json({
+      estimated_ph,
+      conflicts,
+      recommended_adjuster: estimated_ph !== null && estimated_ph > 6 ? 'Citric Acid' : 'Sodium Hydroxide',
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 규제 모니터링 개선 API ────────────────────────────────────────────────
+// GET /api/regulation/monitor?country=KR&status=제한
+app.get('/api/regulation/monitor', async (req, res) => {
+  try {
+    const { country, status } = req.query
+    const sourceMap = {
+      KR: ['GEMINI_KR', 'MFDS_SEED'],
+      EU: ['GEMINI_EU', 'COSING_EU'],
+      US: ['GEMINI_US'],
+      JP: ['GEMINI_JP'],
+      CN: ['GEMINI_CN'],
+    }
+
+    let where = [
+      `rc.inci_name IS NOT NULL`,
+      `im.ingredient_type NOT IN ('pharma_prohibited','extract')`,
+    ]
+    let params = []
+    let idx = 1
+
+    if (country && sourceMap[country.toUpperCase()]) {
+      const src = sourceMap[country.toUpperCase()]
+      where.push(`rc.source = ANY($${idx})`)
+      params.push(src)
+      idx++
+    }
+    if (status) {
+      where.push(`rc.restriction ILIKE $${idx}`)
+      params.push(`%${status}%`)
+      idx++
+    }
+
+    const { rows } = await pool.query(
+      `SELECT rc.inci_name, im.korean_name, im.ingredient_type,
+              rc.restriction AS restriction_content, rc.max_concentration,
+              rc.source, rc.updated_at, im.ewg_score
+       FROM regulation_cache rc
+       LEFT JOIN ingredient_master im ON lower(im.inci_name) = lower(rc.inci_name)
+       WHERE ${where.join(' AND ')}
+       ORDER BY rc.updated_at DESC
+       LIMIT 200`,
+      params
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 성분DB 페이지 개선 API ────────────────────────────────────────────────
+// GET /api/ingredients/db?page=1&limit=50&type=&search=
+app.get('/api/ingredients/db', async (req, res) => {
+  try {
+    const { page = 1, limit = 50, type, search } = req.query
+    const lim = Math.min(parseInt(limit) || 50, 200)
+    const off = (Math.max(parseInt(page) || 1, 1) - 1) * lim
+
+    let where = [
+      `inci_name NOT LIKE '%#REF%'`,
+      `(korean_name IS NULL OR korean_name NOT LIKE '%#REF%')`,
+    ]
+    let params = []
+    let idx = 1
+
+    if (search) {
+      where.push(`(inci_name ILIKE $${idx} OR korean_name ILIKE $${idx})`)
+      params.push(`%${search}%`)
+      idx++
+    }
+    if (type && type !== 'ALL') {
+      where.push(`ingredient_type = $${idx}`)
+      params.push(type)
+      idx++
+    }
+
+    const whereClause = `WHERE ${where.join(' AND ')}`
+    const countRes = await pool.query(`SELECT COUNT(*) FROM ingredient_master ${whereClause}`, params.slice(0, idx - 1))
+    params.push(lim, off)
+    const { rows } = await pool.query(
+      `SELECT inci_name, korean_name, ingredient_type, ewg_score,
+              max_concentration_kr, max_concentration_eu,
+              usage_level_min, usage_level_max, function_inci,
+              ph_min, ph_max, comedogenic_rating,
+              skin_type_suitability
+       FROM ingredient_master
+       ${whereClause}
+       ORDER BY inci_name
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      params
+    )
+
+    // regulation_status 보강 (KR/EU)
+    const inciList = rows.map(r => r.inci_name).filter(Boolean)
+    let regStatusMap = {}
+    if (inciList.length) {
+      const { rows: regRows } = await pool.query(
+        `SELECT lower(inci_name) AS key, source, restriction
+         FROM regulation_cache
+         WHERE lower(inci_name) = ANY($1)
+           AND source IN ('GEMINI_KR','MFDS_SEED','GEMINI_EU','COSING_EU')`,
+        [inciList.map(n => n.toLowerCase())]
+      )
+      for (const r of regRows) {
+        if (!regStatusMap[r.key]) regStatusMap[r.key] = {}
+        const restr = (r.restriction || '').toLowerCase()
+        const status = restr.includes('금지') || restr.includes('prohibit') || restr.includes('ban')
+          ? '금지'
+          : restr.includes('제한') || restr.includes('restrict') || restr.includes('annex')
+          ? '제한'
+          : '허용'
+        if (r.source === 'GEMINI_KR' || r.source === 'MFDS_SEED') {
+          regStatusMap[r.key].kr = status
+        } else {
+          regStatusMap[r.key].eu = status
+        }
+      }
+    }
+
+    const items = rows.map(r => {
+      const reg = regStatusMap[r.inci_name?.toLowerCase()] || {}
+      return {
+        ...r,
+        regulation_status_kr: reg.kr || null,
+        regulation_status_eu: reg.eu || null,
+      }
+    })
+
+    res.json({ total: parseInt(countRes.rows[0].count), page: parseInt(page), items })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

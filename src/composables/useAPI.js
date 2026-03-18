@@ -182,6 +182,37 @@ export function useAPI() {
     return fetchJSON('/api/collection-status')
   }
 
+  // ─── 복합원료 목록 ───
+  async function getCompoundsList() {
+    return fetchJSON('/api/compounds/list')
+  }
+
+  // ─── 전성분 전개 ───
+  async function expandInci(ingredients) {
+    return fetchJSON('/api/formula/expand-inci', {
+      method: 'POST',
+      body: JSON.stringify({ ingredients }),
+    })
+  }
+
+  // ─── pH 충돌 감지 ───
+  async function phCheck(ingredients) {
+    return fetchJSON('/api/formula/ph-check', {
+      method: 'POST',
+      body: JSON.stringify({ ingredients }),
+    })
+  }
+
+  // ─── 성분DB 페이지 (확장 필드 포함) ───
+  async function getIngredientsDb({ page = 1, limit = 50, type, search } = {}) {
+    const params = new URLSearchParams()
+    params.set('page', page)
+    params.set('limit', limit)
+    if (type) params.set('type', type)
+    if (search) params.set('search', search)
+    return fetchJSON(`/api/ingredients/db?${params}`)
+  }
+
   // ─── 건강 체크 ───
   async function healthCheck() {
     return fetchJSON('/api/health')
@@ -190,7 +221,8 @@ export function useAPI() {
   return {
     loading, error, fetchJSON,
     getStats,
-    getIngredients, getIngredient, getIngredientTypes,
+    getIngredients, getIngredient, getIngredientTypes, getIngredientsDb,
+    getCompoundsList, expandInci, phCheck,
     getRegulations, getRegulationSources,
     getKnowledge,
     getProducts, getProduct,

@@ -3,7 +3,7 @@
     <div v-if="errorMessage" class="error-banner">
       {{ errorMessage }}
     </div>
-    <!-- 상단 검색바 -->
+    <!-- 상단 검색바 + 필터 -->
     <div class="search-bar-wrap">
       <div class="search-bar">
         <span class="search-icon">⊕</span>
@@ -21,6 +21,47 @@
       </div>
     </div>
 
+    <!-- 필터 바 -->
+    <div class="filter-bar">
+      <select v-model="selectedType" class="filter-select" @change="onFilterChange">
+        <option value="">전체 카테고리</option>
+        <option value="emollient_ester">에몰리언트 에스터</option>
+        <option value="surfactant">계면활성제</option>
+        <option value="emulsifier">유화제</option>
+        <option value="peptide">펩타이드</option>
+        <option value="humectant_active">보습/활성</option>
+        <option value="thickener">점증제</option>
+        <option value="preservative">방부제</option>
+        <option value="antioxidant">산화방지제</option>
+        <option value="polymer_film_former">폴리머</option>
+        <option value="silicone">실리콘</option>
+        <option value="uv_filter">자외선차단제</option>
+        <option value="colorant">색소</option>
+        <option value="fragrance">향료</option>
+        <option value="plant_oil">식물유</option>
+        <option value="mineral_inorganic">무기물</option>
+        <option value="chelator_ph">pH조절제</option>
+        <option value="biomimetic_active">바이오미메틱</option>
+        <option value="amino_acid">아미노산</option>
+        <option value="hydrolyzed_protein">가수분해단백</option>
+        <option value="vitamin">비타민</option>
+        <option value="extract">추출물류</option>
+        <option value="solvent">용매</option>
+      </select>
+
+      <select v-model="selectedRegStatus" class="filter-select" @change="onFilterChange">
+        <option value="">규제 전체</option>
+        <option value="허용">허용</option>
+        <option value="제한">제한</option>
+        <option value="금지">금지</option>
+      </select>
+
+      <label class="pharma-toggle">
+        <input type="checkbox" v-model="showPharma" @change="onFilterChange" />
+        <span>금지물질 포함</span>
+      </label>
+    </div>
+
     <!-- 메인 레이아웃 -->
     <div class="main-layout" :class="{ 'panel-open': selectedItem !== null }">
       <!-- 좌측: 목록 -->
@@ -33,53 +74,71 @@
                 <tr>
                   <th class="col-inci">INCI Name</th>
                   <th class="col-kr">한글명</th>
+                  <th class="col-type">카테고리</th>
                   <th class="col-ewg">EWG</th>
-                  <th class="col-reg">규제 상태</th>
+                  <th class="col-ph">pH 범위</th>
+                  <th class="col-usage">사용농도</th>
+                  <th class="col-reg">규제 (KR/EU)</th>
                   <th class="col-conc">최대 농도</th>
                 </tr>
               </thead>
               <tbody v-if="!loading && items.length">
                 <tr
-                  v-for="item in items"
-                  :key="item.id"
+                  v-for="(item, idx) in items"
+                  :key="idx"
                   class="data-row"
-                  :class="{ selected: selectedItem?.id === item.id }"
+                  :class="{ selected: selectedItem === item, 'row-pharma': item.ingredient_type === 'pharma_prohibited' }"
                   @click="selectItem(item)"
                 >
                   <td class="cell-inci">{{ item.inci_name || '-' }}</td>
                   <td class="cell-kr">{{ item.korean_name || '-' }}</td>
+                  <td class="cell-type">
+                    <span v-if="item.ingredient_type" class="type-chip">{{ ingredientTypeLabel(item.ingredient_type) }}</span>
+                    <span v-else class="cell-empty">-</span>
+                  </td>
                   <td class="cell-ewg">
                     <span v-if="item.ewg_score != null" class="ewg-chip" :class="ewgClass(item.ewg_score)">
                       {{ item.ewg_score }}
                     </span>
                     <span v-else class="cell-empty">-</span>
                   </td>
+                  <td class="cell-ph mono-text">
+                    <span v-if="item.ph_min != null || item.ph_max != null">
+                      {{ item.ph_min ?? '?' }} ~ {{ item.ph_max ?? '?' }}
+                    </span>
+                    <span v-else class="cell-empty">-</span>
+                  </td>
+                  <td class="cell-usage mono-text">
+                    <span v-if="item.usage_level_min != null || item.usage_level_max != null">
+                      {{ item.usage_level_min ?? '0' }}~{{ item.usage_level_max ?? '?' }}%
+                    </span>
+                    <span v-else class="cell-empty">-</span>
+                  </td>
                   <td class="cell-reg">
                     <div class="reg-badges">
-                      <span v-if="item.regulation_status" class="reg-status-chip" :class="regStatusClass(item.regulation_status)">
-                        {{ regStatusLabel(item.regulation_status) }}
-                      </span>
-                      <span v-if="item.kr_regulation" class="reg-badge" :class="regBadgeClass(item.kr_regulation)">KR</span>
-                      <span v-if="item.eu_regulation" class="reg-badge" :class="regBadgeClass(item.eu_regulation)">EU</span>
-                      <span v-if="!item.regulation_status && !item.kr_regulation && !item.eu_regulation" class="cell-empty">-</span>
+                      <span v-if="item.regulation_status_kr" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_kr)">KR {{ item.regulation_status_kr }}</span>
+                      <span v-if="item.regulation_status_eu" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_eu)">EU {{ item.regulation_status_eu }}</span>
+                      <span v-if="!item.regulation_status_kr && !item.regulation_status_eu" class="cell-empty">-</span>
                     </div>
                   </td>
                   <td class="cell-conc">
-                    <span v-if="item.max_concentration" class="mono-text">{{ item.max_concentration }}</span>
+                    <span v-if="item.max_concentration_kr || item.max_concentration_eu" class="mono-text">
+                      {{ item.max_concentration_kr || item.max_concentration_eu }}
+                    </span>
                     <span v-else class="cell-empty">-</span>
                   </td>
                 </tr>
               </tbody>
               <tbody v-else-if="loading">
                 <tr v-for="n in 8" :key="n">
-                  <td colspan="5">
+                  <td colspan="8">
                     <div class="skeleton-row"></div>
                   </td>
                 </tr>
               </tbody>
               <tbody v-else>
                 <tr>
-                  <td colspan="5" class="empty-cell">
+                  <td colspan="8" class="empty-cell">
                     <div class="empty-state">
                       <div class="empty-icon">◎</div>
                       <div class="empty-title">{{ errorMessage ? 'API 서버에 연결하지 못했습니다' : '검색 결과가 없습니다' }}</div>
@@ -165,11 +224,57 @@
                 </div>
               </div>
 
-              <!-- 최대 허용 농도 -->
-              <div class="detail-section" v-if="selectedItem.max_concentration">
-                <div class="section-label">최대 허용 농도</div>
-                <div class="detail-value mono-text concentration-val">
-                  {{ selectedItem.max_concentration }}
+              <!-- 물성 정보 -->
+              <div class="detail-section" v-if="selectedItem.ph_min != null || selectedItem.ph_max != null || selectedItem.usage_level_min != null">
+                <div class="section-label">물성</div>
+                <div class="detail-props-grid">
+                  <template v-if="selectedItem.ph_min != null || selectedItem.ph_max != null">
+                    <span class="prop-label">pH 범위</span>
+                    <span class="prop-val mono-text">{{ selectedItem.ph_min ?? '?' }} ~ {{ selectedItem.ph_max ?? '?' }}</span>
+                  </template>
+                  <template v-if="selectedItem.usage_level_min != null || selectedItem.usage_level_max != null">
+                    <span class="prop-label">사용농도</span>
+                    <span class="prop-val mono-text">{{ selectedItem.usage_level_min ?? 0 }} ~ {{ selectedItem.usage_level_max ?? '?' }}%</span>
+                  </template>
+                  <template v-if="selectedItem.comedogenic_rating != null">
+                    <span class="prop-label">코메도제닉</span>
+                    <span class="prop-val mono-text">{{ selectedItem.comedogenic_rating }} / 5</span>
+                  </template>
+                </div>
+              </div>
+
+              <!-- 기능 -->
+              <div class="detail-section" v-if="selectedItem.function_inci">
+                <div class="section-label">INCI 기능</div>
+                <div class="detail-value">{{ selectedItem.function_inci }}</div>
+              </div>
+
+              <!-- 피부타입 -->
+              <div class="detail-section" v-if="selectedItem.skin_type_suitability?.length">
+                <div class="section-label">적합 피부타입</div>
+                <div class="detail-value">{{ Array.isArray(selectedItem.skin_type_suitability) ? selectedItem.skin_type_suitability.join(', ') : selectedItem.skin_type_suitability }}</div>
+              </div>
+
+              <!-- 규제 정보 -->
+              <div class="detail-section" v-if="selectedItem.regulation_status_kr || selectedItem.regulation_status_eu">
+                <div class="section-label">규제 정보</div>
+                <div class="detail-props-grid">
+                  <template v-if="selectedItem.regulation_status_kr">
+                    <span class="prop-label">한국 (KR)</span>
+                    <span class="prop-val" :class="regStatusBadgeClass(selectedItem.regulation_status_kr)">{{ selectedItem.regulation_status_kr }}</span>
+                  </template>
+                  <template v-if="selectedItem.regulation_status_eu">
+                    <span class="prop-label">유럽 (EU)</span>
+                    <span class="prop-val" :class="regStatusBadgeClass(selectedItem.regulation_status_eu)">{{ selectedItem.regulation_status_eu }}</span>
+                  </template>
+                  <template v-if="selectedItem.max_concentration_kr">
+                    <span class="prop-label">KR 최대 농도</span>
+                    <span class="prop-val mono-text">{{ selectedItem.max_concentration_kr }}</span>
+                  </template>
+                  <template v-if="selectedItem.max_concentration_eu">
+                    <span class="prop-label">EU 최대 농도</span>
+                    <span class="prop-val mono-text">{{ selectedItem.max_concentration_eu }}</span>
+                  </template>
                 </div>
               </div>
 
@@ -262,6 +367,9 @@ const store = useIngredientStore()
 const { loading, error } = store
 
 const searchQuery = ref('')
+const selectedType = ref('')
+const selectedRegStatus = ref('')
+const showPharma = ref(false)
 const items = ref([])
 const totalCount = ref(0)
 const currentPage = ref(1)
@@ -292,14 +400,33 @@ onMounted(async () => {
 })
 
 async function loadIngredients() {
-  const offset = (currentPage.value - 1) * PAGE_SIZE
-  const data = await store.searchIngredients({
-    q: searchQuery.value || undefined,
+  // pharma_prohibited 포함 여부에 따라 타입 파라미터 처리
+  const type = showPharma.value
+    ? (selectedType.value || undefined)
+    : selectedType.value === 'pharma_prohibited'
+      ? undefined
+      : selectedType.value || undefined
+
+  const data = await store.searchIngredientsDb({
+    page: currentPage.value,
     limit: PAGE_SIZE,
-    offset,
+    type,
+    search: searchQuery.value || undefined,
   })
   if (data) {
-    items.value = data.items || []
+    let rows = data.items || []
+    // pharma_prohibited 필터
+    if (!showPharma.value) {
+      rows = rows.filter(r => r.ingredient_type !== 'pharma_prohibited')
+    }
+    // 규제 상태 필터 (클라이언트)
+    if (selectedRegStatus.value) {
+      rows = rows.filter(r =>
+        r.regulation_status_kr === selectedRegStatus.value ||
+        r.regulation_status_eu === selectedRegStatus.value
+      )
+    }
+    items.value = rows
     totalCount.value = data.total || 0
   }
 }
@@ -322,6 +449,13 @@ function onSearchInput() {
   }, 300)
 }
 
+function onFilterChange() {
+  currentPage.value = 1
+  loadIngredients()
+  selectedItem.value = null
+  detailData.value = null
+}
+
 function clearSearch() {
   searchQuery.value = ''
   currentPage.value = 1
@@ -333,6 +467,7 @@ function clearSearch() {
 async function selectItem(item) {
   selectedItem.value = item
   detailData.value = null
+  if (!item.id) return
   detailLoading.value = true
   try {
     const data = await store.getIngredientDetail(item.id)
@@ -365,6 +500,15 @@ function ewgDesc(score) {
   return '위험'
 }
 
+// 규제 상태 배지 클래스 (regulation_status_kr/eu 값 기반)
+function regStatusBadgeClass(status) {
+  if (!status) return ''
+  if (status === '금지') return 'badge-red'
+  if (status === '제한') return 'badge-amber'
+  if (status === '허용') return 'badge-green'
+  return ''
+}
+
 // 규제 배지 클래스 (단순: 있으면 표시)
 function regBadgeClass(val) {
   if (!val) return ''
@@ -392,22 +536,26 @@ function regStatusLabel(status) {
 function ingredientTypeLabel(type) {
   if (!type) return null
   const map = {
-    single: '미분류',
-    ACTIVE: '활성 성분',
-    EMOLLIENT: '에몰리언트',
-    HUMECTANT: '보습제',
-    EMULSIFIER: '유화제',
-    SURFACTANT: '계면활성제',
-    PRESERVATIVE: '방부제',
-    PH_ADJUSTER: 'pH 조절제',
-    UV_FILTER_ORGANIC: '유기 자외선 차단제',
-    UV_FILTER_INORGANIC: '무기 자외선 차단제',
-    COLORANT: '착색제',
-    FRAGRANCE: '향료',
-    THICKENER: '점증제',
-    ANTIOXIDANT: '산화방지제',
-    SOLVENT: '용매',
-    OTHER: '기타',
+    // 소문자 44-type 분류
+    emollient_ester: '에몰리언트', surfactant: '계면활성제', emulsifier: '유화제',
+    peptide: '펩타이드', colorant: '색소', humectant_active: '보습/활성',
+    thickener: '점증제', antioxidant: '산화방지제', preservative: '방부제',
+    polymer_film_former: '폴리머', chelator_ph: 'pH조절제', biomimetic_active: '바이오미메틱',
+    hydrolyzed_protein: '가수분해단백', uv_filter: '자외선차단제', plant_oil: '식물유',
+    mineral_inorganic: '무기물', solvent: '용매', amino_acid: '아미노산',
+    fragrance: '향료', silicone: '실리콘', extract: '추출물', vitamin: '비타민',
+    hair_colorant: '모발색소', propellant: '추진제', wax: '왁스',
+    protein: '단백질', botanical_water: '식물수', ferment: '발효물',
+    carrier_oil: '캐리어오일', essential_oil: '에센셜오일', clay: '클레이',
+    exfoliant: '각질제거', film_former: '피막제', opacifier: '불투명제',
+    plasticizer: '가소제', oral_care: '구강케어', sunscreen_booster: '선스크린보조',
+    single: '미분류', ACTIVE: '활성성분', pharma_prohibited: '금지물질',
+    // 대문자 레거시
+    EMOLLIENT: '에몰리언트', HUMECTANT: '보습제', EMULSIFIER: '유화제',
+    SURFACTANT: '계면활성제', PRESERVATIVE: '방부제', PH_ADJUSTER: 'pH조절제',
+    UV_FILTER_ORGANIC: '유기자차', UV_FILTER_INORGANIC: '무기자차',
+    COLORANT: '착색제', FRAGRANCE: '향료', THICKENER: '점증제',
+    ANTIOXIDANT: '산화방지제', SOLVENT: '용매', OTHER: '기타',
   }
   return map[type] || type
 }
@@ -436,6 +584,38 @@ function formatDate(iso) {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* ─── 필터 바 ─── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filter-select {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  cursor: pointer;
+  min-width: 120px;
+}
+.filter-select:focus { border-color: var(--accent); }
+
+.pharma-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-sub);
+  cursor: pointer;
+  user-select: none;
+}
+.pharma-toggle input { cursor: pointer; }
 
 /* ─── 검색바 ─── */
 .search-bar-wrap {
@@ -564,11 +744,14 @@ function formatDate(iso) {
   background: var(--accent-light);
 }
 
-.col-inci { width: 32%; }
-.col-kr   { width: 22%; }
-.col-ewg  { width: 10%; text-align: center; }
-.col-reg  { width: 20%; }
-.col-conc { width: 16%; }
+.col-inci  { width: 22%; }
+.col-kr    { width: 14%; }
+.col-type  { width: 10%; }
+.col-ewg   { width: 6%; text-align: center; }
+.col-ph    { width: 9%; }
+.col-usage { width: 9%; }
+.col-reg   { width: 16%; }
+.col-conc  { width: 14%; }
 
 .cell-inci {
   font-family: var(--font-mono);
@@ -581,6 +764,13 @@ function formatDate(iso) {
   color: var(--text-sub);
 }
 .cell-ewg { text-align: center; }
+.cell-type { }
+.cell-ph, .cell-usage {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-sub);
+  white-space: nowrap;
+}
 .cell-conc {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -592,6 +782,25 @@ function formatDate(iso) {
 .mono-text {
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+/* ─── 타입 칩 ─── */
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  white-space: nowrap;
+}
+
+/* pharma_prohibited 행 강조 */
+.row-pharma td:first-child {
+  border-left: 2px solid var(--red);
 }
 
 /* ─── EWG 칩 ─── */
@@ -950,6 +1159,23 @@ function formatDate(iso) {
   font-size: 12px;
 }
 
+/* ─── detail props grid ─── */
+.detail-props-grid {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 4px 12px;
+  font-size: 12.5px;
+}
+.prop-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+}
+.prop-val {
+  color: var(--text);
+}
+
 /* ─── section-label 공통 ─── */
 .section-label {
   font-size: 11px;
@@ -986,9 +1212,15 @@ function formatDate(iso) {
   }
 }
 
+@media (max-width: 900px) {
+  .col-ph, .cell-ph, .col-usage, .cell-usage { display: none; }
+}
+@media (max-width: 700px) {
+  .col-type, .cell-type, .col-conc, .cell-conc { display: none; }
+}
 @media (max-width: 600px) {
   .search-bar-wrap { flex-direction: column; align-items: stretch; }
   .search-meta { justify-content: flex-end; }
-  .col-conc { display: none; }
+  .filter-bar { flex-direction: column; align-items: stretch; }
 }
 </style>
