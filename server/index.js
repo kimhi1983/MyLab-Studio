@@ -4907,38 +4907,50 @@ app.get('/api/ingredients/db', async (req, res) => {
     const off = (Math.max(parseInt(page) || 1, 1) - 1) * lim
 
     let where = [
-      `inci_name NOT LIKE '%#REF%'`,
-      `(korean_name IS NULL OR korean_name NOT LIKE '%#REF%')`,
+      `im.inci_name NOT LIKE '%#REF%'`,
+      `(im.korean_name IS NULL OR im.korean_name NOT LIKE '%#REF%')`,
     ]
     let params = []
     let idx = 1
 
     if (search) {
-      where.push(`(inci_name ILIKE $${idx} OR korean_name ILIKE $${idx})`)
+      where.push(`(im.inci_name ILIKE $${idx} OR im.korean_name ILIKE $${idx})`)
       params.push(`%${search}%`)
       idx++
     }
     if (type && type !== 'ALL') {
       // 프론트엔드 소문자 값을 DB 대문자 값으로 변환
       const dbType = FRONTEND_TYPE_MAP[type] || type.toUpperCase()
-      where.push(`ingredient_type = $${idx}`)
+      where.push(`im.ingredient_type = $${idx}`)
       params.push(dbType)
       idx++
     }
 
     const whereClause = `WHERE ${where.join(' AND ')}`
-    const countRes = await pool.query(`SELECT COUNT(*) FROM ingredient_master ${whereClause}`, params.slice(0, idx - 1))
+    const countRes = await pool.query(`SELECT COUNT(*) FROM ingredient_master im ${whereClause}`, params.slice(0, idx - 1))
     params.push(lim, off)
     const { rows } = await pool.query(
-      `SELECT inci_name, korean_name, cas_number, ingredient_type, ewg_score,
-              skin_type, description, purpose
-       FROM ingredient_master
+      `SELECT im.inci_name, im.korean_name, im.cas_number, im.ingredient_type, im.ewg_score,
+              im.skin_type, im.description, im.purpose,
+              -- ingredient_functions: 기능 집계 (데이터 없으면 NULL)
+              (SELECT string_agg(fn.function_name, ' ' ORDER BY fn.function_name)
+               FROM ingredient_functions fn WHERE fn.ingredient_id = im.id) AS function_inci,
+              -- ingredient_functions: 사용농도 (min/max)
+              (SELECT min(fn.typical_concentration)
+               FROM ingredient_functions fn WHERE fn.ingredient_id = im.id) AS usage_level_min,
+              (SELECT max(fn.max_concentration)
+               FROM ingredient_functions fn WHERE fn.ingredient_id = im.id) AS usage_level_max,
+              -- ingredient_properties: pH 범위
+              ip.ph_range
+       FROM ingredient_master im
+       LEFT JOIN ingredient_properties ip ON ip.ingredient_id = im.id
        ${whereClause}
        ORDER BY (
-         CASE WHEN description IS NOT NULL AND description != '' THEN 2 ELSE 0 END +
-         CASE WHEN ewg_score IS NOT NULL AND ewg_score > 0 THEN 1 ELSE 0 END +
-         CASE WHEN korean_name IS NOT NULL THEN 1 ELSE 0 END
-       ) DESC, inci_name ASC
+         CASE WHEN im.purpose IS NOT NULL AND im.purpose != '' THEN 2 ELSE 0 END +
+         CASE WHEN im.description IS NOT NULL AND im.description != '' THEN 2 ELSE 0 END +
+         CASE WHEN im.ewg_score IS NOT NULL AND im.ewg_score > 0 THEN 1 ELSE 0 END +
+         CASE WHEN im.korean_name IS NOT NULL THEN 1 ELSE 0 END
+       ) DESC, im.inci_name ASC
        LIMIT $${idx} OFFSET $${idx + 1}`,
       params
     )
@@ -4987,8 +4999,26 @@ app.get('/api/ingredients/db', async (req, res) => {
 
     const items = rows.map(r => {
       const reg = regStatusMap[r.inci_name?.toLowerCase()] || {}
+      // ph_range "4.0-6.0" → ph_min/ph_max 파싱
+      let ph_min = null, ph_max = null
+      if (r.ph_range) {
+        const m = String(r.ph_range).match(/([\d.]+)\s*[-~]\s*([\d.]+)/)
+        if (m) { ph_min = parseFloat(m[1]); ph_max = parseFloat(m[2]) }
+      }
+      // function_inci: ingredient_functions 없으면 purpose 폴백
+      const function_inci = r.function_inci || r.purpose || null
       return {
-        ...r,
+        inci_name: r.inci_name,
+        korean_name: r.korean_name,
+        cas_number: r.cas_number,
+        ingredient_type: r.ingredient_type,
+        ewg_score: r.ewg_score,
+        function_inci,
+        ph_min,
+        ph_max,
+        usage_level_min: r.usage_level_min != null ? parseFloat(r.usage_level_min) : null,
+        usage_level_max: r.usage_level_max != null ? parseFloat(r.usage_level_max) : null,
+        description: r.description,
         regulation_status_kr: reg.kr || null,
         regulation_status_eu: reg.eu || null,
         kr_regulation: reg.kr_restriction || null,
