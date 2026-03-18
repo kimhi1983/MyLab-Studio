@@ -164,7 +164,7 @@ const allData = ref([])
 const panelRow = ref(null)
 const errorMessage = computed(() => store.error?.value ? `규제 데이터 연결 오류: ${store.error.value}` : '')
 
-const REGION_ORDER = ['한국', '유럽', '미국', '일본', '중국', '안전성']
+const REGION_ORDER = ['한국', '유럽', '미국', '일본', '중국']
 
 const regionCounts = computed(() => {
   const counts = {}
@@ -419,8 +419,6 @@ function typeLabel(type) {
 }
 .reg-row:hover { background: var(--bg); }
 
-/* 빨간 보더: ban 행의 성분명 컬럼 왼쪽에만 */
-.reg-row.row-ban td:nth-child(2) { border-left: 2px solid var(--red); }
 
 .reg-row td { padding: 6px 8px; vertical-align: middle; }
 
