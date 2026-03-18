@@ -4932,22 +4932,15 @@ app.get('/api/ingredients/db', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT im.inci_name, im.korean_name, im.cas_number, im.ingredient_type, im.ewg_score,
               im.skin_type, im.description, im.purpose,
-              -- ingredient_functions: 기능 집계 (데이터 없으면 NULL)
-              (SELECT string_agg(fn.function_name, ' ' ORDER BY fn.function_name)
-               FROM ingredient_functions fn WHERE fn.ingredient_id = im.id) AS function_inci,
-              -- ingredient_functions: 사용농도 (min/max)
-              (SELECT min(fn.typical_concentration)
-               FROM ingredient_functions fn WHERE fn.ingredient_id = im.id) AS usage_level_min,
-              (SELECT max(fn.max_concentration)
-               FROM ingredient_functions fn WHERE fn.ingredient_id = im.id) AS usage_level_max,
-              -- ingredient_properties: pH 범위
-              ip.ph_range
+              im.function_inci, im.ph_min, im.ph_max,
+              im.usage_level_min, im.usage_level_max
        FROM ingredient_master im
-       LEFT JOIN ingredient_properties ip ON ip.ingredient_id = im.id
        ${whereClause}
        ORDER BY (
+         CASE WHEN im.function_inci IS NOT NULL AND im.function_inci != '' THEN 3 ELSE 0 END +
          CASE WHEN im.purpose IS NOT NULL AND im.purpose != '' THEN 2 ELSE 0 END +
-         CASE WHEN im.description IS NOT NULL AND im.description != '' THEN 2 ELSE 0 END +
+         CASE WHEN im.ph_min IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN im.usage_level_min IS NOT NULL THEN 1 ELSE 0 END +
          CASE WHEN im.ewg_score IS NOT NULL AND im.ewg_score > 0 THEN 1 ELSE 0 END +
          CASE WHEN im.korean_name IS NOT NULL THEN 1 ELSE 0 END
        ) DESC, im.inci_name ASC
@@ -4999,13 +4992,7 @@ app.get('/api/ingredients/db', async (req, res) => {
 
     const items = rows.map(r => {
       const reg = regStatusMap[r.inci_name?.toLowerCase()] || {}
-      // ph_range "4.0-6.0" → ph_min/ph_max 파싱
-      let ph_min = null, ph_max = null
-      if (r.ph_range) {
-        const m = String(r.ph_range).match(/([\d.]+)\s*[-~]\s*([\d.]+)/)
-        if (m) { ph_min = parseFloat(m[1]); ph_max = parseFloat(m[2]) }
-      }
-      // function_inci: ingredient_functions 없으면 purpose 폴백
+      // function_inci: 없으면 purpose 폴백
       const function_inci = r.function_inci || r.purpose || null
       return {
         inci_name: r.inci_name,
@@ -5014,8 +5001,8 @@ app.get('/api/ingredients/db', async (req, res) => {
         ingredient_type: r.ingredient_type,
         ewg_score: r.ewg_score,
         function_inci,
-        ph_min,
-        ph_max,
+        ph_min: r.ph_min != null ? parseFloat(r.ph_min) : null,
+        ph_max: r.ph_max != null ? parseFloat(r.ph_max) : null,
         usage_level_min: r.usage_level_min != null ? parseFloat(r.usage_level_min) : null,
         usage_level_max: r.usage_level_max != null ? parseFloat(r.usage_level_max) : null,
         description: r.description,
