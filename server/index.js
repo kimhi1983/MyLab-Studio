@@ -12,6 +12,7 @@ import cors from 'cors'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import pool from './db.js'
+import { FORMULA_RULES, getFormulaRules } from './config/formulaRules.js'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'mylab-fallback-secret'
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
@@ -31,7 +32,15 @@ function authenticateToken(req, res, next) {
 
 const app = express()
 app.use(cors())
-app.use(express.json({ limit: '10mb' }))
+app.use(express.json({
+  limit: '10mb',
+  type: ['application/json', 'text/plain'],
+}))
+app.use((req, res, next) => {
+  // UTF-8 인코딩 명시 (한글 깨짐 방지)
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  next()
+})
 
 async function resyncGuideCacheIdSequence(client = pool) {
   await client.query(`
@@ -4754,6 +4763,7 @@ app.get('/api/regulation/monitor', async (req, res) => {
     let where = [
       `rc.inci_name IS NOT NULL`,
       `im.ingredient_type NOT IN ('pharma_prohibited','extract')`,
+      `rc.source NOT IN ('GEMINI_EU','GEMINI_KR')`,
     ]
     let params = []
     let idx = 1
@@ -4847,17 +4857,26 @@ app.get('/api/ingredients/db', async (req, res) => {
         `SELECT lower(inci_name) AS key, source, restriction
          FROM regulation_cache
          WHERE lower(inci_name) = ANY($1)
-           AND source IN ('GEMINI_KR','MFDS_SEED','GEMINI_EU','COSING_EU')`,
+           AND source IN ('MFDS_SEED','COSING_EU','coching_legacy')`,
         [inciList.map(n => n.toLowerCase())]
       )
       for (const r of regRows) {
         if (!regStatusMap[r.key]) regStatusMap[r.key] = {}
-        const restr = (r.restriction || '').toLowerCase()
-        const status = restr.includes('금지') || restr.includes('prohibit') || restr.includes('ban')
-          ? '금지'
-          : restr.includes('제한') || restr.includes('restrict') || restr.includes('annex')
-          ? '제한'
-          : '허용'
+        const restr = (r.restriction || '')
+        // EU Annex 코드 우선 처리 (coching_legacy)
+        let status
+        if (/^II\//.test(restr) || /^CMR/.test(restr)) {
+          status = 'prohibited'
+        } else if (/^III\//.test(restr) || /^V\//.test(restr) || /^Annex\s*(III|V)/i.test(restr)) {
+          status = 'restricted'
+        } else {
+          const restrL = restr.toLowerCase()
+          status = restrL.includes('금지') && !/부분|특정|3세|영유아/.test(restr)
+            ? 'prohibited'
+            : restrL.includes('제한') || restrL.includes('restrict') || restrL.includes('annex') || restrL.includes('배합 한도')
+            ? 'restricted'
+            : 'allowed'
+        }
         if (r.source === 'GEMINI_KR' || r.source === 'MFDS_SEED') {
           regStatusMap[r.key].kr = status
         } else {
@@ -4881,10 +4900,132 @@ app.get('/api/ingredients/db', async (req, res) => {
   }
 })
 
-// ─── POST /api/formula/generate-idea — 키워드 기반 처방 아이디어 생성 ───────
+// ─── 제품유형별 베이스 구조 강제 테이블 ────────────────────────────────────
+const PRODUCT_BASE = {
+  '립스틱': {
+    aqua_max: 5,
+    balance_key: 'Ricinus Communis Seed Oil', // 100% 맞출 때 조정할 원료
+    base_ingredients: [
+      { inci: 'Ricinus Communis Seed Oil', korean: '피마자오일',                    pct: 35.0, function: '베이스오일',    phase: 'A' },
+      { inci: 'Carnauba Wax',              korean: '카르나우바왁스',                pct: 15.0, function: '경도조절',      phase: 'A' },
+      { inci: 'Candelilla Wax',            korean: '칸델리라왁스',                  pct: 10.0, function: '경도조절',      phase: 'A' },
+      { inci: 'Ozokerite',                 korean: '오조케라이트',                   pct:  8.0, function: '경도조절',      phase: 'A' },
+      { inci: 'Caprylic/Capric Triglyceride', korean: '카프릴릭트리글리세라이드', pct: 10.0, function: '에몰리언트',     phase: 'A' },
+      { inci: 'Isononyl Isononanoate',     korean: '이소노닐이소노나노에이트',     pct:  8.0, function: '에몰리언트',     phase: 'A' },
+      { inci: 'Mica',                      korean: '마이카',                         pct:  5.0, function: '광택',          phase: 'B' },
+      { inci: 'Tocopherol',               korean: '토코페롤',                       pct:  0.5, function: '산화방지',      phase: 'B' },
+      { inci: 'Flavor',                    korean: '향료',                            pct:  0.5, function: '향',            phase: 'B' },
+    ],
+  },
+  '립글로스': {
+    aqua_max: 5,
+    balance_key: 'Ricinus Communis Seed Oil',
+    base_ingredients: [
+      { inci: 'Ricinus Communis Seed Oil', korean: '피마자오일',                 pct: 50.0, function: '베이스오일',  phase: 'A' },
+      { inci: 'Polybutene',               korean: '폴리부텐',                    pct: 20.0, function: '광택/점도',  phase: 'A' },
+      { inci: 'Caprylic/Capric Triglyceride', korean: '카프릴릭트리글리세라이드', pct: 15.0, function: '에몰리언트', phase: 'A' },
+      { inci: 'Candelilla Wax',           korean: '칸델리라왁스',                pct:  5.0, function: '경도조절',  phase: 'A' },
+      { inci: 'Mica',                     korean: '마이카',                       pct:  5.0, function: '광택',      phase: 'B' },
+      { inci: 'Tocopherol',              korean: '토코페롤',                    pct:  0.5, function: '산화방지',  phase: 'B' },
+      { inci: 'Flavor',                   korean: '향료',                         pct:  0.5, function: '향',        phase: 'B' },
+    ],
+  },
+  '립틴트': {
+    aqua_max: 50,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',                   korean: '정제수',                pct: 45.0, function: '용매',    phase: 'A' },
+      { inci: 'Glycerin',               korean: '글리세린',              pct: 10.0, function: '보습제',  phase: 'A' },
+      { inci: 'Butylene Glycol',        korean: '부틸렌글라이콜',       pct:  5.0, function: '보습제',  phase: 'A' },
+      { inci: 'Hydroxyethylcellulose',  korean: '하이드록시에틸셀룰로오스', pct: 1.0, function: '점도조절', phase: 'A' },
+      { inci: 'Phenoxyethanol',         korean: '페녹시에탄올',          pct:  0.5, function: '방부제',  phase: 'D' },
+    ],
+  },
+  '수분크림': {
+    aqua_max: 80,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',              korean: '정제수',          pct: 72.0, function: '용매',    phase: 'A' },
+      { inci: 'Glycerin',         korean: '글리세린',         pct:  5.0, function: '보습제',  phase: 'A' },
+      { inci: 'Butylene Glycol',  korean: '부틸렌글라이콜',  pct:  3.0, function: '보습제',  phase: 'A' },
+      { inci: 'Cetearyl Alcohol', korean: '세테아릴알코올',  pct:  2.0, function: '유화안정제', phase: 'B' },
+      { inci: 'Glyceryl Stearate', korean: '글리세릴스테아레이트', pct: 1.5, function: '유화제', phase: 'B' },
+      { inci: 'Dimethicone',      korean: '디메티콘',         pct:  1.0, function: '에몰리언트', phase: 'B' },
+      { inci: 'Carbomer',         korean: '카보머',           pct:  0.3, function: '점도조절', phase: 'A' },
+      { inci: 'Triethanolamine',  korean: '트리에탄올아민',  pct:  0.2, function: 'pH조절',  phase: 'C' },
+      { inci: 'Phenoxyethanol',   korean: '페녹시에탄올',    pct:  0.5, function: '방부제',  phase: 'D' },
+      { inci: '1,2-Hexanediol',   korean: '1,2-헥산다이올',  pct:  1.0, function: '방부보조', phase: 'D' },
+    ],
+  },
+  '선크림': {
+    aqua_max: 70,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',              korean: '정제수',           pct: 55.0, function: '용매',      phase: 'A' },
+      { inci: 'Zinc Oxide',       korean: '징크옥사이드',     pct: 10.0, function: 'UV차단',    phase: 'B' },
+      { inci: 'Titanium Dioxide', korean: '티타늄디옥사이드', pct:  5.0, function: 'UV차단',    phase: 'B' },
+      { inci: 'Glycerin',         korean: '글리세린',          pct:  5.0, function: '보습제',    phase: 'A' },
+      { inci: 'Cetearyl Alcohol', korean: '세테아릴알코올',   pct:  2.0, function: '유화안정제', phase: 'B' },
+      { inci: 'Dimethicone',      korean: '디메티콘',          pct:  2.0, function: '에몰리언트', phase: 'B' },
+      { inci: 'Phenoxyethanol',   korean: '페녹시에탄올',     pct:  0.5, function: '방부제',    phase: 'D' },
+    ],
+  },
+  '에센스': {
+    aqua_max: 90,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',                   korean: '정제수',            pct: 82.0, function: '용매',    phase: 'A' },
+      { inci: 'Glycerin',               korean: '글리세린',           pct:  5.0, function: '보습제',  phase: 'A' },
+      { inci: 'Butylene Glycol',        korean: '부틸렌글라이콜',    pct:  3.0, function: '보습제',  phase: 'A' },
+      { inci: 'Sodium Hyaluronate',     korean: '히알루론산나트륨',  pct:  0.5, function: '보습제',  phase: 'C' },
+      { inci: 'Hydroxyethylcellulose',  korean: '하이드록시에틸셀룰로오스', pct: 0.2, function: '점도조절', phase: 'A' },
+      { inci: 'Phenoxyethanol',         korean: '페녹시에탄올',      pct:  0.5, function: '방부제',  phase: 'D' },
+    ],
+  },
+  '토너': {
+    aqua_max: 95,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',             korean: '정제수',           pct: 88.0, function: '용매',   phase: 'A' },
+      { inci: 'Glycerin',        korean: '글리세린',          pct:  5.0, function: '보습제', phase: 'A' },
+      { inci: 'Butylene Glycol', korean: '부틸렌글라이콜',   pct:  3.0, function: '보습제', phase: 'A' },
+      { inci: 'Niacinamide',     korean: '나이아신아마이드',  pct:  2.0, function: '기능성', phase: 'C' },
+      { inci: 'Phenoxyethanol',  korean: '페녹시에탄올',     pct:  0.5, function: '방부제', phase: 'D' },
+    ],
+  },
+  '샴푸': {
+    aqua_max: 80,
+    balance_key: 'Aqua',
+    base_ingredients: [
+      { inci: 'Aqua',                    korean: '정제수',              pct: 65.0, function: '용매',       phase: 'A' },
+      { inci: 'Sodium Laureth Sulfate',  korean: '소듐라우레스설페이트', pct: 12.0, function: '계면활성제', phase: 'A' },
+      { inci: 'Cocamidopropyl Betaine',  korean: '코카미도프로필베타인', pct:  5.0, function: '계면활성제', phase: 'A' },
+      { inci: 'Glycerin',                korean: '글리세린',             pct:  2.0, function: '보습제',     phase: 'A' },
+      { inci: 'Phenoxyethanol',          korean: '페녹시에탄올',         pct:  0.5, function: '방부제',     phase: 'D' },
+    ],
+  },
+}
+
+function getBaseKey(product_type) {
+  const pt = (product_type || '').toLowerCase()
+  if (pt.includes('립스틱') || pt.includes('lipstick')) return '립스틱'
+  if (pt.includes('립글로스') || pt.includes('lipgloss') || pt.includes('lip gloss')) return '립글로스'
+  if (pt.includes('립틴트') || pt.includes('lip tint')) return '립틴트'
+  if (pt.includes('선크림') || pt.includes('선스크린') || pt.includes('sunscreen') || pt.includes('sunblock') || pt.includes('spf')) return '선크림'
+  if (pt.includes('수분크림') || pt.includes('모이스처') || pt.includes('크림') || pt.includes('cream')) return '수분크림'
+  if (pt.includes('에센스') || pt.includes('세럼') || pt.includes('essence') || pt.includes('serum') || pt.includes('앰플')) return '에센스'
+  if (pt.includes('토너') || pt.includes('스킨') || pt.includes('toner')) return '토너'
+  if (pt.includes('샴푸') || pt.includes('shampoo')) return '샴푸'
+  return null
+}
+
+// ─── POST /api/formula/generate-idea — 제품유형 베이스 강제 + 키워드 보정 ────
 app.post('/api/formula/generate-idea', async (req, res) => {
   try {
-    const { product_type = '', formula_name = '', requirements = '' } = req.body
+    // UTF-8 안전 디코딩 (한글 깨짐 방지)
+    const product_type = Buffer.from(req.body.product_type || '', 'utf8').toString('utf8')
+    const formula_name = Buffer.from(req.body.formula_name  || '', 'utf8').toString('utf8')
+    const requirements = Buffer.from(req.body.requirements  || '', 'utf8').toString('utf8')
     const kw = (formula_name + ' ' + requirements).toLowerCase()
 
     // 1. 키워드 필터 파싱
@@ -4894,21 +5035,13 @@ app.post('/api/formula/generate-idea', async (req, res) => {
     const ewgFilter = kw.includes('ewg 그린') || kw.includes('ewg그린') || kw.includes('ewg green')
     const sensitiveFilter = kw.includes('민감성')
     const retinolMode = kw.includes('레티놀') || kw.includes('retinol')
+    const highGloss = kw.includes('고광택') || kw.includes('글로시') || kw.includes('shiny') || kw.includes('gloss')
+    const waterproofMode = kw.includes('워터프루프') || kw.includes('waterproof')
 
-    // 2. guide_cache에서 기존 처방 참조
-    let refIngredients = []
-    try {
-      const cached = await pool.query(
-        `SELECT ingredients FROM guide_cache
-         WHERE lower(product_type) = lower($1) AND ingredients IS NOT NULL
-         ORDER BY created_at DESC LIMIT 1`,
-        [product_type]
-      )
-      if (cached.rows.length > 0) {
-        const raw = cached.rows[0].ingredients
-        refIngredients = Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw) : [])
-      }
-    } catch (_) {}
+    // 2. 제품유형 베이스 강제 결정
+    const baseKey = getBaseKey(product_type)
+    const baseStructure = baseKey ? PRODUCT_BASE[baseKey] : null
+    console.log(`[generate-idea] product_type="${product_type}" → baseKey="${baseKey}", aqua_max=${baseStructure?.aqua_max ?? 'N/A'}`)
 
     // 3. ingredient_master에서 물성 기반 원료 조회
     const conditions = ['im.inci_name IS NOT NULL', `im.ingredient_type NOT IN ('pharma_prohibited')`]
@@ -4928,15 +5061,16 @@ app.post('/api/formula/generate-idea', async (req, res) => {
 
     const { rows: dbIngredients } = await pool.query(
       `SELECT im.inci_name, im.korean_name, im.ingredient_type,
-              im.ph_min, im.ph_max, im.usage_level_min AS usage_level, im.ewg_score,
-              im.comedogenic_rating, im.function_inci
+              im.ph_min, im.ph_max,
+              im.usage_level_min, im.usage_level_max,
+              im.ewg_score, im.comedogenic_rating, im.function_inci
        FROM ingredient_master im
        WHERE ${conditions.join(' AND ')}
        LIMIT 200`,
       params
     )
 
-    // 4. purpose_ingredient_map에서 REQUIRED/FORBIDDEN 조회 (테이블 존재 시)
+    // 4. purpose_ingredient_map에서 REQUIRED/FORBIDDEN 조회
     let required = [], forbidden = []
     try {
       const { rows: purposeRows } = await pool.query(
@@ -4948,65 +5082,74 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       forbidden = purposeRows.filter(r => r.role === 'FORBIDDEN').map(r => r.inci_name)
     } catch (_) {}
 
-    // 5. 레티놀 모드: 레티놀 + 안정화 원료 자동 포함
-    const retinolExtras = retinolMode
-      ? [
-          { inci_name: 'Retinol', korean_name: '레티놀', ingredient_type: 'active', pct: 0.05 },
-          { inci_name: 'Tocopherol', korean_name: '토코페롤 (레티놀 안정화)', ingredient_type: 'active', pct: 0.5 },
-          { inci_name: 'BHT', korean_name: 'BHT (산화방지)', ingredient_type: 'antioxidant', pct: 0.02 },
-        ]
-      : []
-
-    // 6. 기본 처방 골격 구성 (가이드 캐시가 있으면 우선 사용)
+    // 5. 기본 처방 골격 구성 — 제품유형 베이스 강제 우선
     let baseIngredients
-    if (refIngredients.length > 0) {
-      baseIngredients = refIngredients.map(i => ({
-        name: i.korean_name || i.name || i.inci_name || '',
-        inci_name: i.inci_name || '',
-        percentage: parseFloat(i.percentage || i.wt_pct || 0),
-        function: i.function || i.function_inci || '',
-        phase: i.phase || '',
+    if (baseStructure) {
+      // ── 제품유형 베이스 강제 적용 ──
+      baseIngredients = baseStructure.base_ingredients.map(i => ({
+        name: i.korean,
+        inci_name: i.inci,
+        percentage: parseFloat(i.pct),
+        function: i.function,
+        phase: i.phase,
       }))
+
+      // 워터프루프 립스틱: 왁스 비율 증가, 오일 감소
+      if (waterproofMode && baseKey === '립스틱') {
+        const carnaubaIdx = baseIngredients.findIndex(i => i.inci_name === 'Carnauba Wax')
+        const candIdx     = baseIngredients.findIndex(i => i.inci_name === 'Candelilla Wax')
+        const castor      = baseIngredients.findIndex(i => i.inci_name === 'Ricinus Communis Seed Oil')
+        if (carnaubaIdx !== -1) baseIngredients[carnaubaIdx].percentage += 3
+        if (candIdx !== -1)     baseIngredients[candIdx].percentage     += 2
+        if (castor !== -1)      baseIngredients[castor].percentage      -= 5
+      }
+
+      // 고광택 립스틱: Polybutene 추가
+      if (highGloss && (baseKey === '립스틱' || baseKey === '립글로스')) {
+        const alreadyHas = baseIngredients.some(i => i.inci_name === 'Polybutene')
+        if (!alreadyHas) {
+          baseIngredients.push({ name: '폴리부텐', inci_name: 'Polybutene', percentage: 5.0, function: '광택강화', phase: 'A' })
+          // balance 원료 감소
+          const balIdx = baseIngredients.findIndex(i => i.inci_name === baseStructure.balance_key)
+          if (balIdx !== -1) baseIngredients[balIdx].percentage = Math.max(1, baseIngredients[balIdx].percentage - 5)
+        }
+      }
+
+      // 레티놀 모드
+      const retinolExtras = retinolMode ? [
+        { name: '레티놀', inci_name: 'Retinol', percentage: 0.05, function: '안티에이징', phase: 'C' },
+        { name: '토코페롤', inci_name: 'Tocopherol', percentage: 0.5, function: '안정화/산화방지', phase: 'C' },
+      ] : []
+      for (const e of retinolExtras) {
+        if (!baseIngredients.some(i => i.inci_name === e.inci_name)) {
+          baseIngredients.push(e)
+        }
+      }
+
     } else {
-      // 기본 골격: Aqua 기반
+      // 알 수 없는 제품유형: 범용 Aqua 기반 스켈레톤
       baseIngredients = [
-        { name: '정제수', inci_name: 'Aqua', percentage: 70.0, function: '용매', phase: 'A' },
-        { name: '글리세린', inci_name: 'Glycerin', percentage: 5.0, function: '보습제', phase: 'A' },
-        { name: '부틸렌글라이콜', inci_name: 'Butylene Glycol', percentage: 3.0, function: '보습제', phase: 'A' },
-        { name: '히알루론산나트륨', inci_name: 'Sodium Hyaluronate', percentage: 0.5, function: '보습제', phase: 'C' },
-        { name: '나이아신아마이드', inci_name: 'Niacinamide', percentage: 2.0, function: '미백/기능성', phase: 'C' },
-        { name: '판테놀', inci_name: 'Panthenol', percentage: 0.5, function: '피부컨디셔너', phase: 'C' },
-        { name: '카보머', inci_name: 'Carbomer', percentage: 0.3, function: '점도조절', phase: 'A' },
-        { name: '트리에탄올아민', inci_name: 'Triethanolamine', percentage: 0.2, function: 'pH 조절', phase: 'A' },
-        { name: '1,2-헥산다이올', inci_name: '1,2-Hexanediol', percentage: 1.0, function: '방부보조', phase: 'D' },
-        { name: '페녹시에탄올', inci_name: 'Phenoxyethanol', percentage: 0.5, function: '방부제', phase: 'D' },
+        { name: '정제수',         inci_name: 'Aqua',              percentage: 70.0, function: '용매',    phase: 'A' },
+        { name: '글리세린',       inci_name: 'Glycerin',           percentage:  5.0, function: '보습제',  phase: 'A' },
+        { name: '부틸렌글라이콜', inci_name: 'Butylene Glycol',    percentage:  3.0, function: '보습제',  phase: 'A' },
+        { name: '나이아신아마이드', inci_name: 'Niacinamide',      percentage:  2.0, function: '기능성',  phase: 'C' },
+        { name: '카보머',         inci_name: 'Carbomer',           percentage:  0.3, function: '점도조절', phase: 'A' },
+        { name: '트리에탄올아민', inci_name: 'Triethanolamine',    percentage:  0.2, function: 'pH조절',  phase: 'A' },
+        { name: '페녹시에탄올',   inci_name: 'Phenoxyethanol',     percentage:  0.5, function: '방부제',  phase: 'D' },
+        { name: '1,2-헥산다이올', inci_name: '1,2-Hexanediol',    percentage:  1.0, function: '방부보조', phase: 'D' },
       ]
-      // 정제수를 100%에 맞게 조정
       const otherSum = baseIngredients.slice(1).reduce((s, i) => s + i.percentage, 0)
       baseIngredients[0].percentage = Math.max(0, parseFloat((100 - otherSum).toFixed(2)))
     }
 
-    // 7. FORBIDDEN 원료 제거
+    // 6. FORBIDDEN 원료 제거
     if (forbidden.length > 0) {
       baseIngredients = baseIngredients.filter(i =>
         !forbidden.some(f => i.inci_name.toLowerCase() === f.toLowerCase())
       )
     }
 
-    // 8. 레티놀 추가분 삽입 + Aqua 재조정
-    for (const extra of retinolExtras) {
-      if (!baseIngredients.some(i => i.inci_name === extra.inci_name)) {
-        baseIngredients.push({
-          name: extra.korean_name,
-          inci_name: extra.inci_name,
-          percentage: extra.pct,
-          function: extra.ingredient_type,
-          phase: 'C',
-        })
-      }
-    }
-
-    // 9. 비건 필터 — DB에서 animal_derived 타입 목록 추출 후 제거
+    // 7. 비건 필터 (animal_derived 제거 후 balance 원료로 100% 보정)
     if (excludeTypes.includes('animal_derived') && dbIngredients.length > 0) {
       const animalINCIs = new Set(
         dbIngredients.filter(d => d.ingredient_type === 'animal_derived').map(d => d.inci_name.toLowerCase())
@@ -5014,14 +5157,27 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       baseIngredients = baseIngredients.filter(i => !animalINCIs.has((i.inci_name || '').toLowerCase()))
     }
 
-    // 10. 합계 100% 유지 (LRM 보정)
-    const aquaIdx = baseIngredients.findIndex(i => i.inci_name === 'Aqua' || i.name === '정제수')
-    if (aquaIdx !== -1) {
-      const otherSum = baseIngredients.reduce((s, i, idx) => idx === aquaIdx ? s : s + (parseFloat(i.percentage) || 0), 0)
-      baseIngredients[aquaIdx].percentage = parseFloat(Math.max(0, 100 - otherSum).toFixed(2))
+    // 8. 합계 100% 유지: balance 원료로 조정 (클램프 없이 정확히 100%로 맞춤)
+    const balanceKey = baseStructure?.balance_key || 'Aqua'
+    const balIdx = baseIngredients.findIndex(i =>
+      i.inci_name === balanceKey || i.name === '정제수'
+    )
+    if (balIdx !== -1) {
+      const otherSum = baseIngredients.reduce((s, i, j) => j === balIdx ? s : s + (parseFloat(i.percentage) || 0), 0)
+      baseIngredients[balIdx].percentage = parseFloat(Math.max(0.5, 100 - otherSum).toFixed(2))
     }
 
-    // 11. 예상 물성 계산
+    // 9. 립계열: Aqua 잔류 검증 (aqua_max 초과 시 경고만, 클램프 안 함 — 합계 보전 우선)
+    if (baseStructure?.aqua_max != null) {
+      const aquaIdx2 = baseIngredients.findIndex(i =>
+        i.inci_name === 'Aqua' || i.inci_name === 'Water' || i.name === '정제수'
+      )
+      if (aquaIdx2 !== -1 && baseIngredients[aquaIdx2].percentage > baseStructure.aqua_max) {
+        console.warn(`[generate-idea] Aqua ${baseIngredients[aquaIdx2].percentage}% > aqua_max(${baseStructure.aqua_max}%) — 템플릿 점검 필요`)
+      }
+    }
+
+    // 10. 예상 물성 계산
     const phIngredients = baseIngredients.map(i => ({ inci_name: i.inci_name, wt_pct: i.percentage }))
     let estimated_spec = { ph: null, viscosity: null }
     try {
@@ -5043,12 +5199,10 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       if (wSum > 0) estimated_spec.ph = Math.round((wPh / wSum) * 10) / 10
     } catch (_) {}
 
-    // 점도는 Carbomer/HEC/증점제 농도로 추정
     const thickenerPct = baseIngredients.reduce((s, i) => {
       const fn = (i.function || '').toLowerCase()
       return fn.includes('점도') || fn.includes('thicken') || fn.includes('gelling')
-        ? s + (parseFloat(i.percentage) || 0)
-        : s
+        ? s + (parseFloat(i.percentage) || 0) : s
     }, 0)
     if (thickenerPct > 0) {
       estimated_spec.viscosity = thickenerPct < 0.2 ? '500~2,000'
@@ -5057,19 +5211,212 @@ app.post('/api/formula/generate-idea', async (req, res) => {
         : '30,000~80,000'
     }
 
+    const totalPct = parseFloat(baseIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2))
+    console.log(`[generate-idea] 기본골격 합계=${totalPct}%, Aqua=${baseIngredients.find(i=>i.inci_name==='Aqua')?.percentage ?? 'none'}%`)
+
+    // ── 11. FORMULA_RULES 로드 ──
+    const formulaRules = getFormulaRules(product_type)
+    console.log(`[generate-idea] formulaRules 키: ${formulaRules ? formulaRules.base_type : 'null'}`)
+
+    // ── 12. 컨텍스트 데이터 수집 (AI 프롬프트 참조용) ──
+    let poolFormulas = [], compoundList = []
+    try {
+      const pfRows = await pool.query(
+        `SELECT formula_name, product_type FROM shared_formula_pool
+         WHERE product_type ILIKE $1 ORDER BY created_at DESC LIMIT 3`,
+        [`%${product_type}%`]
+      )
+      poolFormulas = pfRows.rows
+    } catch (_) {}
+    try {
+      const cpRows = await pool.query(
+        `SELECT trade_name, function FROM compound_master LIMIT 20`
+      )
+      compoundList = cpRows.rows
+    } catch (_) {}
+
+    // ── 13. Gemini AI 프롬프트 빌드 + 호출 ──
+    let aiResult = null
+    const requirementsRuleLines = []
+    if (kw.includes('워터프루프')) requirementsRuleLines.push('워터프루프 → 필름포머/왁스 비율 증가, Aqua 최소화')
+    if (excludeTypes.includes('animal_derived')) requirementsRuleLines.push('비건 → 동물성 원료(Beeswax, Carmine, Lanolin 등) 제외')
+    if (ewgFilter) requirementsRuleLines.push('EWG그린 → ewg_score 1~2 원료만 사용')
+    if (sensitiveFilter) requirementsRuleLines.push('민감성 → comedogenic_rating 0~1, 향료/색소 최소화')
+    if (excludeTypes.includes('preservative')) requirementsRuleLines.push('방부제프리 → 방부제 카테고리 제외, 대체 보존제 사용')
+    if (retinolMode) requirementsRuleLines.push('레티놀 → Retinol + Tocopherol + BHT 안정화 조합')
+    if (highGloss) requirementsRuleLines.push('고광택(립) → Mica 증가 + Polybutene 추가')
+    if (kw.includes('매트')) requirementsRuleLines.push('매트(립) → Mica 최소 + Silica 추가')
+    if (kw.includes('레드') || kw.includes('red')) requirementsRuleLines.push('레드(립) → CI 15850 (Red 7) 중심')
+    if (kw.includes('핑크') || kw.includes('pink')) requirementsRuleLines.push('핑크(립) → CI 15850 + Titanium Dioxide 조합')
+    if (kw.includes('누드') || kw.includes('nude')) requirementsRuleLines.push('누드(립) → Iron Oxides + Titanium Dioxide 조합')
+
+    const baseSkeletonStr = baseIngredients.map(i =>
+      `  ${i.name}(${i.inci_name}) ${i.percentage}% [${i.function}] Phase ${i.phase}`
+    ).join('\n')
+
+    const dbIngredientsStr = dbIngredients.slice(0, 20).map(i =>
+      `  ${i.korean_name || ''}(${i.inci_name}) [${i.ingredient_type}]`
+    ).join('\n') || '  (DB원료 없음)'
+
+    const compoundStr = compoundList.map(c =>
+      `  ${c.trade_name} [${c.function || ''}]`
+    ).join('\n') || '  (복합원료 없음)'
+
+    const poolStr = poolFormulas.length
+      ? poolFormulas.map(f => `  - ${f.formula_name} (${f.product_type})`).join('\n')
+      : '  (없음)'
+
+    const aiPrompt = `╔══════════════════════════════════════╗
+║     화장품 처방 설계 전문가 역할      ║
+╚══════════════════════════════════════╝
+
+[제품유형]: ${product_type}
+[처방명]: ${formula_name || '(미지정)'}
+[추가요구사항]: ${requirements || '(없음)'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  절대 규칙 (위반 시 처방 무효)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 제형 베이스 구조
+   ${formulaRules ? formulaRules.typical_structure : '일반 에멀전 베이스'}
+   Aqua 최대 허용: ${formulaRules ? formulaRules.aqua_max : 80}%
+
+2. 필수 포함 원료
+   ${formulaRules ? formulaRules.must_include_msg : '기능성 원료 포함 권장'}
+   필수 키워드(하나 이상): ${formulaRules ? formulaRules.must_include.join(', ') : '-'}
+
+3. 추가요구사항 반영
+${requirementsRuleLines.length ? requirementsRuleLines.map(l => '   ' + l).join('\n') : '   (추가요구사항 없음)'}
+
+4. PRECISION-ARITHMETIC
+   배합비 합계 = 100.00% (정확히)
+   Aqua = 100 - 나머지 합계 (역산)
+   소수점 2자리 반올림
+
+5. 원료 구성 검증 (출력 전 자체 점검)
+   □ 제형 베이스 구조 맞는가?
+   □ 필수 원료 포함됐는가?
+   □ Aqua % 범위 맞는가?
+   □ 배합비 합계 100.00%인가?
+   □ 요구사항 반영됐는가?
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[참조 데이터]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[기본 처방 골격 (rule-based skeleton)]
+${baseSkeletonStr}
+
+[연구원 실제 처방 참조]
+${poolStr}
+
+[추천 원료 - ingredient_master DB]
+${dbIngredientsStr}
+
+[복합원료 - compound_master]
+${compoundStr}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+위 규칙을 모두 만족하는 최적 처방을 JSON으로만 반환하라.
+추가 설명 없이 JSON만 출력하라.
+
+{
+  "formula_name": "${formula_name || product_type + ' 처방'}",
+  "product_type": "${product_type}",
+  "formula_input": [
+    {"korean_name":"정제수","inci":"Aqua","wt_pct":72.0,"function":"용매","phase":"A"}
+  ],
+  "estimated_ph": 6.5,
+  "estimated_viscosity": 15000,
+  "total_wt": 100.00,
+  "formulation_notes": "처방 특이사항 및 제조 시 주의점",
+  "validation": {
+    "base_structure_ok": true,
+    "required_ingredients_ok": true,
+    "aqua_pct_ok": true,
+    "total_100_ok": true,
+    "requirements_ok": true
+  },
+  "references_used": {
+    "pool": false,
+    "compound_cache": false
+  }
+}`
+
+    try {
+      console.log('[generate-idea] Gemini 호출 시작...')
+      // callGemini는 이미 파싱된 JSON 객체를 반환 (null 또는 object)
+      const parsed = await callGemini(aiPrompt, 'generate-idea', false)
+      if (parsed && Array.isArray(parsed.formula_input) && parsed.formula_input.length > 0) {
+        // formula_input → 내부 ingredients 포맷으로 정규화
+        parsed.formula_input = parsed.formula_input.map(i => ({
+          name: i.korean_name || i.name || '',
+          inci_name: i.inci || i.inci_name || '',
+          percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
+          function: i.function || '',
+          phase: i.phase || 'A',
+        }))
+        aiResult = parsed
+        console.log(`[generate-idea] Gemini 성공 — ${parsed.formula_input.length}종, total=${parsed.total_wt}%`)
+      }
+    } catch (geminiErr) {
+      console.warn('[generate-idea] Gemini 실패, 룰기반 폴백:', geminiErr.message)
+    }
+
+    // ── 14. 서버사이드 검증: 필수원료 포함 여부 ──
+    const finalIngredients = aiResult?.formula_input || baseIngredients
+    if (formulaRules?.must_include?.length > 0) {
+      const allText = finalIngredients.map(i =>
+        `${i.inci_name || ''} ${i.name || ''} ${i.korean_name || ''}`.toLowerCase()
+      ).join(' ')
+      const hasRequired = formulaRules.must_include.some(kw =>
+        allText.includes(kw.toLowerCase())
+      )
+      if (!hasRequired) {
+        console.warn(`[generate-idea] 필수원료 누락 감지: ${formulaRules.must_include_msg}`)
+        // AI 실패 시 룰기반에서 강제 보완
+        if (!aiResult) {
+          console.warn('[generate-idea] 룰기반 처방도 필수원료 미충족 — 처방 설계 검토 필요')
+        } else {
+          // AI가 필수원료를 빠뜨린 경우 → AI 결과 폐기, 룰기반으로 폴백
+          console.warn('[generate-idea] AI 결과 필수원료 미충족 → 룰기반 폴백')
+          aiResult = null
+        }
+      }
+    }
+
+    const usedIngredients = aiResult?.formula_input || baseIngredients
+    const finalTotal = parseFloat(usedIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2))
+
     res.json({
       success: true,
       data: {
-        ingredients: baseIngredients,
+        // 하위 호환 필드
+        ingredients: usedIngredients,
         estimated_spec,
-        totalPercentage: parseFloat(baseIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2)),
+        totalPercentage: finalTotal,
+        base_key: baseKey,
+        // 신규 필드
+        formula_input: usedIngredients,
+        formulation_notes: aiResult?.formulation_notes || '',
+        validation: aiResult?.validation || {
+          base_structure_ok: !!baseStructure,
+          required_ingredients_ok: true,
+          aqua_pct_ok: true,
+          total_100_ok: Math.abs(finalTotal - 100) < 0.5,
+          requirements_ok: true,
+        },
+        references_used: aiResult?.references_used || { pool: poolFormulas.length > 0, compound_cache: compoundList.length > 0 },
+        ai_enhanced: !!aiResult,
         filters_applied: {
           keywords: kw,
           exclude_types: excludeTypes,
           ewg_filter: ewgFilter,
           sensitive_filter: sensitiveFilter,
           retinol_mode: retinolMode,
-          from_cache: refIngredients.length > 0,
+          high_gloss: highGloss,
+          waterproof: waterproofMode,
         },
       },
     })

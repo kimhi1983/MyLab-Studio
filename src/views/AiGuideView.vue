@@ -17,7 +17,8 @@
 
     <!-- ─── 가이드 처방 탭 ─── -->
     <template v-if="activeTab === 'guide'">
-      <div class="panel">
+      <!-- 폼: 로딩 중에는 숨김 -->
+      <div v-if="!isGenerating" class="panel">
         <div class="panel-header">
           <div>
             <span class="section-label">REQUEST</span>
@@ -45,20 +46,17 @@
             <input v-model="guide.requirements" class="form-input" placeholder="예: 보습 강화, 민감 피부용, 약산성">
           </div>
           <div class="form-actions">
-            <button class="btn btn-primary btn-lg" @click="onGuideGenerate" :disabled="isGenerating">
-              {{ isGenerating ? '생성 중...' : '✦ MyLab 처방 생성하기' }}
+            <button class="btn btn-primary btn-lg" @click="onGuideGenerate">
+              ✦ MyLab 처방 생성하기
             </button>
           </div>
         </div>
       </div>
 
-      <!-- 로딩 -->
-      <div v-if="isGenerating" class="loading-panel">
-        <div class="loading-box">
-          <div class="spinner"></div>
-          <div class="loading-title">MyLab 처방 생성 중...</div>
-          <div class="loading-step">{{ progress }}</div>
-        </div>
+      <!-- 비커 로딩 애니메이션 -->
+      <div v-if="isGenerating" class="beaker-loading-panel">
+        <FormulaLoadingBeaker :step="loadingStep" />
+        <div class="beaker-title">MyLab 처방 생성 중</div>
       </div>
 
       <!-- 결과 -->
@@ -188,6 +186,7 @@ import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
 import { productTypes, productCategories } from '../tokens.js'
 import AiResultPanel from '../components/formula/AiResultPanel.vue'
+import FormulaLoadingBeaker from '../components/formula/FormulaLoadingBeaker.vue'
 import CopyFormulaView from './CopyFormulaView.vue'
 
 const router = useRouter()
@@ -200,6 +199,7 @@ const activeTab = ref('guide')
 
 // ─── 가이드 처방 ───
 const isGenerating = ref(false)
+const loadingStep = ref(1)       // 1~4: 비커 단계
 const progress = ref('')
 const guide = reactive({ title: '', productType: '', requirements: '' })
 const guideResult = ref(null)
@@ -271,14 +271,17 @@ async function onGuideGenerate() {
     alert('처방명과 제품 유형을 입력하세요')
     return
   }
-  isGenerating.value = true
-  const steps = ['원료 검색 중...', '규제 정보 확인 중...', '배합비 최적화 중...', '최종 처방 생성 중...']
-  for (const step of steps) {
-    progress.value = step
-    await new Promise(r => setTimeout(r, 500 + Math.random() * 400))
-  }
 
-  // /api/ai-formula 우선 시도, 실패 시 기존 generateFormula 폴백
+  // ── 비커 로딩 시작 ──
+  isGenerating.value = true
+  loadingStep.value = 1
+
+  // API 실행 중 단계 1→2→3 자동 전환 (각 1.4s 간격)
+  const stepTimer = setInterval(() => {
+    if (loadingStep.value < 3) loadingStep.value++
+  }, 1400)
+
+  // API 호출: /api/ai-formula 우선, 실패 시 guide-formula 폴백
   let res = await api.generateAiFormula({
     title: guide.title,
     productType: guide.productType,
@@ -288,8 +291,14 @@ async function onGuideGenerate() {
     res = await ingredientStore.generateFormula(guide.productType, guide.requirements)
   }
 
+  clearInterval(stepTimer)
+
+  // 단계 4 (완성!) 표시 후 0.6s 대기
+  loadingStep.value = 4
+  await new Promise(r => setTimeout(r, 600))
+
   isGenerating.value = false
-  progress.value = ''
+  loadingStep.value = 1
 
   if (res) {
     guideResult.value = res
@@ -298,7 +307,6 @@ async function onGuideGenerate() {
     phResult.value = null
     const typeLabel = productTypes.find(t => t.value === guide.productType)?.label || guide.productType
     history.value.unshift({ ...res, _title: guide.title, _productLabel: typeLabel })
-    // 처방서/전성분 탭 추가 데이터 로드 (비동기, UI 블로킹 없음)
     if (res.ingredients?.length) {
       loadFormulaExtras(res.ingredients)
     }
@@ -405,25 +413,27 @@ function formatDate(iso) {
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-lg { padding: 14px 32px; font-size: 14px; }
 
-/* ─── 로딩 ─── */
-.loading-panel {
+/* ─── 비커 로딩 ─── */
+.beaker-loading-panel {
   margin-top: 16px;
-  background: var(--accent-light);
-  border: 1px solid var(--accent-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 40px 20px;
-  text-align: center;
 }
-.loading-box { display: inline-block; }
-.spinner {
-  width: 32px; height: 32px;
-  border: 3px solid var(--accent-dim);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 12px;
+
+.beaker-title {
+  font-size: 13px;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
-@keyframes spin { to { transform: rotate(360deg); } }
 .loading-title { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
 .loading-step { font-size: 13px; color: var(--text-sub); }
 
