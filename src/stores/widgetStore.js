@@ -14,7 +14,6 @@ export const WIDGET_CATALOG = [
   { id: 'chart', label: '상태 차트', icon: 'C', description: '처방 상태 분포', minW: 3, minH: 3, defaultW: 4, defaultH: 3 },
   { id: 'memo', label: '메모', icon: 'M', description: '자유 메모', minW: 3, minH: 3, defaultW: 12, defaultH: 3 },
   { id: 'stability', label: '안정성', icon: 'S', description: '안정성 모니터링', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
-  { id: 'regulation', label: '규제 모니터링', icon: 'G', description: '지역별 규제 현황', minW: 6, minH: 5, defaultW: 12, defaultH: 7 },
   { id: 'todaylog', label: '오늘의 업무', icon: 'T', description: '오늘 진행 내역', minW: 4, minH: 4, defaultW: 6, defaultH: 5 },
   { id: 'hlb', label: 'HLB 계산기', icon: 'H', description: '빠른 HLB 계산', minW: 3, minH: 4, defaultW: 6, defaultH: 5 },
 ]
@@ -27,7 +26,6 @@ const DEFAULT_LAYOUT = [
   { x: 9, y: 3, w: 3, h: 5, i: 'quick' },
   { x: 0, y: 8, w: 6, h: 5, i: 'stability' },
   { x: 6, y: 8, w: 6, h: 5, i: 'recent' },
-  { x: 0, y: 13, w: 12, h: 7, i: 'regulation' },
   { x: 0, y: 20, w: 6, h: 5, i: 'projects' },
   { x: 6, y: 20, w: 6, h: 5, i: 'hlb' },
   { x: 0, y: 25, w: 12, h: 3, i: 'memo' },

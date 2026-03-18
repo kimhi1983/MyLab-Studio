@@ -75,6 +75,7 @@
                   <th class="col-inci">INCI Name</th>
                   <th class="col-kr">한글명</th>
                   <th class="col-type">카테고리</th>
+                  <th class="col-func">기능</th>
                   <th class="col-ewg">EWG</th>
                   <th class="col-ph">pH 범위</th>
                   <th class="col-usage">사용농도</th>
@@ -94,6 +95,13 @@
                   <td class="cell-kr">{{ item.korean_name || '-' }}</td>
                   <td class="cell-type">
                     <span v-if="item.ingredient_type" class="type-chip">{{ ingredientTypeLabel(item.ingredient_type) }}</span>
+                    <span v-else class="cell-empty">-</span>
+                  </td>
+                  <td class="cell-func">
+                    <template v-if="item.function_inci">
+                      <span v-for="fn in funcList(item.function_inci).slice(0, 2)" :key="fn" class="func-tag">{{ fn }}</span>
+                      <span v-if="funcList(item.function_inci).length > 2" class="func-more">+{{ funcList(item.function_inci).length - 2 }}</span>
+                    </template>
                     <span v-else class="cell-empty">-</span>
                   </td>
                   <td class="cell-ewg">
@@ -246,7 +254,9 @@
               <!-- 기능 -->
               <div class="detail-section" v-if="selectedItem.function_inci">
                 <div class="section-label">INCI 기능</div>
-                <div class="detail-value">{{ selectedItem.function_inci }}</div>
+                <div class="func-tags-wrap">
+                  <span v-for="fn in funcList(selectedItem.function_inci)" :key="fn" class="func-tag">{{ fn }}</span>
+                </div>
               </div>
 
               <!-- 피부타입 -->
@@ -485,6 +495,11 @@ function closeDetail() {
 }
 
 // EWG 등급 CSS 클래스
+function funcList(functionInci) {
+  if (!functionInci) return []
+  return functionInci.split(',').map(s => s.trim()).filter(Boolean)
+}
+
 function ewgClass(score) {
   const n = Number(score)
   if (n <= 2) return 'ewg-green'
@@ -746,7 +761,8 @@ function formatDate(iso) {
 
 .col-inci  { width: 22%; }
 .col-kr    { width: 14%; }
-.col-type  { width: 10%; }
+.col-type  { width: 9%; }
+.col-func  { width: 14%; }
 .col-ewg   { width: 6%; text-align: center; }
 .col-ph    { width: 9%; }
 .col-usage { width: 9%; }
@@ -796,6 +812,30 @@ function formatDate(iso) {
   color: var(--accent);
   border: 1px solid var(--accent-dim);
   white-space: nowrap;
+}
+
+.cell-func { vertical-align: middle; }
+.func-tags-wrap { display: flex; flex-wrap: wrap; gap: 3px; }
+.func-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(58,144,104,0.10);
+  color: var(--green);
+  white-space: nowrap;
+}
+.func-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--border);
+  color: var(--text-dim);
 }
 
 /* pharma_prohibited 행 강조 */

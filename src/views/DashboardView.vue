@@ -96,7 +96,6 @@ import WidgetProjectSummary from '../components/widgets/WidgetProjectSummary.vue
 import WidgetStatusChart from '../components/widgets/WidgetStatusChart.vue'
 import WidgetMemo from '../components/widgets/WidgetMemo.vue'
 import WidgetStability from '../components/widgets/WidgetStability.vue'
-import WidgetRegulation from '../components/widgets/WidgetRegulation.vue'
 import WidgetTodayLog from '../components/widgets/WidgetTodayLog.vue'
 import WidgetHlb from '../components/widgets/WidgetHlb.vue'
 
@@ -110,7 +109,7 @@ const SIZES = [
 const widgetLabels = {
   kpi: 'KPI 카드', recent: '최근 처방', quick: '빠른 작업',
   active: '진행 중 처방', projects: '프로젝트 요약', chart: '상태 차트',
-  memo: '메모', stability: '안정성', regulation: '규제 모니터링',
+  memo: '메모', stability: '안정성',
   todaylog: '오늘의 업무', hlb: 'HLB 계산기',
 }
 
@@ -119,7 +118,7 @@ const widgetComponents = {
   quick: markRaw(WidgetQuickActions), active: markRaw(WidgetActiveFormulas),
   projects: markRaw(WidgetProjectSummary), chart: markRaw(WidgetStatusChart),
   memo: markRaw(WidgetMemo), stability: markRaw(WidgetStability),
-  regulation: markRaw(WidgetRegulation), todaylog: markRaw(WidgetTodayLog),
+  todaylog: markRaw(WidgetTodayLog),
   hlb: markRaw(WidgetHlb),
 }
 
