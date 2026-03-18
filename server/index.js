@@ -4825,12 +4825,15 @@ app.get('/api/ingredients/db', async (req, res) => {
        FROM ingredient_master
        ${whereClause}
        ORDER BY (
+         CASE WHEN function_inci IS NOT NULL AND function_inci != '' THEN 2 ELSE 0 END +
          CASE WHEN ph_min IS NOT NULL THEN 1 ELSE 0 END +
-         CASE WHEN function_inci IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN ph_max IS NOT NULL THEN 1 ELSE 0 END +
          CASE WHEN usage_level_min IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN usage_level_max IS NOT NULL THEN 1 ELSE 0 END +
          CASE WHEN ewg_score IS NOT NULL AND ewg_score > 0 THEN 1 ELSE 0 END +
-         CASE WHEN korean_name IS NOT NULL THEN 1 ELSE 0 END +
-         CASE WHEN max_concentration_kr IS NOT NULL THEN 1 ELSE 0 END
+         CASE WHEN max_concentration_kr IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN max_concentration_eu IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN korean_name IS NOT NULL THEN 1 ELSE 0 END
        ) DESC, inci_name ASC
        LIMIT $${idx} OFFSET $${idx + 1}`,
       params
