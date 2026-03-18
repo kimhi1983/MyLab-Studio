@@ -5235,6 +5235,31 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       compoundList = cpRows.rows
     } catch (_) {}
 
+    // ── 색소 필요 제형이면 colorant 별도 조회 ──
+    const colorantKeys = ['립스틱', '립글로스', '립틴트', '파운데이션', 'BB크림', 'CC크림', '쿠션', '블러셔', '하이라이터', '아이섀도우', '마스카라', '아이라이너', '아이브로우', '컨실러']
+    const needsColorant = colorantKeys.includes(baseKey) || (formulaRules?.key_categories || []).includes('colorant')
+    let colorantRows = []
+    if (needsColorant) {
+      try {
+        const colorantQuery = await pool.query(
+          `SELECT inci_name, korean_name, function_inci
+           FROM ingredient_master
+           WHERE ingredient_type = 'colorant'
+             AND inci_name ILIKE ANY(ARRAY[
+               '%Iron Oxide%','%CI 77491%','%CI 77492%','%CI 77499%',
+               '%CI 77891%','%Titanium Dioxide%',
+               '%CI 15850%','%CI 45410%','%CI 45380%',
+               '%Mica%','%CI 77019%',
+               '%Carmine%','%CI 75470%',
+               '%CI 77266%','%Carbon Black%'
+             ])
+           ORDER BY inci_name
+           LIMIT 20`
+        )
+        colorantRows = colorantQuery.rows
+      } catch (_) {}
+    }
+
     // ── 13. Gemini AI 프롬프트 빌드 + 호출 ──
     let aiResult = null
     const requirementsRuleLines = []
@@ -5254,9 +5279,16 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       `  ${i.name}(${i.inci_name}) ${i.percentage}% [${i.function}] Phase ${i.phase}`
     ).join('\n')
 
-    const dbIngredientsStr = dbIngredients.slice(0, 20).map(i =>
+    // colorant를 먼저 배치하고 나머지 원료는 colorant가 아닌 것으로 채움
+    const nonColorantIngredients = dbIngredients.filter(i => i.ingredient_type !== 'colorant').slice(0, 20)
+    const dbIngredientsStr = nonColorantIngredients.map(i =>
       `  ${i.korean_name || ''}(${i.inci_name}) [${i.ingredient_type}]`
     ).join('\n') || '  (DB원료 없음)'
+
+    const colorantStr = needsColorant && colorantRows.length > 0
+      ? colorantRows.map(r => `  ${r.inci_name} (${r.korean_name || ''}) — ${r.function_inci || '색소'}`)
+          .join('\n')
+      : ''
 
     const compoundStr = compoundList.map(c =>
       `  ${c.trade_name} [${c.function || ''}]`
@@ -5316,7 +5348,18 @@ ${dbIngredientsStr}
 
 [복합원료 - compound_master]
 ${compoundStr}
+${colorantStr ? `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  [필수 색소 원료 목록 — 반드시 1종 이상 포함]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${colorantStr}
 
+색상 컨셉에 맞게 위 색소를 선택하여 처방에 포함하라:
+  레드/핑크: CI 15850 (Red 7) 중심
+  누드/베이지: Iron Oxides (CI 77491/77492/77499) 조합
+  펄/광택: Mica (CI 77019) 증가
+  기본 립스틱: Iron Oxides + Titanium Dioxide 조합
+` : ''}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 위 규칙을 모두 만족하는 최적 처방을 JSON으로만 반환하라.
 추가 설명 없이 JSON만 출력하라.
