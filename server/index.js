@@ -4885,6 +4885,22 @@ app.get('/api/regulation/monitor', async (req, res) => {
 // ─── 성분DB 페이지 개선 API ────────────────────────────────────────────────
 // GET /api/ingredients/db?page=1&limit=50&type=&search=
 app.get('/api/ingredients/db', async (req, res) => {
+  // 프론트엔드 타입 값 → DB ingredient_type 매핑
+  const FRONTEND_TYPE_MAP = {
+    emollient_ester: 'EMOLLIENT',
+    humectant_active: 'HUMECTANT',
+    polymer_film_former: 'FILM_FORMER',
+    chelator_ph: 'PH_ADJUSTER',
+    biomimetic_active: 'ACTIVE',
+    peptide: 'ACTIVE',
+    plant_oil: 'EMOLLIENT',
+    mineral_inorganic: 'OTHER',
+    amino_acid: 'ACTIVE',
+    hydrolyzed_protein: 'ACTIVE',
+    vitamin: 'ACTIVE',
+    extract: 'ACTIVE',
+    silicone: 'EMOLLIENT',
+  }
   try {
     const { page = 1, limit = 50, type, search } = req.query
     const lim = Math.min(parseInt(limit) || 50, 200)
@@ -4903,8 +4919,10 @@ app.get('/api/ingredients/db', async (req, res) => {
       idx++
     }
     if (type && type !== 'ALL') {
+      // 프론트엔드 소문자 값을 DB 대문자 값으로 변환
+      const dbType = FRONTEND_TYPE_MAP[type] || type.toUpperCase()
       where.push(`ingredient_type = $${idx}`)
-      params.push(type)
+      params.push(dbType)
       idx++
     }
 
@@ -4925,15 +4943,15 @@ app.get('/api/ingredients/db', async (req, res) => {
       params
     )
 
-    // regulation_status 보강 (KR/EU)
+    // regulation_status + max_concentration 보강 (KR/EU)
     const inciList = rows.map(r => r.inci_name).filter(Boolean)
     let regStatusMap = {}
     if (inciList.length) {
       const { rows: regRows } = await pool.query(
-        `SELECT lower(inci_name) AS key, source, restriction
+        `SELECT lower(inci_name) AS key, source, restriction, max_concentration
          FROM regulation_cache
          WHERE lower(inci_name) = ANY($1)
-           AND source IN ('MFDS_SEED','COSING_EU','coching_legacy')`,
+           AND source IN ('MFDS_SEED','COSING_EU','coching_legacy','GEMINI_KR','GEMINI_EU')`,
         [inciList.map(n => n.toLowerCase())]
       )
       for (const r of regRows) {
@@ -4953,10 +4971,16 @@ app.get('/api/ingredients/db', async (req, res) => {
             ? 'restricted'
             : 'allowed'
         }
-        if (r.source === 'GEMINI_KR' || r.source === 'MFDS_SEED') {
+        const isKr = /MFDS|GEMINI_KR/.test(r.source)
+        const isEu = /COSING|coching_legacy|GEMINI_EU/.test(r.source)
+        if (isKr) {
           regStatusMap[r.key].kr = status
-        } else {
+          regStatusMap[r.key].kr_restriction = restr || null
+          regStatusMap[r.key].max_concentration_kr = r.max_concentration || null
+        } else if (isEu) {
           regStatusMap[r.key].eu = status
+          regStatusMap[r.key].eu_restriction = restr || null
+          regStatusMap[r.key].max_concentration_eu = r.max_concentration || null
         }
       }
     }
@@ -4967,6 +4991,10 @@ app.get('/api/ingredients/db', async (req, res) => {
         ...r,
         regulation_status_kr: reg.kr || null,
         regulation_status_eu: reg.eu || null,
+        kr_regulation: reg.kr_restriction || null,
+        eu_regulation: reg.eu_restriction || null,
+        max_concentration_kr: reg.max_concentration_kr || null,
+        max_concentration_eu: reg.max_concentration_eu || null,
       }
     })
 
