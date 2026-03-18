@@ -1,10 +1,8 @@
 <template>
   <div class="regulation-widget">
-    <div v-if="errorMessage" class="error-banner">
-      {{ errorMessage }}
-    </div>
+    <div v-if="errorMessage" class="error-banner">{{ errorMessage }}</div>
 
-    <!-- ── 헤더: 탭 + 검색 + 통계 뱃지 ── -->
+    <!-- ── 헤더: 탭 + 검색 + 통계 ── -->
     <div class="reg-header">
       <div class="region-tabs">
         <button
@@ -18,11 +16,7 @@
         </button>
       </div>
       <div class="reg-controls">
-        <input
-          v-model="searchQ"
-          class="search-input"
-          placeholder="성분명 검색..."
-        />
+        <input v-model="searchQ" class="search-input" placeholder="성분명 검색..." />
         <div class="stat-badges">
           <span class="stat-badge badge-ban">금지 {{ stats.ban }}</span>
           <span class="stat-badge badge-limit">제한 {{ stats.limit }}</span>
@@ -38,56 +32,58 @@
           <tr>
             <th class="col-region">지역</th>
             <th class="col-name">성분명</th>
-            <th class="col-restrict">제한 내용</th>
-            <th class="col-conc">최대 농도</th>
+            <th class="col-category">카테고리</th>
+            <th class="col-ewg">EWG</th>
+            <th class="col-func">기능</th>
+            <th class="col-restrict">제한내용</th>
+            <th class="col-conc">최대농도</th>
             <th class="col-status">상태</th>
             <th class="col-date">갱신</th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="row in displayData" :key="row.id">
-            <tr
-              :class="['reg-row', `row-${row.status}`, { 'row-expanded': expandedId === row.id }]"
-              @click="toggleExpand(row.id)"
-            >
-              <td>
-                <span :class="['region-chip', getRegionClass(row.region)]">{{ row.region }}</span>
-              </td>
-              <td class="td-name">
-                {{ row.ingredient }}
-                <span v-if="row.ingredient_type" class="type-badge">{{ typeLabel(row.ingredient_type) }}</span>
-                <span v-if="row.ewg_score" :class="ewgBadgeClass(row.ewg_score)" class="ewg-badge">
-                  EWG {{ row.ewg_score }}
-                </span>
-              </td>
-              <td class="td-restrict">
-                <span v-if="row.restrictionShort" class="restrict-text">{{ row.restrictionShort }}</span>
-                <span v-else class="restrict-empty">—</span>
-              </td>
-              <td class="td-conc mono">{{ row.limit || '—' }}</td>
-              <td>
-                <span :class="['status-chip', getStatusClass(row.status)]">
-                  {{ getStatusLabel(row.status) }}
-                </span>
-              </td>
-              <td class="td-date mono">{{ row.updatedAt }}</td>
-            </tr>
-            <!-- 제한 내용 전문 펼침 -->
-            <tr v-if="expandedId === row.id" class="expand-row">
-              <td colspan="6" class="expand-cell">
-                <div class="expand-content">
-                  <span v-if="row.restriction" class="expand-label">규제 내용</span>
-                  <span v-if="row.restriction">{{ row.restriction }}</span>
-                  <span v-if="row.primary_function" class="expand-fn">
-                    <span class="expand-label" style="margin-left:12px">기능</span>{{ row.primary_function }}
-                  </span>
-                  <span v-if="row.ewg_score != null" :class="['ewg-badge', ewgClass(row.ewg_score)]">
-                    EWG {{ row.ewg_score }}
-                  </span>
-                </div>
-              </td>
-            </tr>
-          </template>
+          <tr
+            v-for="row in displayData"
+            :key="row.id"
+            :class="['reg-row', `row-${row.status}`]"
+            @click="openPanel(row)"
+          >
+            <td>
+              <span :class="['region-chip', getRegionClass(row.region)]">{{ row.region }}</span>
+            </td>
+            <td class="td-name">{{ row.ingredient }}</td>
+            <td class="td-category">
+              <span v-if="row.ingredient_type" :class="['cat-badge', getCatClass(row.ingredient_type)]">
+                {{ typeLabel(row.ingredient_type) }}
+              </span>
+              <span v-else class="dim">—</span>
+            </td>
+            <td class="td-ewg">
+              <span v-if="row.ewg_score != null" :class="['ewg-num', ewgNumClass(row.ewg_score)]">
+                {{ row.ewg_score }}
+              </span>
+              <span v-else class="dim">—</span>
+            </td>
+            <td class="td-func">
+              <span v-if="row.primary_function" class="func-text">{{ row.primary_function }}</span>
+              <span v-else class="dim">—</span>
+            </td>
+            <td class="td-restrict">
+              <span
+                v-if="row.restrictionShort"
+                class="restrict-text"
+                :data-tooltip="row.restriction.length > 40 ? row.restriction : null"
+              >{{ row.restrictionShort }}</span>
+              <span v-else class="dim">—</span>
+            </td>
+            <td class="td-conc mono">{{ row.limit || '—' }}</td>
+            <td>
+              <span :class="['status-chip', getStatusClass(row.status)]">
+                {{ getStatusLabel(row.status) }}
+              </span>
+            </td>
+            <td class="td-date mono">{{ row.updatedAt }}</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -97,6 +93,61 @@
     </div>
     <div v-if="loading" class="empty">불러오는 중...</div>
 
+    <!-- ── 슬라이드 패널 ── -->
+    <transition name="panel-slide">
+      <div v-if="panelRow" class="panel-overlay" @click.self="closePanel">
+        <div class="detail-panel">
+          <button class="panel-close" @click="closePanel">✕</button>
+
+          <!-- 헤더 -->
+          <div class="panel-head">
+            <div class="panel-title">{{ panelRow.ingredient }}</div>
+            <div class="panel-meta">
+              <span :class="['region-chip', getRegionClass(panelRow.region)]">{{ panelRow.region }}</span>
+              <span :class="['status-chip', getStatusClass(panelRow.status)]">{{ getStatusLabel(panelRow.status) }}</span>
+              <span v-if="panelRow.ingredient_type" :class="['cat-badge', getCatClass(panelRow.ingredient_type)]">
+                {{ typeLabel(panelRow.ingredient_type) }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 섹션: EWG -->
+          <div v-if="panelRow.ewg_score != null" class="panel-section">
+            <div class="panel-section-label">EWG 안전성 점수</div>
+            <div class="panel-ewg-bar">
+              <div class="ewg-bar-bg">
+                <div class="ewg-bar-fill" :class="ewgNumClass(panelRow.ewg_score)" :style="{ width: (panelRow.ewg_score / 10 * 100) + '%' }"></div>
+              </div>
+              <span :class="['ewg-num', ewgNumClass(panelRow.ewg_score)]" style="margin-left:8px">{{ panelRow.ewg_score }} / 10</span>
+            </div>
+          </div>
+
+          <!-- 섹션: 기능 -->
+          <div v-if="panelRow.primary_function" class="panel-section">
+            <div class="panel-section-label">기능</div>
+            <div class="panel-body-text">{{ panelRow.primary_function }}</div>
+          </div>
+
+          <!-- 섹션: 규제 내용 전문 -->
+          <div v-if="panelRow.restriction" class="panel-section">
+            <div class="panel-section-label">규제 내용</div>
+            <div class="panel-body-text">{{ panelRow.restriction }}</div>
+          </div>
+
+          <!-- 섹션: 최대 농도 -->
+          <div v-if="panelRow.limit" class="panel-section">
+            <div class="panel-section-label">최대 허용 농도</div>
+            <div class="panel-body-text mono">{{ panelRow.limit }}</div>
+          </div>
+
+          <!-- 섹션: 갱신일 -->
+          <div class="panel-section">
+            <div class="panel-section-label">마지막 갱신</div>
+            <div class="panel-body-text mono">{{ panelRow.updatedAt }}</div>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -108,15 +159,13 @@ import { mapRegulationSource, isVisibleSource } from '../../utils/regulationSour
 const store = useIngredientStore()
 const selectedRegion = ref('한국')
 const searchQ = ref('')
-const expandedId = ref(null)
 const loading = ref(false)
 const allData = ref([])
-const errorMessage = computed(() => store.error.value ? `규제 데이터 연결 오류: ${store.error.value}` : '')
+const panelRow = ref(null)
+const errorMessage = computed(() => store.error?.value ? `규제 데이터 연결 오류: ${store.error.value}` : '')
 
-// ── 지역 순서 고정 (항상 표시, 데이터 없어도) ──
 const REGION_ORDER = ['한국', '유럽', '미국', '일본', '중국', '안전성']
 
-// ── 지역별 카운트 ──
 const regionCounts = computed(() => {
   const counts = {}
   for (const row of allData.value) {
@@ -125,15 +174,10 @@ const regionCounts = computed(() => {
   return counts
 })
 
-// ── 탭 목록: 항상 고정 순서로 전체 표시 ──
-const regionTabs = computed(() => {
-  return REGION_ORDER.map(label => ({
-    label,
-    count: regionCounts.value[label] || 0,
-  }))
-})
+const regionTabs = computed(() =>
+  REGION_ORDER.map(label => ({ label, count: regionCounts.value[label] || 0 }))
+)
 
-// ── 통계 뱃지 (선택된 지역 기준) ──
 const stats = computed(() => {
   const base = allData.value.filter(r => r.region === selectedRegion.value)
   return {
@@ -143,7 +187,6 @@ const stats = computed(() => {
   }
 })
 
-// ── 표시 데이터 (지역 + 검색 필터, 최대 50행) ──
 const displayData = computed(() => {
   let data = allData.value.filter(r => r.region === selectedRegion.value)
   if (searchQ.value.trim()) {
@@ -155,16 +198,13 @@ const displayData = computed(() => {
 
 onMounted(async () => {
   loading.value = true
-  try {
-    await store.init()
-  } catch { /* store init 실패해도 직접 조회 시도 */ }
+  try { await store.init() } catch { /* ignore */ }
   await loadData()
   loading.value = false
 })
 
 async function loadData() {
   try {
-    // 충분히 가져와서 클라이언트에서 지역·검색 필터링
     const data = await store.searchRegulations({ limit: 300 })
     if (!data?.items) return
 
@@ -173,23 +213,20 @@ async function loadData() {
         if (!(r.displayable ?? true)) return false
         if (!(r.ingredient || r.inci_name)) return false
         if (!isVisibleSource(r.source)) return false
-        // pharma_prohibited, extract 제외
         if (r.ingredient_type === 'pharma_prohibited' || r.ingredient_type === 'extract') return false
         return true
       })
       .map((r, i) => {
         const region = mapRegulationSource(r.source)
         const restriction = r.restriction || ''
-        const ewgTag = r.ewg_score != null ? `EWG ${r.ewg_score}` : ''
-        const concernTag = r.concerns?.length ? r.concerns.slice(0, 1).join('') : ''
-        const displayRestriction = restriction || [ewgTag, concernTag].filter(Boolean).join(' · ')
+        const restrictionShort = restriction.length > 40 ? restriction.slice(0, 40) + '…' : restriction
         return {
           id: i,
           region,
           ingredient: r.ingredient || r.inci_name,
           ingredient_type: r.ingredient_type || '',
-          restriction: displayRestriction,
-          restrictionShort: displayRestriction.length > 40 ? displayRestriction.slice(0, 40) + '…' : displayRestriction,
+          restriction,
+          restrictionShort,
           status: getRegulationStatus(r),
           limit: r.max_concentration || '',
           ewg_score: r.ewg_score ?? null,
@@ -199,47 +236,36 @@ async function loadData() {
       })
       .filter(r => r.region !== '기타')
       .sort((a, b) => {
-        // ingredient_type 우선 정렬, 그 다음 성분명 알파벳 순
         if (a.ingredient_type && b.ingredient_type && a.ingredient_type !== b.ingredient_type) {
           return a.ingredient_type.localeCompare(b.ingredient_type)
         }
         return a.ingredient.localeCompare(b.ingredient)
       })
   } catch (err) {
-    console.error('[WidgetRegulation] 데이터 로드 실패:', err.message)
+    console.error('[WidgetRegulation] 로드 실패:', err.message)
   }
 }
 
-function toggleExpand(id) {
-  expandedId.value = expandedId.value === id ? null : id
-}
+function openPanel(row) { panelRow.value = row }
+function closePanel() { panelRow.value = null }
 
 function getRegulationStatus(r) {
-  // 1순위: 워크플로우팀 배치 산출 display_status (가장 정확)
   if (r.display_status === 'ban') return 'ban'
   if (r.display_status === 'limit') return 'limit'
   if (r.display_status === 'monitor') return 'monitor'
-
-  // 2순위: reg_status 구조화 값 — allowed이면 텍스트 파싱 없이 바로 monitor
   if (r.reg_status === 'allowed') return 'monitor'
   if (r.reg_status === 'banned') return 'ban'
   if (r.reg_status === 'restricted') return 'limit'
-
-  // 3순위: 텍스트 기반 — 부정 표현("없음", "not in") 포함 시 텍스트 금지 판정 제외
   const restriction = (r.restriction || '').toLowerCase()
   const maxConc = (r.max_concentration || '').toLowerCase()
   const isNegated = /없음|not in|목록에 없|not prohibited|not restricted/.test(restriction)
   if (!isNegated && (restriction.includes('금지') || restriction.includes('ban') || restriction.includes('prohibit'))) return 'ban'
   if (maxConc && maxConc !== '-') return 'limit'
-
-  // EWG 점수는 안전성 등급이지 규제 금지 여부가 아님 — 참고용으로만 사용
-  // (display_status 없을 때만 폴백)
   return 'monitor'
 }
 
 function getRegionClass(region) {
-  const map = { '한국': 'region-kr', '유럽': 'region-eu', '미국': 'region-us', '일본': 'region-jp', '중국': 'region-cn', '아세안': 'region-asean', '안전성': 'region-safety' }
-  return map[region] || ''
+  return { '한국': 'region-kr', '유럽': 'region-eu', '미국': 'region-us', '일본': 'region-jp', '중국': 'region-cn', '아세안': 'region-asean', '안전성': 'region-safety' }[region] || ''
 }
 
 function getStatusClass(status) {
@@ -250,10 +276,30 @@ function getStatusLabel(status) {
   return { ban: '금지', limit: '제한', monitor: '모니터링' }[status] || status
 }
 
+function ewgNumClass(score) {
+  if (score <= 2) return 'ewg-green'
+  if (score <= 6) return 'ewg-yellow'
+  return 'ewg-red'
+}
+
+const CAT_COLORS = {
+  preservative: 'cat-preservative', uv_filter: 'cat-uv', surfactant: 'cat-surfactant',
+  silicone: 'cat-silicone', peptide: 'cat-peptide', colorant: 'cat-colorant',
+  fragrance: 'cat-fragrance', emulsifier: 'cat-emulsifier', thickener: 'cat-thickener',
+  humectant_active: 'cat-humectant', emollient_ester: 'cat-emollient',
+  antioxidant: 'cat-antioxidant', polymer_film_former: 'cat-polymer',
+  plant_oil: 'cat-plant', mineral_inorganic: 'cat-mineral', solvent: 'cat-solvent',
+  chelator_ph: 'cat-chelator', vitamin: 'cat-vitamin',
+}
+
+function getCatClass(type) {
+  return CAT_COLORS[type] || 'cat-default'
+}
+
 const INGREDIENT_TYPE_LABELS = {
   preservative: '방부제', uv_filter: '자외선차단', surfactant: '계면활성제',
   silicone: '실리콘', peptide: '펩타이드', colorant: '색소', fragrance: '향료',
-  emulsifier: '유화제', thickener: '점증제', humectant_active: '보습/활성',
+  emulsifier: '유화제', thickener: '점증제', humectant_active: '보습활성',
   emollient_ester: '에몰리언트', antioxidant: '산화방지제', polymer_film_former: '폴리머',
   plant_oil: '식물유', mineral_inorganic: '무기물', solvent: '용매',
   chelator_ph: 'pH조절', biomimetic_active: '바이오미메틱', amino_acid: '아미노산',
@@ -261,20 +307,7 @@ const INGREDIENT_TYPE_LABELS = {
 }
 
 function typeLabel(type) {
-  if (!type) return ''
   return INGREDIENT_TYPE_LABELS[type] || type
-}
-
-function ewgClass(score) {
-  if (score >= 7) return 'ewg-high'
-  if (score >= 4) return 'ewg-mid'
-  return 'ewg-low'
-}
-
-function ewgBadgeClass(score) {
-  if (score <= 2) return 'ewg-low'
-  if (score <= 6) return 'ewg-moderate'
-  return 'ewg-high'
 }
 </script>
 
@@ -285,6 +318,7 @@ function ewgBadgeClass(score) {
   height: 100%;
   overflow: hidden;
   container-type: inline-size;
+  position: relative;
 }
 
 .error-banner {
@@ -295,7 +329,6 @@ function ewgBadgeClass(score) {
   background: var(--red-bg);
   color: var(--red);
   font-size: 11px;
-  line-height: 1.5;
 }
 
 /* ── 헤더 ── */
@@ -311,11 +344,7 @@ function ewgBadgeClass(score) {
   flex-wrap: wrap;
 }
 
-.region-tabs {
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
-}
+.region-tabs { display: flex; gap: 3px; flex-wrap: wrap; }
 
 .region-tab {
   display: inline-flex;
@@ -334,20 +363,9 @@ function ewgBadgeClass(score) {
 }
 .region-tab:hover { border-color: var(--accent); color: var(--accent); }
 .region-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tab-count { font-size: 9px; font-weight: 700; opacity: 0.75; }
 
-.tab-count {
-  font-size: 9px;
-  font-weight: 700;
-  opacity: 0.75;
-}
-
-/* ── 검색 + 통계 ── */
-.reg-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.reg-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .search-input {
   padding: 4px 10px;
@@ -361,57 +379,38 @@ function ewgBadgeClass(score) {
 }
 .search-input:focus { border-color: var(--accent); }
 
-.stat-badges {
-  display: flex;
-  gap: 4px;
-}
-
-.stat-badge {
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
-}
+.stat-badges { display: flex; gap: 4px; }
+.stat-badge { padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .badge-ban    { background: rgba(196,78,78,0.12);   color: var(--red); }
 .badge-limit  { background: rgba(184,147,90,0.12);  color: var(--amber); }
 .badge-monitor{ background: rgba(124,92,191,0.12);  color: var(--purple); }
 
 /* ── 테이블 ── */
-.reg-table-wrap {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
+.reg-table-wrap { flex: 1; overflow-y: auto; overflow-x: auto; }
 
-.reg-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
+.reg-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 
 .reg-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  position: sticky; top: 0; z-index: 1;
   padding: 5px 8px;
   text-align: left;
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 10px; font-weight: 700;
   color: var(--text-dim);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  text-transform: uppercase; letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
-.col-region   { width: 52px; }
-.col-name     { width: 22%; }
-.col-restrict { /* flex */ }
-.col-conc     { width: 88px; }
-.col-status   { width: 72px; }
-.col-date     { width: 54px; }
+.col-region   { width: 50px; }
+.col-name     { width: 180px; min-width: 120px; }
+.col-category { width: 90px; }
+.col-ewg      { width: 50px; text-align: center; }
+.col-func     { width: 120px; }
+.col-restrict { width: 200px; }
+.col-conc     { width: 80px; }
+.col-status   { width: 70px; }
+.col-date     { width: 50px; }
 
 .reg-row {
   border-bottom: 1px solid var(--border);
@@ -419,27 +418,17 @@ function ewgBadgeClass(score) {
   transition: background 0.1s;
 }
 .reg-row:hover { background: var(--bg); }
-.reg-row.row-expanded { background: var(--bg); }
+
+/* 빨간 보더: ban 행의 성분명 컬럼 왼쪽에만 */
 .reg-row.row-ban td:nth-child(2) { border-left: 2px solid var(--red); }
 
-.reg-row td {
-  padding: 6px 8px;
-  vertical-align: middle;
-}
+.reg-row td { padding: 6px 8px; vertical-align: middle; }
 
 /* 지역 칩 */
 .region-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  height: 20px;
-  padding: 0 4px;
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 20px; padding: 0 4px;
+  border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap;
 }
 .region-kr     { background: rgba(58,111,168,0.15);  color: var(--blue); }
 .region-eu     { background: rgba(124,92,191,0.15);  color: var(--purple); }
@@ -451,136 +440,219 @@ function ewgBadgeClass(score) {
 
 /* 성분명 */
 .td-name {
-  font-weight: 600;
-  color: var(--text);
-  max-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-weight: 600; color: var(--text);
+  max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 제한 내용 */
+/* 카테고리 배지 */
+.td-category { white-space: nowrap; }
+.cat-badge {
+  display: inline-flex; align-items: center;
+  padding: 1px 6px; border-radius: 3px;
+  font-size: 9px; font-weight: 600;
+  white-space: nowrap; letter-spacing: 0.2px;
+}
+.cat-preservative { background: rgba(196,78,78,0.12);   color: #c44e4e; }
+.cat-uv           { background: rgba(58,111,168,0.15);  color: var(--blue); }
+.cat-surfactant   { background: rgba(58,144,104,0.15);  color: var(--green); }
+.cat-silicone     { background: rgba(124,92,191,0.12);  color: var(--purple); }
+.cat-peptide      { background: rgba(184,147,90,0.12);  color: var(--amber); }
+.cat-colorant     { background: rgba(196,78,78,0.10);   color: #c44e4e; }
+.cat-fragrance    { background: rgba(124,92,191,0.10);  color: var(--purple); }
+.cat-emulsifier   { background: rgba(58,144,104,0.12);  color: var(--green); }
+.cat-thickener    { background: rgba(58,111,168,0.12);  color: var(--blue); }
+.cat-humectant    { background: rgba(58,144,104,0.10);  color: var(--green); }
+.cat-emollient    { background: rgba(184,147,90,0.10);  color: var(--amber); }
+.cat-antioxidant  { background: rgba(58,144,104,0.14);  color: var(--green); }
+.cat-polymer      { background: rgba(124,92,191,0.10);  color: var(--purple); }
+.cat-plant        { background: rgba(58,144,104,0.12);  color: var(--green); }
+.cat-mineral      { background: rgba(58,111,168,0.10);  color: var(--blue); }
+.cat-solvent      { background: rgba(184,147,90,0.08);  color: var(--amber); }
+.cat-chelator     { background: rgba(58,111,168,0.08);  color: var(--blue); }
+.cat-vitamin      { background: rgba(58,144,104,0.16);  color: var(--green); }
+.cat-default      { background: var(--border);          color: var(--text-dim); }
+
+/* EWG */
+.td-ewg { text-align: center; }
+.ewg-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 20px;
+  border-radius: 3px; font-size: 10px; font-weight: 700;
+}
+.ewg-green  { background: rgba(58,144,104,0.15); color: var(--green); }
+.ewg-yellow { background: rgba(184,147,90,0.15); color: var(--amber); }
+.ewg-red    { background: rgba(196,78,78,0.15);  color: var(--red); }
+
+/* 기능 */
+.td-func {
+  color: var(--text-sub); font-size: 10.5px;
+  max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.func-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 제한내용 */
 .td-restrict {
-  color: var(--text-sub);
-  max-width: 0;
-  overflow: hidden;
+  color: var(--text-sub); max-width: 200px; overflow: hidden; position: relative;
 }
 .restrict-text {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 10.5px;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px;
+  cursor: help;
 }
-.restrict-empty { color: var(--text-dim); }
-
-/* 농도 */
-.td-conc.mono {
-  font-family: var(--font-mono);
+/* CSS 툴팁 */
+.restrict-text[data-tooltip] { position: relative; }
+.restrict-text[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
   font-size: 10.5px;
   color: var(--text);
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 300px;
+  min-width: 160px;
+  line-height: 1.5;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  pointer-events: none;
 }
+
+/* 농도 */
+.td-conc.mono { font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; }
 
 /* 상태 칩 */
 .status-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 7px;
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 2px 7px; border-radius: 3px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap;
 }
 .chip-red    { background: rgba(196,78,78,0.15);   color: var(--red); }
 .chip-amber  { background: rgba(184,147,90,0.15);  color: var(--amber); }
 .chip-purple { background: rgba(124,92,191,0.15);  color: var(--purple); }
 
 /* 갱신일 */
-.td-date.mono {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-dim);
-  white-space: nowrap;
+.td-date.mono { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+/* 공통 dim */
+.dim { color: var(--text-dim); }
+
+/* ── 슬라이드 패널 ── */
+.panel-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.25);
+  display: flex;
+  justify-content: flex-end;
 }
 
-/* 펼침 행 */
-.expand-row {
-  background: var(--bg);
+.detail-panel {
+  width: 320px;
+  max-width: 90%;
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
 }
-.expand-cell {
-  padding: 6px 16px 10px;
-  border-bottom: 1px solid var(--border);
+
+.panel-close {
+  position: absolute;
+  top: 12px; right: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.1s;
 }
-.expand-content {
-  font-size: 11px;
+.panel-close:hover { background: var(--border); color: var(--text); }
+
+.panel-head { margin-bottom: 16px; padding-right: 24px; }
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.panel-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.panel-section {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+
+.panel-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.panel-body-text {
+  font-size: 11.5px;
   color: var(--text-sub);
   line-height: 1.6;
+  word-break: break-word;
 }
-.expand-label {
-  display: inline-block;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-right: 8px;
-  vertical-align: middle;
+.panel-body-text.mono { font-family: var(--font-mono); }
+
+/* EWG 바 */
+.panel-ewg-bar { display: flex; align-items: center; }
+.ewg-bar-bg {
+  flex: 1;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
 }
-
-/* EWG 점수 뱃지 */
-.ewg-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 700;
-  margin-left: 10px;
-  vertical-align: middle;
-  letter-spacing: 0.3px;
+.ewg-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
 }
-.ewg-low  { background: rgba(58,144,104,0.15); color: var(--green); }
-.ewg-mid  { background: rgba(184,147,90,0.15);  color: var(--amber); }
-.ewg-high { background: rgba(196,78,78,0.15);   color: var(--red); }
+.ewg-bar-fill.ewg-green  { background: var(--green); }
+.ewg-bar-fill.ewg-yellow { background: var(--amber); }
+.ewg-bar-fill.ewg-red    { background: var(--red); }
 
-/* 메인 행 EWG 배지 (ewgBadgeClass 전용) */
-.ewg-moderate { background: #fff3cd; color: #856404; }
-
-/* 기능 표시 */
-.expand-fn { color: var(--text-sub); }
-
-/* 원료 타입 배지 */
-.type-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 600;
-  background: var(--accent-light);
-  color: var(--accent);
-  border: 1px solid var(--accent-dim);
-  margin-left: 6px;
-  vertical-align: middle;
-  letter-spacing: 0.2px;
-}
+/* 슬라이드 트랜지션 */
+.panel-slide-enter-active,
+.panel-slide-leave-active { transition: opacity 0.2s ease; }
+.panel-slide-enter-active .detail-panel,
+.panel-slide-leave-active .detail-panel { transition: transform 0.25s ease; }
+.panel-slide-enter-from { opacity: 0; }
+.panel-slide-enter-from .detail-panel { transform: translateX(100%); }
+.panel-slide-leave-to { opacity: 0; }
+.panel-slide-leave-to .detail-panel { transform: translateX(100%); }
 
 /* 빈 상태 */
-.empty {
-  text-align: center;
-  color: var(--text-dim);
-  font-size: 11px;
-  padding: 20px;
-}
+.empty { text-align: center; color: var(--text-dim); font-size: 11px; padding: 20px; }
 
-/* 좁은 위젯 대응 */
-@container (max-width: 600px) {
+/* 좁은 위젯 */
+@container (max-width: 700px) {
+  .col-func, .td-func { display: none; }
   .col-restrict, .td-restrict { display: none; }
   .col-date, .td-date { display: none; }
   .search-input { width: 110px; }
   .stat-badges { display: none; }
+}
+@container (max-width: 500px) {
+  .col-category, .td-category { display: none; }
+  .col-ewg, .td-ewg { display: none; }
 }
 </style>
