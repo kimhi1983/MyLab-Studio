@@ -1,7 +1,7 @@
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -13,6 +13,74 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import pool from './db.js'
 import { FORMULA_RULES, getFormulaRules } from './config/formulaRules.js'
+
+// ─── Expert Guide 로드 ───────────────────────────────────────────────────────
+const EXPERT_GUIDE_MAP = new Map()
+
+function _removeSubsection(text, headerPrefix) {
+  const lines = text.split('\n')
+  const result = []
+  let skipping = false
+  for (const line of lines) {
+    if (line.startsWith(headerPrefix)) { skipping = true; continue }
+    if (skipping && line.startsWith('### ')) skipping = false
+    if (!skipping) result.push(line)
+  }
+  return result.join('\n').trim()
+}
+
+;(function loadExpertGuide() {
+  const guidePath = join(__dirname, 'guides', 'COCHING_Formula_Expert_Guide_v1.0.md')
+  if (!existsSync(guidePath)) {
+    console.warn('[EXPERT GUIDE] 가이드 파일 없음:', guidePath)
+    return
+  }
+  const text = readFileSync(guidePath, 'utf8')
+
+  // --- 구분자로 섹션 분리
+  const parts = text.split('\n---').map(s => s.trim()).filter(s => s.startsWith('##'))
+
+  // section 번호 → base_key 매핑
+  const SECTION_KEY_MAP = [
+    { prefix: '## 1.', keys: ['선크림'] },
+    { prefix: '## 2.', keys: ['크림', '수분크림'] },
+    { prefix: '## 3.', keys: ['쿠션', 'BB크림', '파운데이션'] },
+    { prefix: '## 4.', keys: ['샴푸'] },
+    { prefix: '## 5.', keys: ['립스틱', '립틴트', '립글로스'] },
+    { prefix: '## 6.', keys: ['세럼', '에센스', '앰플'] },
+    { prefix: '## 7.', keys: ['토너', '스킨'] },
+    { prefix: '## 8.', keys: ['마스크팩', '시트마스크'] },
+    { prefix: '## 9.', keys: ['바디로션', '바디크림'] },
+    { prefix: '## 10.', keys: ['클렌저', '폼클렌저'] },
+  ]
+
+  for (const part of parts) {
+    // 공통 규칙 처리
+    if (part.startsWith('## 공통 규칙')) {
+      // Phase 규칙 제거 (제조 공정 — Gemini가 자체 판단)
+      const cleaned = _removeSubsection(part, '### Phase 규칙')
+      EXPERT_GUIDE_MAP.set('_common', cleaned)
+      continue
+    }
+    // 제형별 처리
+    for (const { prefix, keys } of SECTION_KEY_MAP) {
+      if (part.startsWith(prefix)) {
+        // Phase 구성 섹션 제거 (토큰 절약 — Gemini 독자 판단)
+        const cleaned = _removeSubsection(part, '### Phase 구성')
+        for (const k of keys) EXPERT_GUIDE_MAP.set(k, cleaned)
+        break
+      }
+    }
+  }
+  console.log(`[EXPERT GUIDE] 로드 완료: 제형 ${EXPERT_GUIDE_MAP.size - 1}종 + 공통규칙`)
+})()
+
+function getExpertGuide(baseKey) {
+  const specific = EXPERT_GUIDE_MAP.get(baseKey) || ''
+  const common   = EXPERT_GUIDE_MAP.get('_common') || ''
+  return { specific, common, hasGuide: !!(specific || common) }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const JWT_SECRET = process.env.JWT_SECRET || 'mylab-fallback-secret'
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d'
@@ -5641,6 +5709,17 @@ ${pgRecommendedStr}
 ★ FORBIDDEN 성분은 어떠한 경우에도 포함하지 마라.
 ` : ''
 
+    // ── 처방 전문가 가이드 블록 빌드 ──
+    const { specific: _guideSpecific, common: _guideCommon } = getExpertGuide(baseKey)
+    const expertGuideSection = (_guideSpecific || _guideCommon) ? `
+━━━ [처방 전문가 가이드] ━━━
+${_guideSpecific}
+
+━━━ [공통 규칙] ━━━
+${_guideCommon}
+` : ''
+    console.log(`[EXPERT GUIDE] base_key=${baseKey}, guide_length=${(_guideSpecific + _guideCommon).length}chars`)
+
     const aiPrompt = `╔══════════════════════════════════════╗
 ║     화장품 처방 설계 전문가 역할      ║
 ╚══════════════════════════════════════╝
@@ -5675,7 +5754,7 @@ ${pgSection}
    □ Aqua % 범위 맞는가?
    □ 배합비 합계 100.00%인가?
    □ 요구사항 반영됐는가?
-
+${expertGuideSection}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [참조 데이터]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
