@@ -5315,7 +5315,10 @@ app.post('/api/formula/generate-idea', async (req, res) => {
        WHERE ${conditions.join(' AND ')}
        LIMIT 200`,
       params
-    )
+    ).catch(err => {
+      console.warn('[generate-idea] ingredient_master 조회 실패 (빈 배열 반환):', err.message)
+      return { rows: [] }
+    })
 
     // 4. Purpose Gate: matchTemplateFromDb로 목적 감지 + 필수/권장/금지 성분 조회
     let pgRequired = [], pgRecommended = [], pgForbidden = [], pgDetected = []
