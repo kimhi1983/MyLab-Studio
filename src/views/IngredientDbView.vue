@@ -218,13 +218,13 @@
                   v-for="cc in countryList"
                   :key="cc.code"
                   class="country-reg-card"
-                  :class="{ 'country-reg-has-data': detailData.regulations[cc.code] && detailData.regulations[cc.code].length }"
+                  :class="{ 'country-reg-has-data': detailData.regulations?.[cc.code]?.length }"
                 >
                   <!-- 카드 헤더 -->
                   <div class="crc-header">
                     <span class="crc-flag">{{ cc.flag }}</span>
                     <span class="crc-name">{{ cc.label }}</span>
-                    <template v-if="detailData.regulations[cc.code] && detailData.regulations[cc.code].length">
+                    <template v-if="detailData.regulations?.[cc.code]?.length">
                       <span
                         class="reg-status-chip"
                         :class="regChipClass(detailData.regulations[cc.code][0].reg_status)"
@@ -237,7 +237,7 @@
                   </div>
 
                   <!-- 카드 바디 (데이터 있는 경우) -->
-                  <template v-if="detailData.regulations[cc.code] && detailData.regulations[cc.code].length">
+                  <template v-if="detailData.regulations?.[cc.code]?.length">
                     <div
                       v-for="(entry, ei) in detailData.regulations[cc.code]"
                       :key="ei"
@@ -259,6 +259,10 @@
                       <div v-if="entry.concerns && entry.concerns.length" class="crc-row crc-row-note">
                         <span class="crc-label">우려사항</span>
                         <span class="crc-val crc-note-text">{{ entry.concerns.join(', ') }}</span>
+                      </div>
+                      <div v-if="entry.other_restrictions" class="crc-row crc-row-note">
+                        <span class="crc-label">제한사항</span>
+                        <span class="crc-val crc-note-text">{{ entry.other_restrictions }}</span>
                       </div>
                       <div v-if="entry.note || entry.restriction_text" class="crc-row crc-row-note">
                         <span class="crc-label">비고</span>
@@ -311,20 +315,18 @@
                 <div class="detail-kr">{{ selectedItem.korean_name || '-' }}</div>
               </div>
               <div class="detail-section-card">
-                <div class="dsc-title">규제 상태</div>
-                <div class="reg-country-row">
-                  <span class="country-flag">🇰🇷</span><span class="country-name">KR</span>
-                  <span v-if="selectedItem.regulation_status_kr" class="reg-status-chip" :class="regChipClass(selectedItem.regulation_status_kr)">
-                    {{ regStatusIcon(selectedItem.regulation_status_kr) }} {{ regStatusLabel(selectedItem.regulation_status_kr) }}
-                  </span>
-                  <span v-else class="reg-no-data">📭 데이터 없음</span>
-                </div>
-                <div class="reg-country-row">
-                  <span class="country-flag">🇪🇺</span><span class="country-name">EU</span>
-                  <span v-if="selectedItem.regulation_status_eu" class="reg-status-chip" :class="regChipClass(selectedItem.regulation_status_eu)">
-                    {{ regStatusIcon(selectedItem.regulation_status_eu) }} {{ regStatusLabel(selectedItem.regulation_status_eu) }}
-                  </span>
-                  <span v-else class="reg-no-data">📭 데이터 없음</span>
+                <div class="dsc-title">국가별 규제 상세</div>
+                <div v-for="cc in countryList" :key="cc.code" class="country-reg-card">
+                  <div class="crc-header">
+                    <span class="crc-flag">{{ cc.flag }}</span>
+                    <span class="crc-name">{{ cc.label }}</span>
+                    <template v-if="fallbackRegStatus(cc.code)">
+                      <span class="reg-status-chip" :class="regChipClass(fallbackRegStatus(cc.code))">
+                        {{ regStatusIcon(fallbackRegStatus(cc.code)) }} {{ regStatusLabel(fallbackRegStatus(cc.code)) }}
+                      </span>
+                    </template>
+                    <span v-else class="crc-no-data">📭 데이터 없음</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -459,6 +461,14 @@ async function selectItem(item) {
 function closeDetail() {
   selectedItem.value = null
   detailData.value = null
+}
+
+// 폴백 뷰용: selectedItem에서 국가별 규제 상태 반환
+function fallbackRegStatus(code) {
+  if (!selectedItem.value) return null
+  if (code === 'KR') return selectedItem.value.regulation_status_kr || null
+  if (code === 'EU') return selectedItem.value.regulation_status_eu || null
+  return null
 }
 
 // 국가별 규제 카드 설정

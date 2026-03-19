@@ -339,12 +339,13 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
           max_concentration: maxConc,
           restriction_text: typeof r.restriction === 'string' && !r.restriction.startsWith('{') ? r.restriction : null,
           reg_status: parsed.reg_status || null,
-          annex: rawObj?.annex_type || (rawObj?.annex && rawObj.annex !== 'null' ? rawObj.annex : null) || null,
+          annex: rawObj?.annex_ref || rawObj?.annex_type || (rawObj?.annex && rawObj.annex !== 'null' ? rawObj.annex : null) || null,
           note: (rawObj?.note && rawObj.note !== 'null') ? rawObj.note : null,
           summary: rawObj?.summary || null,
           cfr: rawObj?.cfr || null,
           cir_assessment: rawObj?.cir_assessment || null,
           concerns: Array.isArray(rawObj?.concerns) && rawObj.concerns.length ? rawObj.concerns : null,
+          other_restrictions: Array.isArray(rawObj?.other_restrictions) && rawObj.other_restrictions.length ? rawObj.other_restrictions.join(', ') : (rawObj?.other_restrictions && typeof rawObj.other_restrictions === 'string' ? rawObj.other_restrictions : null),
           updated_at: r.updated_at,
         }
         if (/MFDS|KR|KOREA/.test(src)) regulations.KR.push(entry)
