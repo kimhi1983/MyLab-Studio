@@ -58,7 +58,7 @@
               >
                 <template v-if="importing">
                   <span class="drop-icon">⏳</span>
-                  <span class="drop-text">{{ importStatus || 'AI 분석 중…' }}</span>
+                  <span class="drop-text">{{ importStatus || '분석 중…' }}</span>
                 </template>
                 <template v-else>
                   <span class="drop-icon">📂</span>

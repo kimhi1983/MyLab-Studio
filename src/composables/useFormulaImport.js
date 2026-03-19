@@ -130,11 +130,11 @@ export function useFormulaImport() {
       }
 
       // 2단계: AI 파싱
-      importStatus.value = 'AI 성분 분석 중…'
+      importStatus.value = '성분 분석 중…'
       const parsed = await aiParseText(rawText, file.name)
 
       if (!parsed.ingredients?.length) {
-        importError.value = 'AI가 성분 데이터를 찾지 못했습니다. 파일 형식을 확인해주세요.'
+        importError.value = '성분 데이터를 찾지 못했습니다. 파일 형식을 확인해주세요.'
         return
       }
 

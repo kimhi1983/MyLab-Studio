@@ -657,7 +657,7 @@
       <div v-if="isAiFilling" class="beaker-overlay">
         <div class="beaker-overlay-card">
           <FormulaLoadingBeaker :step="beakerStep" />
-          <p class="beaker-overlay-msg">AI가 최적의 처방을 설계하고 있습니다...</p>
+          <p class="beaker-overlay-msg">최적의 처방을 설계하고 있습니다...</p>
           <p class="beaker-overlay-step">{{ aiFillStep }}</p>
         </div>
       </div>
@@ -1390,7 +1390,7 @@ async function onGenerateIdea() {
   if (!form.product_type || isAiFilling.value) return
 
   isAiFilling.value = true
-  aiFillStep.value = '처방 아이디어 생성 중...'
+  aiFillStep.value = '처방 생성 중...'
   ideaResult.value = null
   startBeakerAnimation()
 
@@ -1406,11 +1406,11 @@ async function onGenerateIdea() {
       showIdeaModal.value = true
     } else {
       // DB 처방이 없으면 기존 AI 처방 생성으로 폴백
-      aiFillStep.value = 'AI 처방 생성 중...'
+      aiFillStep.value = '처방 생성 중...'
       await onAiFill()
     }
   } catch (err) {
-    alert('처방 아이디어 생성 실패: ' + (err.message || '서버 오류'))
+    alert('처방 생성 실패: ' + (err.message || '서버 오류'))
   } finally {
     stopBeakerAnimation()
     isAiFilling.value = false
@@ -2623,7 +2623,7 @@ async function onAiFill() {
 .btn-spec-adjust:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── AI 아이디어 모달 ─── */
-.idea-modal { width: min(900px, 92vw); max-height: 85vh; display: flex; flex-direction: column; }
+.idea-modal { width: min(950px, 90vw); max-height: 85vh; display: flex; flex-direction: column; }
 .idea-modal-body { overflow-y: auto; padding: 16px 20px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .idea-spec-bar {
   display: flex;
@@ -2653,11 +2653,11 @@ async function onAiFill() {
   font-size: 12px;
   table-layout: fixed;
 }
-.idea-table colgroup col.col-name { width: 160px; }
-.idea-table colgroup col.col-inci { width: 260px; }
+.idea-table colgroup col.col-name { width: 150px; }
+.idea-table colgroup col.col-inci { width: 280px; }
 .idea-table colgroup col.col-pct  { width: 80px; }
-.idea-table colgroup col.col-fn   { width: auto; }
-.idea-table colgroup col.col-phase { width: 56px; }
+.idea-table colgroup col.col-fn   { width: 100px; }
+.idea-table colgroup col.col-phase { width: 60px; }
 .idea-table th { text-align: left; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
 .idea-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .idea-name { font-weight: 600; color: var(--text); }
