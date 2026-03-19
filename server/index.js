@@ -4885,22 +4885,6 @@ app.get('/api/regulation/monitor', async (req, res) => {
 // ─── 성분DB 페이지 개선 API ────────────────────────────────────────────────
 // GET /api/ingredients/db?page=1&limit=50&type=&search=
 app.get('/api/ingredients/db', async (req, res) => {
-  // 프론트엔드 타입 값 → DB ingredient_type 매핑
-  const FRONTEND_TYPE_MAP = {
-    emollient_ester: 'EMOLLIENT',
-    humectant_active: 'HUMECTANT',
-    polymer_film_former: 'FILM_FORMER',
-    chelator_ph: 'PH_ADJUSTER',
-    biomimetic_active: 'ACTIVE',
-    peptide: 'ACTIVE',
-    plant_oil: 'EMOLLIENT',
-    mineral_inorganic: 'OTHER',
-    amino_acid: 'ACTIVE',
-    hydrolyzed_protein: 'ACTIVE',
-    vitamin: 'ACTIVE',
-    extract: 'ACTIVE',
-    silicone: 'EMOLLIENT',
-  }
   try {
     const { page = 1, limit = 50, type, search } = req.query
     const lim = Math.min(parseInt(limit) || 50, 200)
@@ -4919,10 +4903,9 @@ app.get('/api/ingredients/db', async (req, res) => {
       idx++
     }
     if (type && type !== 'ALL') {
-      // 프론트엔드 소문자 값을 DB 대문자 값으로 변환
-      const dbType = FRONTEND_TYPE_MAP[type] || type.toUpperCase()
-      where.push(`im.ingredient_type = $${idx}`)
-      params.push(dbType)
+      // DB ingredient_type은 소문자(emollient_ester 등) — ILIKE로 대소문자 무시 비교
+      where.push(`im.ingredient_type ILIKE $${idx}`)
+      params.push(type)
       idx++
     }
 
@@ -4931,14 +4914,13 @@ app.get('/api/ingredients/db', async (req, res) => {
     params.push(lim, off)
     const { rows } = await pool.query(
       `SELECT im.inci_name, im.korean_name, im.cas_number, im.ingredient_type, im.ewg_score,
-              im.skin_type, im.description, im.purpose,
+              im.description,
               im.function_inci, im.ph_min, im.ph_max,
               im.usage_level_min, im.usage_level_max
        FROM ingredient_master im
        ${whereClause}
        ORDER BY (
          CASE WHEN im.function_inci IS NOT NULL AND im.function_inci != '' THEN 3 ELSE 0 END +
-         CASE WHEN im.purpose IS NOT NULL AND im.purpose != '' THEN 2 ELSE 0 END +
          CASE WHEN im.ph_min IS NOT NULL THEN 1 ELSE 0 END +
          CASE WHEN im.usage_level_min IS NOT NULL THEN 1 ELSE 0 END +
          CASE WHEN im.ewg_score IS NOT NULL AND im.ewg_score > 0 THEN 1 ELSE 0 END +
