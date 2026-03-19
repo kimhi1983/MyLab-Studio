@@ -1858,7 +1858,7 @@ async function callGemini(prompt, taskType = 'formula', useCache = false) {
 async function _fetchGemini(prompt) {
   const apiKey = process.env.GEMINI_API_KEY
   const geminiRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1867,9 +1867,9 @@ async function _fetchGemini(prompt) {
         generationConfig: {
           temperature: 0.1,
           responseMimeType: 'application/json',
-          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
+      signal: AbortSignal.timeout(90000), // 90초 (Pro는 최대 20~30초 소요)
     }
   )
 
@@ -2917,7 +2917,7 @@ app.post('/api/copy-formula', async (req, res) => {
         cautions: parsed.cautions || [],
         totalPercentage: Math.round(totalPct * 100) / 100,
         generatedAt: new Date().toISOString(),
-        source: 'gemini-2.5-flash',
+        source: 'gemini-2.5-pro',
       },
     })
   } catch (err) {
