@@ -30,7 +30,7 @@ function _removeSubsection(text, headerPrefix) {
 }
 
 ;(function loadExpertGuide() {
-  const guidePath = join(__dirname, 'guides', 'COCHING_Formula_Expert_Guide_v1.0.md')
+  const guidePath = join(__dirname, 'guides', 'COCHING_Formula_Expert_Guide_v2.0.md')
   if (!existsSync(guidePath)) {
     console.warn('[EXPERT GUIDE] 가이드 파일 없음:', guidePath)
     return
@@ -54,14 +54,18 @@ function _removeSubsection(text, headerPrefix) {
     { prefix: '## 10.', keys: ['클렌저', '폼클렌저'] },
   ]
 
+  // v2.0: 공통 섹션이 ## ⚠️ + ## 공통: 방부/배합비/Phase 로 분리됨
+  const commonParts = []
   for (const part of parts) {
-    // 공통 규칙 처리
-    if (part.startsWith('## 공통 규칙')) {
-      // Phase 규칙 제거 (제조 공정 — Gemini가 자체 판단)
+    // 공통 원칙 (v2.0: ## ⚠️ AI 처방 생성 필수 원칙 또는 ## 공통: ...)
+    if (part.startsWith('## ⚠️') || part.startsWith('## 공통')) {
+      // Phase 규칙 섹션 제거 (제조 공정 — Gemini 독자 판단, 프롬프트에 이미 포함)
       const cleaned = _removeSubsection(part, '### Phase 규칙')
-      EXPERT_GUIDE_MAP.set('_common', cleaned)
+      commonParts.push(cleaned)
       continue
     }
+    // 향후 추가 예정 / 프롬프트 삽입 방법 섹션은 건너뜀
+    if (part.startsWith('## 향후') || part.startsWith('## 프롬프트')) continue
     // 제형별 처리
     for (const { prefix, keys } of SECTION_KEY_MAP) {
       if (part.startsWith(prefix)) {
@@ -72,7 +76,9 @@ function _removeSubsection(text, headerPrefix) {
       }
     }
   }
-  console.log(`[EXPERT GUIDE] 로드 완료: 제형 ${EXPERT_GUIDE_MAP.size - 1}종 + 공통규칙`)
+  EXPERT_GUIDE_MAP.set('_common', commonParts.join('\n\n'))
+  const sectionCount = EXPERT_GUIDE_MAP.size - 1  // _common 제외
+  console.log(`[EXPERT GUIDE v2.0] 로드 완료: 제형 ${sectionCount}개 alias + 공통규칙 ${commonParts.length}섹션`)
 })()
 
 function getExpertGuide(baseKey) {
