@@ -78,10 +78,7 @@
                 <col class="col-type" />
                 <col class="col-func" />
                 <col class="col-ewg" />
-                <col class="col-ph" />
-                <col class="col-usage" />
                 <col class="col-reg" />
-                <col class="col-conc" />
               </colgroup>
               <thead>
                 <tr>
@@ -91,10 +88,7 @@
                   <th class="col-type">카테고리</th>
                   <th class="col-func">기능</th>
                   <th class="col-ewg">EWG</th>
-                  <th class="col-ph">pH 범위</th>
-                  <th class="col-usage">사용농도</th>
                   <th class="col-reg">규제 (KR/EU)</th>
-                  <th class="col-conc">최대 농도</th>
                 </tr>
               </thead>
               <tbody v-if="!loading && items.length">
@@ -140,18 +134,6 @@
                     </span>
                     <span v-else class="cell-empty">-</span>
                   </td>
-                  <td class="cell-ph mono-text">
-                    <span v-if="validPh(item.ph_min) && validPh(item.ph_max)">
-                      {{ item.ph_min }} ~ {{ item.ph_max }}
-                    </span>
-                    <span v-else class="cell-empty">-</span>
-                  </td>
-                  <td class="cell-usage mono-text">
-                    <span v-if="item.usage_level_min != null || item.usage_level_max != null">
-                      {{ item.usage_level_min ?? '0' }}~{{ item.usage_level_max ?? '?' }}%
-                    </span>
-                    <span v-else class="cell-empty">-</span>
-                  </td>
                   <td class="cell-reg">
                     <div class="reg-badges">
                       <span v-if="item.regulation_status_kr && item.regulation_status_kr !== 'unknown'" class="reg-badge" :class="regStatusBadgeClass(item.regulation_status_kr)">KR {{ regStatusLabel(item.regulation_status_kr) }}</span>
@@ -160,24 +142,18 @@
                       <span v-if="!item.regulation_status_kr && !item.regulation_status_eu" class="cell-empty">-</span>
                     </div>
                   </td>
-                  <td class="cell-conc">
-                    <span v-if="item.max_concentration_kr || item.max_concentration_eu" class="mono-text conc-short">
-                      {{ truncateConc(item.max_concentration_kr || item.max_concentration_eu) }}
-                    </span>
-                    <span v-else class="cell-empty">-</span>
-                  </td>
                 </tr>
               </tbody>
               <tbody v-else-if="loading">
                 <tr v-for="n in 8" :key="n">
-                  <td colspan="10">
+                  <td colspan="7">
                     <div class="skeleton-row"></div>
                   </td>
                 </tr>
               </tbody>
               <tbody v-else>
                 <tr>
-                  <td colspan="10" class="empty-cell">
+                  <td colspan="7" class="empty-cell">
                     <div class="empty-state">
                       <div class="empty-icon">◎</div>
                       <div class="empty-title">{{ errorMessage ? 'API 서버에 연결하지 못했습니다' : '검색 결과가 없습니다' }}</div>
@@ -235,120 +211,83 @@
                 <div v-if="detailData.cas_number" class="detail-cas mono-text">CAS {{ detailData.cas_number }}</div>
               </div>
 
-              <!-- 규제 데이터 있음: 풀 뷰 -->
-              <template v-if="hasRegData">
-                <!-- 기본 정보 (카테고리/EWG만 간단히) -->
-                <div class="detail-section-card">
-                  <div class="dsc-title">기본 정보</div>
-                  <div class="detail-props-grid">
-                    <template v-if="detailData.ingredient_type">
-                      <span class="prop-label">카테고리</span>
-                      <span class="prop-val">{{ ingredientTypeLabel(detailData.ingredient_type) }}</span>
-                    </template>
-                    <template v-if="validPh(detailData.ph_min) && validPh(detailData.ph_max)">
-                      <span class="prop-label">pH 범위</span>
-                      <span class="prop-val mono-text">{{ detailData.ph_min }} ~ {{ detailData.ph_max }}</span>
-                    </template>
-                    <template v-if="detailData.usage_min != null || detailData.usage_max != null">
-                      <span class="prop-label">사용 농도</span>
-                      <span class="prop-val mono-text">{{ detailData.usage_min ?? 0 }} ~ {{ detailData.usage_max ?? '?' }}%</span>
-                    </template>
-                    <template v-if="detailData.ewg_score != null && detailData.ewg_score > 0">
-                      <span class="prop-label">EWG 등급</span>
-                      <span class="prop-val">
-                        <span class="ewg-inline" :class="ewgClass(detailData.ewg_score)">
-                          {{ detailData.ewg_score }} — {{ ewgDesc(detailData.ewg_score) }}
-                        </span>
+              <!-- ② 국가별 규제 상세 -->
+              <div class="detail-section-card">
+                <div class="dsc-title">국가별 규제 상세</div>
+                <div
+                  v-for="cc in countryList"
+                  :key="cc.code"
+                  class="country-reg-card"
+                  :class="{ 'country-reg-has-data': detailData.regulations[cc.code] && detailData.regulations[cc.code].length }"
+                >
+                  <!-- 카드 헤더 -->
+                  <div class="crc-header">
+                    <span class="crc-flag">{{ cc.flag }}</span>
+                    <span class="crc-name">{{ cc.label }}</span>
+                    <template v-if="detailData.regulations[cc.code] && detailData.regulations[cc.code].length">
+                      <span
+                        class="reg-status-chip"
+                        :class="regChipClass(detailData.regulations[cc.code][0].reg_status)"
+                      >
+                        {{ regStatusIcon(detailData.regulations[cc.code][0].reg_status) }}
+                        {{ regStatusLabel(detailData.regulations[cc.code][0].reg_status) || '확인필요' }}
                       </span>
                     </template>
+                    <span v-else class="crc-no-data">📭 데이터 없음</span>
                   </div>
-                </div>
 
-                <!-- 규제 상태 -->
-                <div class="detail-section-card">
-                  <div class="dsc-title">규제 상태</div>
-                  <div class="reg-country-row" v-for="(entries, country) in detailData.regulations" :key="country">
-                    <span class="country-flag">{{ countryFlag(country) }}</span>
-                    <span class="country-name">{{ country }}</span>
-                    <template v-if="entries && entries.length">
-                      <span v-for="(e, i) in entries" :key="i" class="reg-status-chip" :class="regChipClass(e.reg_status)">
-                        {{ regStatusIcon(e.reg_status) }} {{ regStatusLabel(e.reg_status) || e.source }}
-                      </span>
-                    </template>
-                    <span v-else class="reg-no-data">📭 데이터 없음</span>
-                  </div>
+                  <!-- 카드 바디 (데이터 있는 경우) -->
+                  <template v-if="detailData.regulations[cc.code] && detailData.regulations[cc.code].length">
+                    <div
+                      v-for="(entry, ei) in detailData.regulations[cc.code]"
+                      :key="ei"
+                      class="crc-body"
+                      :class="{ 'crc-body-divider': ei > 0 }"
+                    >
+                      <div v-if="entry.max_concentration" class="crc-row">
+                        <span class="crc-label">최대 농도</span>
+                        <span class="crc-val mono-text">{{ entry.max_concentration }}</span>
+                      </div>
+                      <div v-if="entry.annex" class="crc-row">
+                        <span class="crc-label">{{ cc.code === 'EU' ? 'Annex' : '참조' }}</span>
+                        <span class="crc-val mono-text">{{ entry.annex }}</span>
+                      </div>
+                      <div v-if="entry.cfr" class="crc-row">
+                        <span class="crc-label">CFR</span>
+                        <span class="crc-val mono-text">{{ entry.cfr }}</span>
+                      </div>
+                      <div v-if="entry.summary || entry.note || entry.restriction_text" class="crc-row crc-row-note">
+                        <span class="crc-label">비고</span>
+                        <span class="crc-val crc-note-text">{{ entry.summary || entry.note || entry.restriction_text }}</span>
+                      </div>
+                      <div v-if="entry.source" class="crc-row crc-row-source">
+                        <span class="crc-source-badge">{{ entry.source }}</span>
+                      </div>
+                    </div>
+                  </template>
                 </div>
+              </div>
 
-                <!-- 최대 농도 상세 (전체 텍스트) -->
-                <div v-if="detailMaxConc" class="detail-section-card">
-                  <div class="dsc-title">최대 농도 상세</div>
-                  <div class="detail-conc-full">{{ detailMaxConc }}</div>
+              <!-- ③ 배합 가이드 -->
+              <div v-if="detailData.formulationGuide && detailData.formulationGuide.length" class="detail-section-card">
+                <div class="dsc-title">배합 가이드</div>
+                <div v-for="g in detailData.formulationGuide" :key="g.purpose_key + g.role" class="formulation-row">
+                  <span class="form-role-badge" :class="formRoleClass(g.role)">{{ g.role }}</span>
+                  <span class="form-purpose">{{ g.purpose_key }}</span>
+                  <span v-if="g.default_pct_int != null" class="form-pct mono-text">{{ (g.default_pct_int / 100).toFixed(2) }}%</span>
+                  <span v-if="g.reason" class="form-reason">{{ g.reason }}</span>
                 </div>
+              </div>
 
-                <!-- 배합 가이드 -->
-                <div v-if="detailData.formulationGuide && detailData.formulationGuide.length" class="detail-section-card">
-                  <div class="dsc-title">배합 가이드</div>
-                  <div v-for="g in detailData.formulationGuide" :key="g.purpose_key + g.role" class="formulation-row">
-                    <span class="form-role-badge" :class="formRoleClass(g.role)">{{ g.role }}</span>
-                    <span class="form-purpose">{{ g.purpose_key }}</span>
-                    <span v-if="g.default_pct_int != null" class="form-pct mono-text">{{ (g.default_pct_int / 100).toFixed(2) }}%</span>
-                    <span v-if="g.reason" class="form-reason">{{ g.reason }}</span>
-                  </div>
+              <!-- ④ 호환성 -->
+              <div v-if="detailData.compatibility && detailData.compatibility.length" class="detail-section-card">
+                <div class="dsc-title">호환성</div>
+                <div v-for="c in detailData.compatibility" :key="c.partner + c.severity" class="compat-row">
+                  <span class="compat-icon">{{ c.severity === 'forbidden' ? '⚠️' : c.severity === 'recommended' ? '💡' : '⚠️' }}</span>
+                  <span class="compat-partner mono-text">{{ c.partner }}</span>
+                  <span class="compat-reason">{{ c.reason }}</span>
                 </div>
-
-                <!-- 호환성 -->
-                <div v-if="detailData.compatibility && detailData.compatibility.length" class="detail-section-card">
-                  <div class="dsc-title">호환성</div>
-                  <div v-for="c in detailData.compatibility" :key="c.partner + c.severity" class="compat-row">
-                    <span class="compat-icon">{{ c.severity === 'forbidden' ? '⚠️' : c.severity === 'recommended' ? '💡' : '⚠️' }}</span>
-                    <span class="compat-partner mono-text">{{ c.partner }}</span>
-                    <span class="compat-reason">{{ c.reason }}</span>
-                  </div>
-                </div>
-              </template>
-
-              <!-- 규제 데이터 없음: 컴팩트 뷰 -->
-              <template v-else>
-                <div class="detail-section-card">
-                  <div class="dsc-title">기본 정보</div>
-                  <div class="detail-props-grid">
-                    <template v-if="detailData.ingredient_type">
-                      <span class="prop-label">카테고리</span>
-                      <span class="prop-val">{{ ingredientTypeLabel(detailData.ingredient_type) }}</span>
-                    </template>
-                    <template v-if="detailData.function_inci">
-                      <span class="prop-label">기능</span>
-                      <span class="prop-val">{{ detailData.function_inci }}</span>
-                    </template>
-                    <template v-if="validPh(detailData.ph_min) && validPh(detailData.ph_max)">
-                      <span class="prop-label">pH 범위</span>
-                      <span class="prop-val mono-text">{{ detailData.ph_min }} ~ {{ detailData.ph_max }}</span>
-                    </template>
-                    <template v-if="detailData.usage_min != null || detailData.usage_max != null">
-                      <span class="prop-label">사용 농도</span>
-                      <span class="prop-val mono-text">{{ detailData.usage_min ?? 0 }} ~ {{ detailData.usage_max ?? '?' }}%</span>
-                    </template>
-                    <template v-if="detailData.ewg_score != null && detailData.ewg_score > 0">
-                      <span class="prop-label">EWG 등급</span>
-                      <span class="prop-val">
-                        <span class="ewg-inline" :class="ewgClass(detailData.ewg_score)">
-                          {{ detailData.ewg_score }} — {{ ewgDesc(detailData.ewg_score) }}
-                        </span>
-                      </span>
-                    </template>
-                  </div>
-                </div>
-                <!-- 배합 가이드 (있으면) -->
-                <div v-if="detailData.formulationGuide && detailData.formulationGuide.length" class="detail-section-card">
-                  <div class="dsc-title">배합 가이드</div>
-                  <div v-for="g in detailData.formulationGuide" :key="g.purpose_key + g.role" class="formulation-row">
-                    <span class="form-role-badge" :class="formRoleClass(g.role)">{{ g.role }}</span>
-                    <span class="form-purpose">{{ g.purpose_key }}</span>
-                    <span v-if="g.default_pct_int != null" class="form-pct mono-text">{{ (g.default_pct_int / 100).toFixed(2) }}%</span>
-                  </div>
-                </div>
-                <div class="detail-no-data-note">규제/안전성 데이터 수집 예정</div>
-              </template>
+              </div>
 
               <!-- 푸터 -->
               <div class="detail-footer">
@@ -362,29 +301,6 @@
               <div class="detail-name-block">
                 <div class="detail-inci">{{ selectedItem.inci_name }}</div>
                 <div class="detail-kr">{{ selectedItem.korean_name || '-' }}</div>
-              </div>
-              <div class="detail-section-card">
-                <div class="dsc-title">기본 정보</div>
-                <div class="detail-props-grid">
-                  <template v-if="selectedItem.ingredient_type">
-                    <span class="prop-label">카테고리</span>
-                    <span class="prop-val">{{ ingredientTypeLabel(selectedItem.ingredient_type) }}</span>
-                  </template>
-                  <template v-if="validPh(selectedItem.ph_min) && validPh(selectedItem.ph_max)">
-                    <span class="prop-label">pH 범위</span>
-                    <span class="prop-val mono-text">{{ selectedItem.ph_min }} ~ {{ selectedItem.ph_max }}</span>
-                  </template>
-                  <template v-if="selectedItem.ewg_score != null && selectedItem.ewg_score > 0">
-                    <span class="prop-label">EWG 등급</span>
-                    <span class="prop-val">
-                      <span class="ewg-inline" :class="ewgClass(selectedItem.ewg_score)">{{ selectedItem.ewg_score }} — {{ ewgDesc(selectedItem.ewg_score) }}</span>
-                    </span>
-                  </template>
-                  <template v-if="selectedItem.max_concentration_kr || selectedItem.max_concentration_eu">
-                    <span class="prop-label">최대 농도</span>
-                    <span class="prop-val">{{ selectedItem.max_concentration_kr || selectedItem.max_concentration_eu }}</span>
-                  </template>
-                </div>
               </div>
               <div class="detail-section-card">
                 <div class="dsc-title">규제 상태</div>
@@ -537,11 +453,22 @@ function closeDetail() {
   detailData.value = null
 }
 
-// 규제 국가 국기
+// 국가별 규제 카드 설정
+const countryList = [
+  { code: 'KR', flag: '🇰🇷', label: '한국' },
+  { code: 'EU', flag: '🇪🇺', label: 'EU' },
+  { code: 'US', flag: '🇺🇸', label: '미국' },
+  { code: 'JP', flag: '🇯🇵', label: '일본' },
+  { code: 'CN', flag: '🇨🇳', label: '중국' },
+]
+
+// 규제 국가 국기 (레거시 호환)
 function countryFlag(country) {
   if (country === 'KR') return '🇰🇷'
   if (country === 'EU') return '🇪🇺'
   if (country === 'US') return '🇺🇸'
+  if (country === 'JP') return '🇯🇵'
+  if (country === 'CN') return '🇨🇳'
   return '🌐'
 }
 
@@ -820,7 +747,7 @@ function formatDate(iso) {
   transition: grid-template-columns 0.25s ease;
 }
 .main-layout.panel-open {
-  grid-template-columns: 1fr 350px;
+  grid-template-columns: 1fr 400px;
 }
 
 /* ─── 목록 패널 ─── */
@@ -876,22 +803,19 @@ function formatDate(iso) {
   background: var(--accent-light);
 }
 
-.col-inci  { width: 180px; max-width: 180px; }
-.col-kr    { width: 120px; max-width: 120px; }
+.col-inci  { width: 220px; max-width: 220px; }
+.col-kr    { width: 150px; max-width: 150px; }
 .col-cas   { width: 100px; max-width: 100px; }
 .col-type  { width: 90px; }
-.col-func  { width: 200px; max-width: 200px; }
+.col-func  { width: 240px; max-width: 240px; }
 .col-ewg   { width: 55px; text-align: center; }
-.col-ph    { width: 85px; }
-.col-usage { width: 90px; }
-.col-reg   { width: 130px; }
-.col-conc  { width: 100px; }
+.col-reg   { width: 160px; }
 
 .cell-inci {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
-  max-width: 180px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -899,7 +823,7 @@ function formatDate(iso) {
 .cell-kr {
   font-size: 12.5px;
   color: var(--text-sub);
-  max-width: 120px;
+  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -971,7 +895,7 @@ function formatDate(iso) {
 
 .cell-func {
   vertical-align: middle;
-  max-width: 200px;
+  max-width: 240px;
   overflow: hidden;
 }
 .func-cell-wrap {
@@ -1572,14 +1496,11 @@ function formatDate(iso) {
   }
 }
 
-@media (max-width: 900px) {
-  .col-ph, .cell-ph, .col-usage, .cell-usage { display: none; }
-}
 @media (max-width: 800px) {
   .col-cas, .cell-cas { display: none; }
 }
 @media (max-width: 700px) {
-  .col-type, .cell-type, .col-conc, .cell-conc { display: none; }
+  .col-type, .cell-type { display: none; }
 }
 @media (max-width: 600px) {
   .search-bar-wrap { flex-direction: column; align-items: stretch; }
@@ -1603,5 +1524,89 @@ function formatDate(iso) {
   font-style: italic;
   padding: 2px 4px;
   text-align: center;
+}
+
+/* ─── 국가별 규제 카드 ─── */
+.country-reg-card {
+  border-bottom: 1px solid var(--border);
+}
+.country-reg-card:last-child { border-bottom: none; }
+
+.crc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.country-reg-has-data .crc-header {
+  background: transparent;
+}
+.crc-flag { font-size: 15px; flex-shrink: 0; }
+.crc-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-sub);
+  min-width: 28px;
+  flex-shrink: 0;
+}
+.crc-no-data {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.crc-body {
+  padding: 6px 12px 8px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.crc-body-divider {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.crc-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+}
+.crc-row-note { align-items: flex-start; }
+.crc-row-source {
+  margin-top: 2px;
+}
+.crc-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 10px;
+  color: var(--text-dim);
+  padding-top: 1px;
+}
+.crc-val {
+  color: var(--text);
+  flex: 1;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.crc-note-text {
+  font-size: 11.5px;
+  color: var(--text-sub);
+  line-height: 1.6;
+}
+.crc-source-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--accent-light);
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
 </style>

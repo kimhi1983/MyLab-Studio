@@ -314,8 +314,8 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
     if (!masterRows.length) return res.status(404).json({ error: 'Not found' })
     const master = masterRows[0]
 
-    // 2. regulation_cache — KR/EU/US 분류
-    let regulations = { KR: [], EU: [], US: [] }
+    // 2. regulation_cache — KR/EU/US/JP/CN 분류
+    let regulations = { KR: [], EU: [], US: [], JP: [], CN: [] }
     try {
       const { rows: regRows } = await pool.query(
         `SELECT source, ingredient, inci_name, max_concentration, restriction, updated_at
@@ -328,16 +328,24 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
       for (const r of regRows) {
         const src = (r.source || '').toUpperCase()
         const parsed = parseRestrictionField(r.restriction)
+        let rawObj = null
+        try { rawObj = typeof r.restriction === 'object' ? r.restriction : JSON.parse(r.restriction) } catch (_) {}
         const entry = {
           source: r.source,
           max_concentration: r.max_concentration || null,
           restriction_text: parsed.text || (typeof r.restriction === 'string' ? r.restriction : null),
           reg_status: parsed.reg_status || null,
+          annex: rawObj?.annex_type || rawObj?.annex || null,
+          note: (rawObj?.note && rawObj.note !== 'null') ? rawObj.note : null,
+          summary: rawObj?.summary || null,
+          cfr: rawObj?.cfr || null,
           updated_at: r.updated_at,
         }
         if (/MFDS|KR|KOREA/.test(src)) regulations.KR.push(entry)
         else if (/EU|COSING|SCCS/.test(src)) regulations.EU.push(entry)
         else if (/US|FDA/.test(src)) regulations.US.push(entry)
+        else if (/JP|JAPAN/.test(src)) regulations.JP.push(entry)
+        else if (/CN|CHINA/.test(src)) regulations.CN.push(entry)
         else regulations.KR.push(entry) // fallback
       }
     } catch (_) {}
