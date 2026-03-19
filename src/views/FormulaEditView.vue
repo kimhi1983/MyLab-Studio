@@ -2623,13 +2623,13 @@ async function onAiFill() {
 .btn-spec-adjust:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── AI 아이디어 모달 ─── */
-.idea-modal { width: min(950px, 90vw); max-height: 85vh; display: flex; flex-direction: column; }
+.idea-modal { width: min(95vw, 1400px); min-width: min(1100px, 95vw); max-height: 90vh; display: flex; flex-direction: column; }
 .idea-modal-body { overflow-y: auto; padding: 16px 20px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .idea-spec-bar {
   display: flex;
   gap: 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
   flex-wrap: nowrap;
 }
@@ -2637,15 +2637,31 @@ async function onAiFill() {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   flex: 1;
-  padding: 8px 14px;
-  border-right: 1px solid var(--border);
-  min-width: 110px;
+  padding: 14px 16px;
+  border-right: 1px solid #ece6d8;
   white-space: nowrap;
+  text-align: center;
 }
 .idea-spec-item:last-child { border-right: none; }
-.idea-spec-label { font-size: 9px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; white-space: nowrap; }
-.idea-spec-val { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; font-family: var(--font-mono); white-space: nowrap; }
+.idea-spec-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  text-align: center;
+  margin-bottom: 4px;
+}
+.idea-spec-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.2;
+}
 .idea-table-wrap { overflow-x: auto; }
 .idea-table {
   width: 100%;
