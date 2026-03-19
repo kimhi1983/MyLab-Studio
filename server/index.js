@@ -5261,8 +5261,10 @@ function getBaseKey(product_type) {
   if (pt.includes('bb크림') || pt.includes('bb cream')) return 'BB크림'
   if (pt.includes('쿠션') || pt.includes('cushion')) return '쿠션'
   if (pt.includes('블러셔') || pt.includes('blusher') || pt.includes('blush')) return '블러셔'
-  // 선케어
-  if (pt.includes('선크림') || pt.includes('선스크린') || pt.includes('sunscreen') || pt.includes('sunblock') || pt.includes('spf')) return '선크림'
+  // 선케어 (썬크림/자외선 차단/sun 모두 커버)
+  if (pt.includes('선크림') || pt.includes('썬크림') || pt.includes('선스크린') || pt.includes('썬스크린') ||
+      pt.includes('자외선') || pt.includes('sunscreen') || pt.includes('sunblock') || pt.includes('spf') ||
+      pt.includes('sun') || pt.includes('uv filter') || pt.includes('자차')) return '선크림'
   // 클렌징 (구체적인 것 먼저)
   if (pt.includes('클렌징오일') || pt.includes('cleansing oil')) return '클렌징오일'
   if (pt.includes('클렌징폼') || pt.includes('cleansing foam') || pt.includes('폼클렌') || pt.includes('foam cleanser')) return '클렌징폼'
@@ -5756,7 +5758,13 @@ ${colorantStr}
           await setCached(ideaCacheKey, 'gemini', 'generate-idea', aiResult)
           break
         } catch (geminiErr) {
-          console.warn(`[generate-idea] Gemini 실패 (시도 ${attempt + 1}):`, geminiErr.message)
+          const msg = geminiErr.message || ''
+          console.warn(`[generate-idea] Gemini 실패 (시도 ${attempt + 1}):`, msg)
+          // 403 (키 유출/만료/권한없음) → 재시도 무의미, 즉시 break
+          if (msg.includes('403') || msg.includes('PERMISSION_DENIED') || msg.includes('leaked') || msg.includes('expired')) {
+            console.error('[generate-idea] Gemini 403 — API 키 문제. DB 폴백으로 전환합니다.')
+            break
+          }
         }
       }
     }
