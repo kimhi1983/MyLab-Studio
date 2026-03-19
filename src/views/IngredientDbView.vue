@@ -222,7 +222,6 @@
                 >
                   <!-- 카드 헤더 -->
                   <div class="crc-header">
-                    <span class="crc-flag">{{ cc.flag }}</span>
                     <span class="crc-name">{{ cc.label }}</span>
                     <template v-if="detailData.regulations?.[cc.code]?.length">
                       <span
@@ -233,7 +232,7 @@
                         {{ regStatusLabel(detailData.regulations[cc.code][0].reg_status) || '확인필요' }}
                       </span>
                     </template>
-                    <span v-else class="crc-no-data">📭 데이터 없음</span>
+                    <span v-else class="crc-no-data">데이터 없음</span>
                   </div>
 
                   <!-- 카드 바디 (데이터 있는 경우) -->
@@ -258,19 +257,31 @@
                       </div>
                       <div v-if="entry.concerns && entry.concerns.length" class="crc-row crc-row-note">
                         <span class="crc-label">우려사항</span>
-                        <span class="crc-val crc-note-text">{{ entry.concerns.join(', ') }}</span>
+                        <div class="crc-val crc-note-group">
+                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-con`) && entry.concerns.join(', ').length > 80 ? 'text-clamp-3' : '']">{{ entry.concerns.join(', ') }}</span>
+                          <button v-if="entry.concerns.join(', ').length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-con`)">{{ isExpanded(`${cc.code}-${ei}-con`) ? '접기' : '더보기' }}</button>
+                        </div>
                       </div>
                       <div v-if="entry.other_restrictions" class="crc-row crc-row-note">
                         <span class="crc-label">제한사항</span>
-                        <span class="crc-val crc-note-text">{{ entry.other_restrictions }}</span>
+                        <div class="crc-val crc-note-group">
+                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-oth`) && entry.other_restrictions.length > 80 ? 'text-clamp-3' : '']">{{ entry.other_restrictions }}</span>
+                          <button v-if="entry.other_restrictions.length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-oth`)">{{ isExpanded(`${cc.code}-${ei}-oth`) ? '접기' : '더보기' }}</button>
+                        </div>
                       </div>
                       <div v-if="entry.note || entry.restriction_text" class="crc-row crc-row-note">
                         <span class="crc-label">비고</span>
-                        <span class="crc-val crc-note-text">{{ entry.note || entry.restriction_text }}</span>
+                        <div class="crc-val crc-note-group">
+                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-note`) && (entry.note || entry.restriction_text).length > 80 ? 'text-clamp-3' : '']">{{ entry.note || entry.restriction_text }}</span>
+                          <button v-if="(entry.note || entry.restriction_text).length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-note`)">{{ isExpanded(`${cc.code}-${ei}-note`) ? '접기' : '더보기' }}</button>
+                        </div>
                       </div>
                       <div v-if="entry.cir_assessment" class="crc-row crc-row-note">
                         <span class="crc-label">CIR</span>
-                        <span class="crc-val crc-note-text">{{ entry.cir_assessment }}</span>
+                        <div class="crc-val crc-note-group">
+                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-cir`) && entry.cir_assessment.length > 80 ? 'text-clamp-3' : '']">{{ entry.cir_assessment }}</span>
+                          <button v-if="entry.cir_assessment.length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-cir`)">{{ isExpanded(`${cc.code}-${ei}-cir`) ? '접기' : '더보기' }}</button>
+                        </div>
                       </div>
                       <div v-if="entry.source" class="crc-row crc-row-source">
                         <span class="crc-source-badge">{{ entry.source }}</span>
@@ -284,11 +295,21 @@
               <div v-if="detailData.formulationGuide && detailData.formulationGuide.length" class="detail-section-card">
                 <div class="dsc-title">배합 가이드</div>
                 <div v-for="g in detailData.formulationGuide" :key="g.purpose_key + g.role" class="formulation-row">
-                  <span class="form-role-badge" :class="formRoleClass(g.role)">{{ g.role }}</span>
+                  <span class="form-role-badge" :class="formRoleClass(g.role)">{{ formRoleLabel(g.role) }}</span>
                   <span class="form-purpose">{{ g.purpose_key }}</span>
-                  <span v-if="g.default_pct_int != null" class="form-pct mono-text">{{ (g.default_pct_int / 100).toFixed(2) }}%</span>
+                  <span v-if="g.default_pct_int != null" class="form-pct mono-text">
+                    {{ (g.default_pct_int / 100).toFixed(2) }}%<template v-if="g.max_pct_int != null && g.max_pct_int > g.default_pct_int"> ~ {{ (g.max_pct_int / 100).toFixed(2) }}%</template>
+                  </span>
                   <span v-if="g.reason" class="form-reason">{{ g.reason }}</span>
                 </div>
+                <!-- EU 최대 허용 농도 -->
+                <template v-if="detailData.regulations?.EU?.some(r => r.max_concentration)">
+                  <div class="formulation-row fg-eu-conc">
+                    <span class="form-role-badge role-eu">EU 최대</span>
+                    <span class="form-purpose">규제 허용 농도</span>
+                    <span class="form-pct mono-text">{{ detailData.regulations.EU.find(r => r.max_concentration)?.max_concentration }}</span>
+                  </div>
+                </template>
               </div>
 
               <!-- ④ 호환성 -->
@@ -318,14 +339,13 @@
                 <div class="dsc-title">국가별 규제 상세</div>
                 <div v-for="cc in countryList" :key="cc.code" class="country-reg-card">
                   <div class="crc-header">
-                    <span class="crc-flag">{{ cc.flag }}</span>
                     <span class="crc-name">{{ cc.label }}</span>
                     <template v-if="fallbackRegStatus(cc.code)">
                       <span class="reg-status-chip" :class="regChipClass(fallbackRegStatus(cc.code))">
                         {{ regStatusIcon(fallbackRegStatus(cc.code)) }} {{ regStatusLabel(fallbackRegStatus(cc.code)) }}
                       </span>
                     </template>
-                    <span v-else class="crc-no-data">📭 데이터 없음</span>
+                    <span v-else class="crc-no-data">데이터 없음</span>
                   </div>
                 </div>
               </div>
@@ -518,6 +538,20 @@ function formRoleClass(role) {
   if (role === 'FORBIDDEN') return 'role-forbidden'
   return 'role-default'
 }
+
+// 배합 가이드 role 한글 라벨
+function formRoleLabel(role) {
+  if (role === 'REQUIRED') return '필수'
+  if (role === 'RECOMMENDED') return '권장'
+  if (role === 'FORBIDDEN') return '금지'
+  if (role === 'ALLOWED') return '허용'
+  return role
+}
+
+// 규제 비고 텍스트 더보기 토글
+const expandedMap = ref({})
+function isExpanded(key) { return !!expandedMap.value[key] }
+function toggleExpand(key) { expandedMap.value = { ...expandedMap.value, [key]: !expandedMap.value[key] } }
 
 // AI 안정성 데이터 수집 요청 (스텁)
 function requestStabilityData(data) {
@@ -1561,13 +1595,11 @@ function formatDate(iso) {
 .country-reg-has-data .crc-header {
   background: transparent;
 }
-.crc-flag { font-size: 15px; flex-shrink: 0; }
 .crc-name {
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--text-sub);
-  min-width: 28px;
+  min-width: 32px;
   flex-shrink: 0;
 }
 .crc-no-data {
@@ -1577,7 +1609,7 @@ function formatDate(iso) {
 }
 
 .crc-body {
-  padding: 6px 12px 8px 36px;
+  padding: 6px 12px 8px 16px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1626,5 +1658,41 @@ function formatDate(iso) {
   font-family: var(--font-mono);
   font-weight: 700;
   letter-spacing: 0.3px;
+}
+
+/* 더보기 텍스트 클램프 */
+.text-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.crc-note-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+.btn-expand {
+  align-self: flex-start;
+  padding: 1px 7px;
+  font-size: 10px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1.8;
+}
+.btn-expand:hover { background: var(--accent-light); }
+
+/* EU 최대 농도 행 */
+.fg-eu-conc { background: var(--bg); border-top: 1px dashed var(--border); }
+.role-eu {
+  background: #f0f4ff;
+  color: #4466bb;
+  border: 1px solid #c8d8f0;
+  font-family: var(--font-mono);
+  font-size: 9px;
 }
 </style>
