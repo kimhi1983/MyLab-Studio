@@ -242,8 +242,13 @@
           </div>
           <div class="modal-body">
             <div class="form-group">
-              <label class="form-label">처방명 *</label>
-              <input v-model="newTest.formulaName" class="form-input" placeholder="예. 수분 크림 v2">
+              <label class="form-label">처방 선택 *</label>
+              <select v-model="newTest.formulaId" class="form-input" @change="onFormulaSelect">
+                <option value="">처방을 선택하세요</option>
+                <option v-for="f in formulaList" :key="f.id" :value="f.id">{{ f.title }}</option>
+                <option value="__manual__">직접 입력</option>
+              </select>
+              <input v-if="newTest.formulaId === '__manual__'" v-model="newTest.formulaName" class="form-input" style="margin-top:6px" placeholder="처방명 직접 입력">
             </div>
             <div class="form-row">
               <div class="form-group flex-1">
@@ -269,7 +274,7 @@
           </div>
           <div class="modal-footer">
             <button class="btn btn-ghost" @click="showAddModal = false">취소</button>
-            <button class="btn btn-primary" @click="addTest" :disabled="!newTest.formulaName || !newTest.condition">등록</button>
+            <button class="btn btn-primary" @click="addTest" :disabled="(!newTest.formulaId && !newTest.formulaName) || !newTest.condition">등록</button>
           </div>
         </div>
       </div>
@@ -278,8 +283,18 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
+import { useFormulaStore } from '../stores/formulaStore.js'
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+function getAuthHeader() {
+  const token = localStorage.getItem('mylab:auth-token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+const { formulas } = useFormulaStore()
+const formulaList = computed(() => [...formulas.value].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)))
 
 // ── 시드 데이터 (위젯과 동일 소스) ──
 const SEED_STABILITY = [
@@ -441,9 +456,11 @@ function rowJudgeChipClass(week) {
 
 // ── QA 검증 연동 ──
 function getQaProgress(formulaName) {
-  // formulaStore에서 ID 찾기 → 해당 체크리스트 로드
-  const key = findChecklistKey(formulaName)
-  if (!key) return 0
+  // 1. stability 레코드에서 formula_id 찾기
+  const stabRecord = stabilityData.value.find(d => d.formulaName === formulaName && d.formulaId)
+  const formulaId = stabRecord?.formulaId || findFormulaIdByTitle(formulaName)
+  if (!formulaId) return 0
+  const key = `mylab:checklist:${formulaId}`
   try {
     const saved = localStorage.getItem(key)
     if (!saved) return 0
@@ -453,15 +470,9 @@ function getQaProgress(formulaName) {
   } catch { return 0 }
 }
 
-function findChecklistKey(formulaName) {
-  // formulaStore에서 title로 매칭
-  try {
-    const raw = localStorage.getItem('mylab:formulas')
-    if (!raw) return null
-    const formulas = JSON.parse(raw)
-    const match = formulas.find(f => f.title === formulaName)
-    return match ? `mylab:checklist:${match.id}` : null
-  } catch { return null }
+function findFormulaIdByTitle(title) {
+  const f = formulas.value.find(f => f.title === title)
+  return f?.id || null
 }
 
 function getQaStatusClass(formulaName) {
@@ -480,13 +491,25 @@ function getQaStatusLabel(formulaName) {
 
 // ── 새 시험 등록 ──
 const showAddModal = ref(false)
-const newTest = ref({ formulaName: '', condition: '', ph: null, appearance: '양호' })
+const newTest = ref({ formulaId: '', formulaName: '', condition: '', ph: null, appearance: '양호' })
+
+function onFormulaSelect() {
+  if (newTest.value.formulaId && newTest.value.formulaId !== '__manual__') {
+    const f = formulas.value.find(f => f.id === newTest.value.formulaId)
+    if (f) newTest.value.formulaName = f.title
+  } else if (newTest.value.formulaId !== '__manual__') {
+    newTest.value.formulaName = ''
+  }
+}
 
 function addTest() {
-  const nextId = Math.max(0, ...stabilityData.value.map(d => d.id)) + 1
-  stabilityData.value.push({
-    id: nextId,
-    formulaName: newTest.value.formulaName,
+  const id = 'S-' + Date.now() + Math.random().toString(36).slice(2, 5)
+  const formulaId = (newTest.value.formulaId && newTest.value.formulaId !== '__manual__') ? newTest.value.formulaId : null
+  const formulaName = newTest.value.formulaName || (formulaId ? formulas.value.find(f => f.id === formulaId)?.title : '') || ''
+  const record = {
+    id,
+    formulaId,
+    formulaName,
     condition: newTest.value.condition,
     results: [{
       week: 0,
@@ -496,10 +519,45 @@ function addTest() {
       appearance: newTest.value.appearance || '양호',
       result: 'pass',
     }],
-  })
-  newTest.value = { formulaName: '', condition: '', ph: null, appearance: '양호' }
+  }
+  stabilityData.value.push(record)
+  // 서버 동기화 (fire-and-forget with error log)
+  syncStabilityRecord(record)
+  newTest.value = { formulaId: '', formulaName: '', condition: '', ph: null, appearance: '양호' }
   showAddModal.value = false
 }
+
+async function syncStabilityRecord(record) {
+  try {
+    await fetch(`${API_BASE}/api/user/stability`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify(record),
+    })
+  } catch (e) {
+    console.warn('[Stability] 서버 동기화 실패 (localStorage에는 저장됨):', e.message)
+  }
+}
+
+// ── 마운트 시 서버에서 데이터 로드 ──
+onMounted(async () => {
+  try {
+    const res = await fetch(`${API_BASE}/api/user/stability`, {
+      headers: { ...getAuthHeader() },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (Array.isArray(data) && data.length > 0) {
+        // 서버 데이터와 localStorage 시드 병합: 서버 레코드는 string id(S-xxx), 시드는 숫자 id
+        const serverIds = new Set(data.map(d => String(d.id)))
+        const localOnly = stabilityData.value.filter(d => !serverIds.has(String(d.id)) && typeof d.id === 'number')
+        stabilityData.value = [...data, ...localOnly]
+      }
+    }
+  } catch (e) {
+    // 서버 연결 실패 시 localStorage 사용
+  }
+})
 </script>
 
 <style scoped>

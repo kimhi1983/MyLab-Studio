@@ -39,7 +39,7 @@ function seedProjects() {
 seedProjects()
 
 export function useProjectStore() {
-  const { formulas } = useFormulaStore()
+  const { formulas, updateFormula } = useFormulaStore()
 
   function allProjects() {
     return projects.value.map(p => {
@@ -72,8 +72,16 @@ export function useProjectStore() {
   }
 
   function deleteProject(id) {
+    // Cascade: 프로젝트에 속한 처방들의 project_id를 '' (미분류)으로 해제
+    formulas.value
+      .filter(f => f.project_id === id)
+      .forEach(f => updateFormula(f.id, { project_id: '' }))
     projects.value = projects.value.filter(p => p.id !== id)
     api.remove(id)
+  }
+
+  function getFormulaCount(id) {
+    return formulas.value.filter(f => f.project_id === id).length
   }
 
   function updateProject(id, data) {
@@ -85,5 +93,5 @@ export function useProjectStore() {
     return projects.value[idx]
   }
 
-  return { projects, allProjects, addProject, deleteProject, updateProject }
+  return { projects, allProjects, addProject, deleteProject, updateProject, getFormulaCount }
 }

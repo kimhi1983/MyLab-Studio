@@ -203,6 +203,12 @@ import { ref, computed, watch } from 'vue'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+function getAuthHeader() {
+  const token = localStorage.getItem('mylab:auth-token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 const { formulas } = useFormulaStore()
 const api = useAPI()
 
@@ -423,7 +429,11 @@ function autoJudgeStability(deltaE, viscChange) {
 function loadStabilityStatus(formulaTitle) {
   if (!formulaTitle) { stabilityStatus.value = null; return }
   const allStab = getStabilityData()
-  const matched = allStab.filter(d => d.formulaName === formulaTitle)
+  // formula_id 우선 매칭, 없으면 title로 폴백 (하위 호환)
+  const matched = allStab.filter(d =>
+    (selectedFormulaId.value && d.formulaId === selectedFormulaId.value) ||
+    d.formulaName === formulaTitle
+  )
   if (!matched.length) {
     stabilityStatus.value = { total: 0, pass: 0, warning: 0, fail: 0, items: [] }
     return
@@ -584,8 +594,33 @@ function storageKey(formulaId) {
   return `mylab:checklist:${formulaId || 'global'}`
 }
 
-function loadChecklist() {
-  const key = storageKey(selectedFormulaId.value)
+async function loadChecklist() {
+  const formulaId = selectedFormulaId.value
+  const key = storageKey(formulaId)
+
+  // 1. 서버에서 우선 로드 시도
+  if (formulaId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/user/checklists`, {
+        headers: { ...getAuthHeader() },
+      })
+      if (res.ok) {
+        const all = await res.json()
+        const serverRecord = all.find(r => r.id === formulaId || r.formula_id === formulaId)
+        if (serverRecord?.items) {
+          checklist.value = DEFAULT_CHECKLIST.map(def => ({
+            ...def,
+            checked: serverRecord.items.find(p => p.id === def.id)?.checked ?? false,
+          }))
+          // localStorage도 업데이트
+          localStorage.setItem(key, JSON.stringify(serverRecord.items))
+          return
+        }
+      }
+    } catch { /* 서버 실패 시 localStorage 폴백 */ }
+  }
+
+  // 2. localStorage 폴백
   const saved = localStorage.getItem(key)
   if (saved) {
     try {
@@ -604,7 +639,17 @@ function loadChecklist() {
 
 function saveChecklist() {
   const key = storageKey(selectedFormulaId.value)
-  localStorage.setItem(key, JSON.stringify(checklist.value.map(({ id, checked }) => ({ id, checked }))))
+  const items = checklist.value.map(({ id, checked }) => ({ id, checked }))
+  localStorage.setItem(key, JSON.stringify(items))
+  // 서버 동기화 (formulaId를 record id로 사용)
+  if (selectedFormulaId.value) {
+    const formulaId = selectedFormulaId.value
+    fetch(`${API_BASE}/api/user/checklists`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({ id: formulaId, formula_id: formulaId, items }),
+    }).catch(e => console.warn('[Checklist] 서버 동기화 실패:', e.message))
+  }
 }
 
 function resetChecklist() {

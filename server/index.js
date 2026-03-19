@@ -4484,6 +4484,15 @@ async function initAuthDB() {
     )
   `)
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_checklists (
+      id TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS user_settings (
       user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       widget_layout JSONB,
@@ -4709,6 +4718,7 @@ makeUserDataRouter('formulas')
 makeUserDataRouter('projects')
 makeUserDataRouter('notes')
 makeUserDataRouter('stability')
+makeUserDataRouter('checklists')
 
 // ── 사용자 설정 (위젯 레이아웃, 메모) ──
 app.get('/api/user/settings', authenticateToken, async (req, res) => {

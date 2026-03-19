@@ -257,6 +257,25 @@ export function useAPI() {
     return fetchJSON('/api/health')
   }
 
+  // ─── 안정성 데이터 ───
+  async function getStabilityData() {
+    return fetchJSON('/api/user/stability')
+  }
+  async function saveStabilityRecord(record) {
+    return fetchJSON('/api/user/stability', { method: 'POST', body: JSON.stringify(record) })
+  }
+
+  // ─── 체크리스트 ───
+  async function getChecklists() {
+    return fetchJSON('/api/user/checklists')
+  }
+  async function saveChecklist(formulaId, items) {
+    return fetchJSON('/api/user/checklists', {
+      method: 'POST',
+      body: JSON.stringify({ id: formulaId, formula_id: formulaId, items }),
+    })
+  }
+
   return {
     loading, error, fetchJSON,
     getStats,
@@ -281,5 +300,7 @@ export function useAPI() {
     getPurposeIngredients,
     validatePurposeGate,
     healthCheck,
+    getStabilityData, saveStabilityRecord,
+    getChecklists, saveChecklist,
   }
 }

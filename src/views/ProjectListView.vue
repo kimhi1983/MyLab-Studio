@@ -62,7 +62,7 @@ import ProgressBar from '../components/common/ProgressBar.vue'
 import EmptyState from '../components/common/EmptyState.vue'
 
 const router = useRouter()
-const { allProjects, addProject, deleteProject } = useProjectStore()
+const { allProjects, addProject, deleteProject, getFormulaCount } = useProjectStore()
 
 const showModal = ref(false)
 const newProject = reactive({ name: '', description: '' })
@@ -78,7 +78,11 @@ function onCreate() {
 }
 
 function onDelete(id) {
-  if (confirm('이 프로젝트를 삭제하시겠습니까?')) deleteProject(id)
+  const count = getFormulaCount(id)
+  const msg = count > 0
+    ? `이 프로젝트를 삭제하시겠습니까?\n\n⚠️ 연결된 처방 ${count}개는 삭제되지 않으며, 프로젝트 연결만 해제됩니다.`
+    : '이 프로젝트를 삭제하시겠습니까?'
+  if (confirm(msg)) deleteProject(id)
 }
 
 function goToProject(id) {
