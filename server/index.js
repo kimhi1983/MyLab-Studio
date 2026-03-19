@@ -5284,17 +5284,20 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       params
     )
 
-    // 4. purpose_ingredient_map에서 REQUIRED/FORBIDDEN 조회
-    let required = [], forbidden = []
+    // 4. Purpose Gate: matchTemplateFromDb로 목적 감지 + 필수/권장/금지 성분 조회
+    let pgRequired = [], pgRecommended = [], pgForbidden = [], pgDetected = []
     try {
-      const { rows: purposeRows } = await pool.query(
-        `SELECT inci_name, role FROM purpose_ingredient_map
-         WHERE lower(product_type) = lower($1) OR product_type = 'ALL'`,
-        [product_type]
-      )
-      required = purposeRows.filter(r => r.role === 'REQUIRED').map(r => r.inci_name)
-      forbidden = purposeRows.filter(r => r.role === 'FORBIDDEN').map(r => r.inci_name)
-    } catch (_) {}
+      const pgResult = await matchTemplateFromDb(product_type, requirements)
+      if (pgResult?.purposes) {
+        pgRequired    = pgResult.purposes.required    || []
+        pgRecommended = pgResult.purposes.recommended || []
+        pgForbidden   = pgResult.purposes.forbidden   || []
+        pgDetected    = pgResult.purposes.detected    || []
+        console.log(`[generate-idea] Purpose Gate: [${pgDetected.join(', ')}] REQUIRED=${pgRequired.length}종 RECOMMENDED=${pgRecommended.length}종 FORBIDDEN=${pgForbidden.length}종`)
+      }
+    } catch (pgErr) {
+      console.warn('[generate-idea] Purpose Gate 실패 (무시):', pgErr.message)
+    }
 
     // 5. 기본 처방 골격 구성 — 제품유형 베이스 강제 우선
     let baseIngredients
@@ -5357,9 +5360,9 @@ app.post('/api/formula/generate-idea', async (req, res) => {
     }
 
     // 6. FORBIDDEN 원료 제거
-    if (forbidden.length > 0) {
+    if (pgForbidden.length > 0) {
       baseIngredients = baseIngredients.filter(i =>
-        !forbidden.some(f => i.inci_name.toLowerCase() === f.toLowerCase())
+        !pgForbidden.some(f => i.inci_name.toLowerCase() === (f.inci_name || f).toLowerCase())
       )
     }
 
@@ -5512,6 +5515,61 @@ app.post('/api/formula/generate-idea', async (req, res) => {
       ? poolFormulas.map(f => `  - ${f.formula_name} (${f.product_type})`).join('\n')
       : '  (없음)'
 
+    // ── Purpose Gate 프롬프트 섹션 빌드 ──
+    // REQUIRED는 purpose별 대표 10개씩, 총 30개로 제한 (프롬프트 폭발 방지)
+    const pgRequiredLimited = (() => {
+      const seenPurpose = {}
+      const result = []
+      for (const r of pgRequired) {
+        const pk = r.purpose_key || 'unknown'
+        if (!seenPurpose[pk]) seenPurpose[pk] = 0
+        if (seenPurpose[pk] < 10) { result.push(r); seenPurpose[pk]++ }
+        if (result.length >= 30) break
+      }
+      return result
+    })()
+
+    const pgRequiredStr = pgRequiredLimited.length > 0
+      ? pgRequiredLimited.map(r =>
+          `   - ${r.inci_name}${r.korean_name ? ` (${r.korean_name})` : ''}` +
+          `${r.default_pct_int ? ` → 권장 ${(r.default_pct_int / 100).toFixed(1)}%` : ''}` +
+          (r.purpose_key ? ` [${r.purpose_key}]` : '')
+        ).join('\n')
+      : '   (없음)'
+
+    const pgForbiddenStr = pgForbidden.length > 0
+      ? pgForbidden.map(r =>
+          `   - ${r.inci_name}${r.korean_name ? ` (${r.korean_name})` : ''}`
+        ).join('\n')
+      : '   (없음)'
+
+    const pgRecommendedStr = pgRecommended.slice(0, 15).length > 0
+      ? pgRecommended.slice(0, 15).map(r =>
+          `   - ${r.inci_name}${r.korean_name ? ` (${r.korean_name})` : ''}` +
+          `${r.default_pct_int ? ` → 권장 ${(r.default_pct_int / 100).toFixed(1)}%` : ''}` +
+          (r.purpose_key ? ` [${r.purpose_key}]` : '')
+        ).join('\n')
+      : '   (없음)'
+
+    const pgSection = pgDetected.length > 0 ? `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 PURPOSE GATE 제약 조건 (최우선 규칙)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+감지된 제품 목적: ${pgDetected.join(', ')}
+
+■ REQUIRED — 각 목적별 대표 성분에서 최소 3개 이상 반드시 포함:
+${pgRequiredStr}
+
+■ FORBIDDEN — 절대 포함 금지:
+${pgForbiddenStr}
+
+■ RECOMMENDED — 가능하면 포함 (상위 15종):
+${pgRecommendedStr}
+
+★ 위 REQUIRED 목록에서 각 목적(purpose_key)당 최소 1개 이상 선택해 처방에 포함하라.
+★ FORBIDDEN 성분은 어떠한 경우에도 포함하지 마라.
+` : ''
+
     const aiPrompt = `╔══════════════════════════════════════╗
 ║     화장품 처방 설계 전문가 역할      ║
 ╚══════════════════════════════════════╝
@@ -5534,7 +5592,7 @@ app.post('/api/formula/generate-idea', async (req, res) => {
 
 3. 추가요구사항 반영
 ${requirementsRuleLines.length ? requirementsRuleLines.map(l => '   ' + l).join('\n') : '   (추가요구사항 없음)'}
-
+${pgSection}
 4. PRECISION-ARITHMETIC
    배합비 합계 = 100.00% (정확히)
    Aqua = 100 - 나머지 합계 (역산)
