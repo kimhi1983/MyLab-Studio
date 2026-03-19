@@ -103,7 +103,7 @@
                   <td class="cell-kr">{{ item.korean_name || '-' }}</td>
                   <td class="cell-cas">
                     <a
-                      v-if="item.cas_number"
+                      v-if="item.cas_number && item.cas_number !== 'NOT_FOUND'"
                       :href="`https://pubchem.ncbi.nlm.nih.gov/#query=${item.cas_number}`"
                       target="_blank"
                       rel="noopener noreferrer"
@@ -196,7 +196,7 @@
           <div class="ing-modal-title-wrap">
             <div class="ing-modal-inci">{{ (detailData || selectedItem).inci_name }}</div>
             <div class="ing-modal-kr">{{ (detailData || selectedItem).korean_name || '-' }}</div>
-            <div v-if="detailData?.cas_number" class="ing-modal-cas mono-text">CAS {{ detailData.cas_number }}</div>
+            <div v-if="detailData?.cas_number && detailData.cas_number !== 'NOT_FOUND'" class="ing-modal-cas mono-text">CAS {{ detailData.cas_number }}</div>
           </div>
           <button class="ing-modal-close" @click="closeDetail">×</button>
         </div>
@@ -280,9 +280,6 @@
                         <button v-if="entry.cir_assessment.length > 100" class="btn-expand" @click="toggleExpand(`m-${cc.code}-${ei}-cir`)">{{ isExpanded(`m-${cc.code}-${ei}-cir`) ? '접기' : '더보기' }}</button>
                       </div>
                     </div>
-                    <div v-if="entry.source" class="icc-row icc-source-row">
-                      <span class="crc-source-badge">{{ entry.source }}</span>
-                    </div>
                   </div>
                 </template>
               </div>
@@ -324,8 +321,7 @@
 
             <!-- 푸터 -->
             <div class="ing-modal-footer">
-              <span v-if="detailData.data_source" class="footer-source">출처: {{ detailData.data_source }}</span>
-              <span v-if="detailData.updated_at" class="footer-date mono-text">갱신: {{ formatDate(detailData.updated_at) }}</span>
+              <span v-if="detailData.updated_at" class="footer-date mono-text">마지막 업데이트: {{ formatDate(detailData.updated_at) }}</span>
             </div>
           </div>
 
