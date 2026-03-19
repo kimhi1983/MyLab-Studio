@@ -1245,7 +1245,11 @@ async function matchTemplateFromDb(productType, requirements) {
     const { rows: catRows } = await pool.query(
       'SELECT category_key, keywords, priority FROM product_categories ORDER BY priority DESC'
     )
-    const pt = (productType || '').toLowerCase()
+    // 동의어 정규화 (썬크림 → 선크림 등)
+    const _raw = (productType || '').toLowerCase()
+    const _synonyms = [['썬크림','선크림'],['썬케어','선크림'],['썬스크린','선크림'],['자외선차단크림','선크림']]
+    let pt = _raw
+    for (const [from, to] of _synonyms) { if (pt.includes(from)) pt = pt.replace(from, to) }
     let matchedCategory = null
 
     for (const row of catRows) {
@@ -3149,6 +3153,17 @@ async function initPurposeGateDB() {
     `)
     console.log('[PurposeGate] product_categories 시드 7건 삽입')
   }
+
+  // 선크림 키워드 동기화 — 썬크림 동의어 항상 보장 (시드가 이미 있어도 적용)
+  await pool.query(`
+    UPDATE product_categories
+    SET keywords = (
+      SELECT array(SELECT DISTINCT unnest(array_cat(keywords,
+        ARRAY['선크림','썬크림','썬케어','자외선차단','자외선','sun','spf','uv','sunscreen','sunblock']
+      )))
+    )
+    WHERE category_key = '선크림'
+  `)
 
   // 유기 UV 필터 + 하이브리드 선크림 시드 추가 (이미 있으면 무시)
   await pool.query(`
@@ -6013,7 +6028,16 @@ app.post('/api/purpose-gate/detect', async (req, res) => {
     const { product_name } = req.body
     if (!product_name) return res.status(400).json({ success: false, error: 'product_name 필요' })
 
-    const pt = product_name.toLowerCase()
+    // 동의어 정규화: 썬크림 = 선크림, 등
+    const SYNONYMS = [
+      ['썬크림', '선크림'], ['썬케어', '선크림'], ['썬스크린', '선크림'],
+      ['자외선차단크림', '선크림'], ['자차크림', '선크림'],
+      ['클렌징폼', '클렌징'], ['폼클렌저', '클렌징'], ['클렌징오일', '클렌징'],
+    ]
+    let pt = product_name.toLowerCase()
+    for (const [from, to] of SYNONYMS) {
+      if (pt.includes(from)) pt = pt.replace(from, to)
+    }
 
     // 1. product_categories 키워드 매칭 (priority DESC)
     const { rows: catRows } = await pool.query(

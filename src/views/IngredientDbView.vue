@@ -64,8 +64,8 @@
     </div>
 
     <!-- 메인 레이아웃 -->
-    <div class="main-layout" :class="{ 'panel-open': selectedItem !== null }">
-      <!-- 좌측: 목록 -->
+    <div class="main-layout">
+      <!-- 목록 -->
       <div class="list-panel">
         <div class="panel">
           <!-- 테이블 헤더 -->
@@ -183,178 +183,173 @@
         </div>
       </div>
 
-      <!-- 우측: 상세 패널 -->
-      <transition name="slide-panel">
-        <div v-if="selectedItem !== null" class="detail-panel">
-          <div class="panel detail-card">
-            <!-- 헤더 -->
-            <div class="detail-header">
-              <div class="detail-header-info">
-                <span class="section-label">INGREDIENT DETAIL</span>
-              </div>
-              <button class="btn-close" @click="closeDetail" title="닫기">✕</button>
-            </div>
+    </div>
+  </div>
 
-            <!-- 로딩 중 -->
-            <div v-if="detailLoading" class="detail-loading">
-              <div class="spinner"></div>
-              <span>정보 불러오는 중...</span>
-            </div>
+  <!-- ─── 성분 상세 모달 ─── -->
+  <Teleport to="body">
+    <div v-if="selectedItem !== null" class="ing-modal-overlay" @click.self="closeDetail">
+      <div class="ing-modal">
 
-            <!-- 풀 상세 데이터 -->
-            <div v-else-if="detailData" class="detail-body">
+        <!-- 모달 헤더 -->
+        <div class="ing-modal-hd">
+          <div class="ing-modal-title-wrap">
+            <div class="ing-modal-inci">{{ (detailData || selectedItem).inci_name }}</div>
+            <div class="ing-modal-kr">{{ (detailData || selectedItem).korean_name || '-' }}</div>
+            <div v-if="detailData?.cas_number" class="ing-modal-cas mono-text">CAS {{ detailData.cas_number }}</div>
+          </div>
+          <button class="ing-modal-close" @click="closeDetail">×</button>
+        </div>
 
-              <!-- ① 성분명 블록 -->
-              <div class="detail-name-block">
-                <div class="detail-inci">{{ detailData.inci_name }}</div>
-                <div class="detail-kr">{{ detailData.korean_name || '-' }}</div>
-                <div v-if="detailData.cas_number" class="detail-cas mono-text">CAS {{ detailData.cas_number }}</div>
-              </div>
+        <!-- 모달 바디 -->
+        <div class="ing-modal-body">
 
-              <!-- ② 국가별 규제 상세 -->
-              <div class="detail-section-card">
-                <div class="dsc-title">국가별 규제 상세</div>
-                <div
-                  v-for="cc in countryList"
-                  :key="cc.code"
-                  class="country-reg-card"
-                  :class="{ 'country-reg-has-data': detailData.regulations?.[cc.code]?.length }"
-                >
-                  <!-- 카드 헤더 -->
-                  <div class="crc-header">
-                    <span class="crc-name">{{ cc.label }}</span>
-                    <template v-if="detailData.regulations?.[cc.code]?.length">
-                      <span
-                        class="reg-status-chip"
-                        :class="regChipClass(detailData.regulations[cc.code][0].reg_status)"
-                      >
-                        {{ regStatusIcon(detailData.regulations[cc.code][0].reg_status) }}
-                        {{ regStatusLabel(detailData.regulations[cc.code][0].reg_status) || '확인필요' }}
-                      </span>
-                    </template>
-                    <span v-else class="crc-no-data">데이터 없음</span>
-                  </div>
+          <!-- 로딩 -->
+          <div v-if="detailLoading" class="ing-loading">
+            <div class="spinner"></div>
+            <span>정보 불러오는 중...</span>
+          </div>
 
-                  <!-- 카드 바디 (데이터 있는 경우) -->
+          <!-- 상세 데이터 -->
+          <div v-else-if="detailData">
+
+            <!-- 5개국 규제 + 배합 가이드 2열 그리드 -->
+            <div class="ing-reg-grid">
+
+              <!-- 5개국 규제 카드 -->
+              <div
+                v-for="cc in countryList"
+                :key="cc.code"
+                class="ing-country-card"
+              >
+                <div class="icc-hd">
+                  <span class="icc-name">{{ cc.label }}</span>
                   <template v-if="detailData.regulations?.[cc.code]?.length">
-                    <div
-                      v-for="(entry, ei) in detailData.regulations[cc.code]"
-                      :key="ei"
-                      class="crc-body"
-                      :class="{ 'crc-body-divider': ei > 0 }"
-                    >
-                      <div v-if="entry.max_concentration" class="crc-row">
-                        <span class="crc-label">최대 농도</span>
-                        <span class="crc-val mono-text">{{ entry.max_concentration }}</span>
-                      </div>
-                      <div v-if="entry.annex" class="crc-row">
-                        <span class="crc-label">{{ cc.code === 'EU' ? 'Annex' : '참조' }}</span>
-                        <span class="crc-val mono-text">{{ entry.annex }}</span>
-                      </div>
-                      <div v-if="entry.cfr" class="crc-row">
-                        <span class="crc-label">CFR</span>
-                        <span class="crc-val mono-text">{{ entry.cfr }}</span>
-                      </div>
-                      <div v-if="entry.concerns && entry.concerns.length" class="crc-row crc-row-note">
-                        <span class="crc-label">우려사항</span>
-                        <div class="crc-val crc-note-group">
-                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-con`) && entry.concerns.join(', ').length > 80 ? 'text-clamp-3' : '']">{{ entry.concerns.join(', ') }}</span>
-                          <button v-if="entry.concerns.join(', ').length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-con`)">{{ isExpanded(`${cc.code}-${ei}-con`) ? '접기' : '더보기' }}</button>
-                        </div>
-                      </div>
-                      <div v-if="entry.other_restrictions" class="crc-row crc-row-note">
-                        <span class="crc-label">제한사항</span>
-                        <div class="crc-val crc-note-group">
-                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-oth`) && entry.other_restrictions.length > 80 ? 'text-clamp-3' : '']">{{ entry.other_restrictions }}</span>
-                          <button v-if="entry.other_restrictions.length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-oth`)">{{ isExpanded(`${cc.code}-${ei}-oth`) ? '접기' : '더보기' }}</button>
-                        </div>
-                      </div>
-                      <div v-if="entry.note || entry.restriction_text" class="crc-row crc-row-note">
-                        <span class="crc-label">비고</span>
-                        <div class="crc-val crc-note-group">
-                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-note`) && (entry.note || entry.restriction_text).length > 80 ? 'text-clamp-3' : '']">{{ entry.note || entry.restriction_text }}</span>
-                          <button v-if="(entry.note || entry.restriction_text).length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-note`)">{{ isExpanded(`${cc.code}-${ei}-note`) ? '접기' : '더보기' }}</button>
-                        </div>
-                      </div>
-                      <div v-if="entry.cir_assessment" class="crc-row crc-row-note">
-                        <span class="crc-label">CIR</span>
-                        <div class="crc-val crc-note-group">
-                          <span :class="['crc-note-text', !isExpanded(`${cc.code}-${ei}-cir`) && entry.cir_assessment.length > 80 ? 'text-clamp-3' : '']">{{ entry.cir_assessment }}</span>
-                          <button v-if="entry.cir_assessment.length > 80" class="btn-expand" @click="toggleExpand(`${cc.code}-${ei}-cir`)">{{ isExpanded(`${cc.code}-${ei}-cir`) ? '접기' : '더보기' }}</button>
-                        </div>
-                      </div>
-                      <div v-if="entry.source" class="crc-row crc-row-source">
-                        <span class="crc-source-badge">{{ entry.source }}</span>
+                    <span class="reg-status-chip" :class="regChipClass(detailData.regulations[cc.code][0].reg_status)">
+                      {{ regStatusIcon(detailData.regulations[cc.code][0].reg_status) }}
+                      {{ regStatusLabel(detailData.regulations[cc.code][0].reg_status) || '확인필요' }}
+                    </span>
+                  </template>
+                  <span v-else class="icc-nodata">데이터 없음</span>
+                </div>
+
+                <template v-if="detailData.regulations?.[cc.code]?.length">
+                  <div
+                    v-for="(entry, ei) in detailData.regulations[cc.code]"
+                    :key="ei"
+                    class="icc-body"
+                    :class="{ 'icc-divider': ei > 0 }"
+                  >
+                    <div v-if="entry.max_concentration" class="icc-row">
+                      <span class="icc-label">최대 농도</span>
+                      <span class="icc-val mono-text">{{ entry.max_concentration }}</span>
+                    </div>
+                    <div v-if="entry.annex" class="icc-row">
+                      <span class="icc-label">{{ cc.code === 'EU' ? 'Annex' : '참조' }}</span>
+                      <span class="icc-val mono-text">{{ entry.annex }}</span>
+                    </div>
+                    <div v-if="entry.cfr" class="icc-row">
+                      <span class="icc-label">CFR</span>
+                      <span class="icc-val mono-text">{{ entry.cfr }}</span>
+                    </div>
+                    <div v-if="entry.concerns && entry.concerns.length" class="icc-row">
+                      <span class="icc-label">우려사항</span>
+                      <div class="icc-val icc-note-group">
+                        <span :class="['icc-note-text', !isExpanded(`m-${cc.code}-${ei}-con`) && entry.concerns.join(', ').length > 100 ? 'text-clamp-3' : '']">{{ entry.concerns.join(', ') }}</span>
+                        <button v-if="entry.concerns.join(', ').length > 100" class="btn-expand" @click="toggleExpand(`m-${cc.code}-${ei}-con`)">{{ isExpanded(`m-${cc.code}-${ei}-con`) ? '접기' : '더보기' }}</button>
                       </div>
                     </div>
-                  </template>
-                </div>
-              </div>
-
-              <!-- ③ 배합 가이드 -->
-              <div v-if="detailData.formulationGuide && detailData.formulationGuide.length" class="detail-section-card">
-                <div class="dsc-title">배합 가이드</div>
-                <div v-for="g in detailData.formulationGuide" :key="g.purpose_key + g.role" class="formulation-row">
-                  <span class="form-role-badge" :class="formRoleClass(g.role)">{{ formRoleLabel(g.role) }}</span>
-                  <span class="form-purpose">{{ g.purpose_key }}</span>
-                  <span v-if="g.default_pct_int != null" class="form-pct mono-text">
-                    {{ (g.default_pct_int / 100).toFixed(2) }}%<template v-if="g.max_pct_int != null && g.max_pct_int > g.default_pct_int"> ~ {{ (g.max_pct_int / 100).toFixed(2) }}%</template>
-                  </span>
-                  <span v-if="g.reason" class="form-reason">{{ g.reason }}</span>
-                </div>
-                <!-- EU 최대 허용 농도 -->
-                <template v-if="detailData.regulations?.EU?.some(r => r.max_concentration)">
-                  <div class="formulation-row fg-eu-conc">
-                    <span class="form-role-badge role-eu">EU 최대</span>
-                    <span class="form-purpose">규제 허용 농도</span>
-                    <span class="form-pct mono-text">{{ detailData.regulations.EU.find(r => r.max_concentration)?.max_concentration }}</span>
+                    <div v-if="entry.other_restrictions" class="icc-row">
+                      <span class="icc-label">제한사항</span>
+                      <div class="icc-val icc-note-group">
+                        <span :class="['icc-note-text', !isExpanded(`m-${cc.code}-${ei}-oth`) && entry.other_restrictions.length > 100 ? 'text-clamp-3' : '']">{{ entry.other_restrictions }}</span>
+                        <button v-if="entry.other_restrictions.length > 100" class="btn-expand" @click="toggleExpand(`m-${cc.code}-${ei}-oth`)">{{ isExpanded(`m-${cc.code}-${ei}-oth`) ? '접기' : '더보기' }}</button>
+                      </div>
+                    </div>
+                    <div v-if="entry.note || entry.restriction_text" class="icc-row">
+                      <span class="icc-label">비고</span>
+                      <div class="icc-val icc-note-group">
+                        <span :class="['icc-note-text', !isExpanded(`m-${cc.code}-${ei}-note`) && (entry.note || entry.restriction_text).length > 100 ? 'text-clamp-3' : '']">{{ entry.note || entry.restriction_text }}</span>
+                        <button v-if="(entry.note || entry.restriction_text).length > 100" class="btn-expand" @click="toggleExpand(`m-${cc.code}-${ei}-note`)">{{ isExpanded(`m-${cc.code}-${ei}-note`) ? '접기' : '더보기' }}</button>
+                      </div>
+                    </div>
+                    <div v-if="entry.cir_assessment" class="icc-row">
+                      <span class="icc-label">CIR</span>
+                      <div class="icc-val icc-note-group">
+                        <span :class="['icc-note-text', !isExpanded(`m-${cc.code}-${ei}-cir`) && entry.cir_assessment.length > 100 ? 'text-clamp-3' : '']">{{ entry.cir_assessment }}</span>
+                        <button v-if="entry.cir_assessment.length > 100" class="btn-expand" @click="toggleExpand(`m-${cc.code}-${ei}-cir`)">{{ isExpanded(`m-${cc.code}-${ei}-cir`) ? '접기' : '더보기' }}</button>
+                      </div>
+                    </div>
+                    <div v-if="entry.source" class="icc-row icc-source-row">
+                      <span class="crc-source-badge">{{ entry.source }}</span>
+                    </div>
                   </div>
                 </template>
               </div>
 
-              <!-- ④ 호환성 -->
-              <div v-if="detailData.compatibility && detailData.compatibility.length" class="detail-section-card">
-                <div class="dsc-title">호환성</div>
+              <!-- 배합 가이드 카드 (6번째 셀) -->
+              <div v-if="detailData.formulationGuide && detailData.formulationGuide.length" class="ing-country-card ing-guide-card">
+                <div class="icc-hd"><span class="icc-name">배합 가이드</span></div>
+                <div class="icc-guide-list">
+                  <div v-for="g in detailData.formulationGuide" :key="g.purpose_key + g.role" class="icc-guide-row">
+                    <span class="form-role-badge" :class="formRoleClass(g.role)">{{ formRoleLabel(g.role) }}</span>
+                    <span class="icc-guide-purpose">{{ g.purpose_key }}</span>
+                    <span v-if="g.default_pct_int != null" class="icc-guide-pct mono-text">
+                      {{ (g.default_pct_int / 100).toFixed(2) }}%<template v-if="g.max_pct_int != null && g.max_pct_int > g.default_pct_int"> ~ {{ (g.max_pct_int / 100).toFixed(2) }}%</template>
+                    </span>
+                    <span v-if="g.reason" class="icc-guide-reason">{{ g.reason }}</span>
+                  </div>
+                  <template v-if="detailData.regulations?.EU?.some(r => r.max_concentration)">
+                    <div class="icc-guide-row fg-eu-conc">
+                      <span class="form-role-badge role-eu">EU 최대</span>
+                      <span class="icc-guide-purpose">규제 허용 농도</span>
+                      <span class="icc-guide-pct mono-text">{{ detailData.regulations.EU.find(r => r.max_concentration)?.max_concentration }}</span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <!-- 호환성 -->
+            <div v-if="detailData.compatibility && detailData.compatibility.length" class="ing-compat-section">
+              <div class="ing-section-title">호환성</div>
+              <div class="ing-compat-list">
                 <div v-for="c in detailData.compatibility" :key="c.partner + c.severity" class="compat-row">
-                  <span class="compat-icon">{{ c.severity === 'forbidden' ? '⚠️' : c.severity === 'recommended' ? '💡' : '⚠️' }}</span>
+                  <span class="compat-icon">{{ c.severity === 'forbidden' ? '⚠️' : '💡' }}</span>
                   <span class="compat-partner mono-text">{{ c.partner }}</span>
                   <span class="compat-reason">{{ c.reason }}</span>
                 </div>
               </div>
-
-              <!-- 푸터 -->
-              <div class="detail-footer">
-                <span v-if="detailData.data_source" class="footer-source">출처: {{ detailData.data_source }}</span>
-                <span v-if="detailData.updated_at" class="footer-date mono-text">갱신: {{ formatDate(detailData.updated_at) }}</span>
-              </div>
             </div>
 
-            <!-- 상세 데이터 로드 실패 시 목록 데이터로 표시 -->
-            <div v-else class="detail-body">
-              <div class="detail-name-block">
-                <div class="detail-inci">{{ selectedItem.inci_name }}</div>
-                <div class="detail-kr">{{ selectedItem.korean_name || '-' }}</div>
-              </div>
-              <div class="detail-section-card">
-                <div class="dsc-title">국가별 규제 상세</div>
-                <div v-for="cc in countryList" :key="cc.code" class="country-reg-card">
-                  <div class="crc-header">
-                    <span class="crc-name">{{ cc.label }}</span>
-                    <template v-if="fallbackRegStatus(cc.code)">
-                      <span class="reg-status-chip" :class="regChipClass(fallbackRegStatus(cc.code))">
-                        {{ regStatusIcon(fallbackRegStatus(cc.code)) }} {{ regStatusLabel(fallbackRegStatus(cc.code)) }}
-                      </span>
-                    </template>
-                    <span v-else class="crc-no-data">데이터 없음</span>
-                  </div>
+            <!-- 푸터 -->
+            <div class="ing-modal-footer">
+              <span v-if="detailData.data_source" class="footer-source">출처: {{ detailData.data_source }}</span>
+              <span v-if="detailData.updated_at" class="footer-date mono-text">갱신: {{ formatDate(detailData.updated_at) }}</span>
+            </div>
+          </div>
+
+          <!-- 폴백: 상세 데이터 없음 -->
+          <div v-else>
+            <div class="ing-reg-grid">
+              <div v-for="cc in countryList" :key="cc.code" class="ing-country-card">
+                <div class="icc-hd">
+                  <span class="icc-name">{{ cc.label }}</span>
+                  <template v-if="fallbackRegStatus(cc.code)">
+                    <span class="reg-status-chip" :class="regChipClass(fallbackRegStatus(cc.code))">
+                      {{ regStatusIcon(fallbackRegStatus(cc.code)) }} {{ regStatusLabel(fallbackRegStatus(cc.code)) }}
+                    </span>
+                  </template>
+                  <span v-else class="icc-nodata">데이터 없음</span>
                 </div>
               </div>
             </div>
           </div>
+
         </div>
-      </transition>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -791,15 +786,11 @@ function formatDate(iso) {
   color: var(--text-sub);
 }
 
-/* ─── 메인 레이아웃 (좌우 분할) ─── */
+/* ─── 메인 레이아웃 ─── */
 .main-layout {
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
-  transition: grid-template-columns 0.25s ease;
-}
-.main-layout.panel-open {
-  grid-template-columns: 1fr 400px;
 }
 
 /* ─── 목록 패널 ─── */
@@ -1522,32 +1513,6 @@ function formatDate(iso) {
 }
 
 /* ─── 반응형 ─── */
-@media (max-width: 1100px) {
-  .main-layout.panel-open {
-    grid-template-columns: 60% 40%;
-  }
-}
-
-@media (max-width: 800px) {
-  .main-layout.panel-open {
-    grid-template-columns: 1fr;
-  }
-  .detail-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: min(380px, 100vw);
-    max-height: 100vh;
-    z-index: 100;
-    box-shadow: -4px 0 24px rgba(0,0,0,0.12);
-  }
-  .detail-card {
-    border-radius: 0;
-    border-right: none;
-  }
-}
-
 @media (max-width: 800px) {
   .col-cas, .cell-cas { display: none; }
 }
@@ -1694,5 +1659,166 @@ function formatDate(iso) {
   border: 1px solid #c8d8f0;
   font-family: var(--font-mono);
   font-size: 9px;
+}
+
+/* ─── 성분 상세 모달 ─── */
+.ing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.ing-modal {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.20);
+  max-width: 700px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ing-modal-hd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #ece6d8;
+  background: #faf8f4;
+  flex-shrink: 0;
+  gap: 12px;
+}
+.ing-modal-title-wrap { flex: 1; min-width: 0; }
+.ing-modal-inci {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.ing-modal-kr { font-size: 14px; color: var(--text-sub); margin-top: 3px; }
+.ing-modal-cas { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.ing-modal-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #ece6d8;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.ing-modal-close:hover { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+.ing-modal-body {
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ing-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--text-sub);
+  font-size: 13px;
+}
+
+/* ─── 5개국 규제 카드 2열 그리드 ─── */
+.ing-reg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.ing-country-card {
+  background: #faf8f4;
+  border: 1px solid #ece6d8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.icc-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: #f2ede4;
+  border-bottom: 1px solid #ece6d8;
+  flex-wrap: wrap;
+}
+.icc-name { font-size: 12px; font-weight: 700; color: var(--text-sub); min-width: 28px; }
+.icc-nodata { font-size: 11px; color: var(--text-dim); font-style: italic; }
+.icc-body { padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+.icc-divider { border-top: 1px dashed #ece6d8; padding-top: 8px; margin-top: 2px; }
+.icc-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; }
+.icc-label { flex-shrink: 0; width: 54px; font-size: 10px; color: var(--text-dim); padding-top: 1px; }
+.icc-val { color: var(--text); flex: 1; word-break: break-word; line-height: 1.5; font-size: 12px; }
+.icc-note-group { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.icc-note-text { font-size: 11px; color: var(--text-sub); line-height: 1.5; }
+.icc-source-row { margin-top: 2px; }
+
+/* ─── 배합 가이드 카드 ─── */
+.icc-guide-list { padding: 0; }
+.icc-guide-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border-bottom: 1px solid #ece6d8;
+  font-size: 12px;
+}
+.icc-guide-row:last-child { border-bottom: none; }
+.icc-guide-purpose { font-weight: 600; color: var(--text); flex: 1; }
+.icc-guide-pct { font-family: var(--font-mono); color: var(--accent); font-size: 11px; }
+.icc-guide-reason { color: var(--text-sub); font-size: 11px; width: 100%; }
+
+/* ─── 호환성 섹션 ─── */
+.ing-compat-section {
+  border: 1px solid #ece6d8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ing-section-title {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #8b7355;
+  padding: 6px 12px;
+  background: #f2ede4;
+  border-bottom: 1px solid #ece6d8;
+}
+.ing-compat-list { padding: 4px 0; }
+
+/* ─── 모달 푸터 ─── */
+.ing-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid #ece6d8;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ─── 반응형 ─── */
+@media (max-width: 600px) {
+  .ing-reg-grid { grid-template-columns: 1fr; }
+  .ing-modal { max-height: 90vh; }
+  .ing-modal-overlay { padding: 12px; }
 }
 </style>
