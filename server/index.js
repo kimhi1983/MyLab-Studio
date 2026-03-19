@@ -1462,9 +1462,14 @@ app.post('/api/guide-formula', async (req, res) => {
         }
       }
 
-      // REQUIRED 성분 추가
+      // REQUIRED 성분 추가 — 배합비 있는 것 우선, 최대 15개
+      const filteredRequired = (purposes.required || [])
+        .filter(r => r.default_pct_int > 0)
+        .sort((a, b) => (b.default_pct_int || 0) - (a.default_pct_int || 0))
+        .slice(0, 15)
+      console.log(`[PURPOSE GATE] 목적: ${purposes.detected.join(',')} | REQUIRED: ${(purposes.required||[]).length}→${filteredRequired.length} | FORBIDDEN: ${(purposes.forbidden||[]).length}`)
       const existingIncis = new Set(formulaIngredients.map(i => i.inci.toLowerCase()))
-      for (const req2 of purposes.required) {
+      for (const req2 of filteredRequired) {
         if (existingIncis.has(req2.inci_name.toLowerCase())) {
           purposeLog.skipped.push({ inci: req2.inci_name, reason: '템플릿에 이미 존재' })
           continue
@@ -1700,9 +1705,14 @@ async function buildDbFormula(productType, requirements, targetMarket) {
       }
     }
 
-    // 2b. REQUIRED 성분 추가 (이미 템플릿에 있으면 스킵)
+    // 2b. REQUIRED 성분 추가 — 배합비 있는 것 우선, 최대 15개
+    const filteredRequired = (purposes.required || [])
+      .filter(r => r.default_pct_int > 0)
+      .sort((a, b) => (b.default_pct_int || 0) - (a.default_pct_int || 0))
+      .slice(0, 15)
+    console.log(`[PURPOSE GATE] buildDbFormula 목적: ${purposes.detected.join(',')} | REQUIRED: ${(purposes.required||[]).length}→${filteredRequired.length} | FORBIDDEN: ${(purposes.forbidden||[]).length}`)
     const existingIncis = new Set(formulaIngredients.map(i => i.inci.toLowerCase()))
-    for (const req of purposes.required) {
+    for (const req of filteredRequired) {
       if (existingIncis.has(req.inci_name.toLowerCase())) {
         purposeLog.skipped.push({ inci: req.inci_name, reason: '템플릿에 이미 존재' })
         continue
@@ -1939,9 +1949,14 @@ async function findSmartIngredients(productType, purposes, targetMarket, limit =
   const ingredients = []
   const addedIncis = new Set()
 
-  // 1단계: Purpose Gate REQUIRED/RECOMMENDED 성분 (최우선)
+  // 1단계: Purpose Gate REQUIRED/RECOMMENDED 성분 (최우선) — 제한 적용
   if (purposes) {
-    for (const ing of [...purposes.required, ...purposes.recommended]) {
+    const capRequired = (purposes.required || [])
+      .filter(r => r.default_pct_int > 0)
+      .sort((a, b) => (b.default_pct_int || 0) - (a.default_pct_int || 0))
+      .slice(0, 15)
+    const capRecommended = (purposes.recommended || []).slice(0, 20)
+    for (const ing of [...capRequired, ...capRecommended]) {
       if (!addedIncis.has(ing.inci_name.toLowerCase())) {
         ingredients.push({
           inci_name: ing.inci_name,
@@ -2019,13 +2034,25 @@ function buildSmartPrompt({ productType, requirements, targetMarket, customIngre
   // 목적별 제약 블록
   let purposeBlock = ''
   if (purposes && purposes.detected.length > 0) {
-    const reqList = purposes.required.map(r =>
+    // REQUIRED: 배합비 있는 것 우선, default_pct_int DESC 정렬 후 최대 15개
+    const filteredRequired = (purposes.required || [])
+      .filter(r => r.default_pct_int > 0)
+      .sort((a, b) => (b.default_pct_int || 0) - (a.default_pct_int || 0))
+      .slice(0, 15)
+    // RECOMMENDED: 최대 20개
+    const cappedRecommended = (purposes.recommended || []).slice(0, 20)
+    // FORBIDDEN: 전부 포함 (금지는 빠지면 안 됨)
+    const allForbidden = purposes.forbidden || []
+
+    console.log(`[PURPOSE GATE] 목적: ${purposes.detected.join(',')} | REQUIRED: ${(purposes.required||[]).length}→${filteredRequired.length} | RECOMMENDED: ${(purposes.recommended||[]).length}→${cappedRecommended.length} | FORBIDDEN: ${allForbidden.length}`)
+
+    const reqList = filteredRequired.map(r =>
       `  - [필수] ${r.inci_name} (${r.korean_name}): ${r.fn}, 배합 ${(r.default_pct_int || 0) / 100}%${r.max_pct_int ? ` (최대 ${r.max_pct_int / 100}%)` : ''}`
     ).join('\n')
-    const recList = purposes.recommended.slice(0, 12).map(r =>
+    const recList = cappedRecommended.map(r =>
       `  - [권장] ${r.inci_name} (${r.korean_name}): ${r.fn}, 배합 ${(r.default_pct_int || 0) / 100}%${r.max_pct_int ? ` (최대 ${r.max_pct_int / 100}%)` : ''}`
     ).join('\n')
-    const forbList = purposes.forbidden.map(f => `  - [금지] ${f.inci_name}: ${f.reason}`).join('\n')
+    const forbList = allForbidden.map(f => `  - [금지] ${f.inci_name}: ${f.reason}`).join('\n')
     purposeBlock = `\n\n처방 목적: ${purposes.detected.join(', ')}
 목적별 필수 성분 (반드시 포함):
 ${reqList}
