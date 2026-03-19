@@ -538,6 +538,9 @@
             <!-- 원료 목록 미리보기 -->
             <div class="idea-table-wrap">
               <table class="idea-table">
+                <colgroup>
+                  <col class="col-name" /><col class="col-inci" /><col class="col-pct" /><col class="col-fn" /><col class="col-phase" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>원료명</th>
@@ -647,6 +650,19 @@
     </template>
     <!-- /기존 새 처방/편집 UI -->
   </div>
+
+  <!-- ─── 비커 로딩 오버레이 ─── -->
+  <Teleport to="body">
+    <Transition name="beaker-fade">
+      <div v-if="isAiFilling" class="beaker-overlay">
+        <div class="beaker-overlay-card">
+          <FormulaLoadingBeaker :step="beakerStep" />
+          <p class="beaker-overlay-msg">AI가 최적의 처방을 설계하고 있습니다...</p>
+          <p class="beaker-overlay-step">{{ aiFillStep }}</p>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup>
@@ -660,6 +676,7 @@ import { useExport } from '../composables/useExport.js'
 import StatusChip from '../components/common/StatusChip.vue'
 import IngredientTable from '../components/formula/IngredientTable.vue'
 import CopyFormulaView from './CopyFormulaView.vue'
+import FormulaLoadingBeaker from '../components/formula/FormulaLoadingBeaker.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -681,6 +698,23 @@ const activeCreateTab = ref('new')
 const aiRequirements = ref('')
 const isAiFilling = ref(false)
 const aiFillStep = ref('')
+const beakerStep = ref(1)
+let beakerTimer = null
+
+function startBeakerAnimation() {
+  beakerStep.value = 1
+  clearInterval(beakerTimer)
+  beakerTimer = setInterval(() => {
+    if (beakerStep.value < 3) beakerStep.value++
+  }, 12000) // 12s마다 1단계씩 진행 (1→2→3, 4는 완료 시)
+}
+function stopBeakerAnimation() {
+  beakerStep.value = 4
+  setTimeout(() => {
+    clearInterval(beakerTimer)
+    beakerTimer = null
+  }, 600)
+}
 
 // 기능 1: AI 처방 아이디어 미리보기
 const showIdeaModal = ref(false)
@@ -1358,6 +1392,7 @@ async function onGenerateIdea() {
   isAiFilling.value = true
   aiFillStep.value = '처방 아이디어 생성 중...'
   ideaResult.value = null
+  startBeakerAnimation()
 
   try {
     const res = await api.generateFormulaIdea({
@@ -1377,6 +1412,7 @@ async function onGenerateIdea() {
   } catch (err) {
     alert('처방 아이디어 생성 실패: ' + (err.message || '서버 오류'))
   } finally {
+    stopBeakerAnimation()
     isAiFilling.value = false
     aiFillStep.value = ''
   }
@@ -2587,7 +2623,7 @@ async function onAiFill() {
 .btn-spec-adjust:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── AI 아이디어 모달 ─── */
-.idea-modal { width: min(720px, 95vw); max-height: 80vh; display: flex; flex-direction: column; }
+.idea-modal { width: min(900px, 92vw); max-height: 85vh; display: flex; flex-direction: column; }
 .idea-modal-body { overflow-y: auto; padding: 16px 20px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .idea-spec-bar {
   display: flex;
@@ -2595,28 +2631,39 @@ async function onAiFill() {
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .idea-spec-item {
   display: flex;
   flex-direction: column;
   align-items: center;
   flex: 1;
-  padding: 8px 12px;
+  padding: 8px 14px;
   border-right: 1px solid var(--border);
-  min-width: 80px;
+  min-width: 110px;
+  white-space: nowrap;
 }
 .idea-spec-item:last-child { border-right: none; }
-.idea-spec-label { font-size: 9px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; }
-.idea-spec-val { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; font-family: var(--font-mono); }
+.idea-spec-label { font-size: 9px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; white-space: nowrap; }
+.idea-spec-val { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; font-family: var(--font-mono); white-space: nowrap; }
 .idea-table-wrap { overflow-x: auto; }
-.idea-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.idea-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+.idea-table colgroup col.col-name { width: 160px; }
+.idea-table colgroup col.col-inci { width: 260px; }
+.idea-table colgroup col.col-pct  { width: 80px; }
+.idea-table colgroup col.col-fn   { width: auto; }
+.idea-table colgroup col.col-phase { width: 56px; }
 .idea-table th { text-align: left; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
-.idea-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); }
-.idea-name { font-weight: 600; color: var(--text); min-width: 100px; }
-.idea-inci { font-family: var(--font-mono); font-size: 11px; color: var(--text-sub); min-width: 120px; }
-.idea-pct { font-family: var(--font-mono); font-weight: 700; color: var(--accent); text-align: right; min-width: 60px; }
-.idea-fn { font-size: 11px; color: var(--text-dim); }
+.idea-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idea-name { font-weight: 600; color: var(--text); }
+.idea-inci { font-family: var(--font-mono); font-size: 11px; color: var(--text-sub); }
+.idea-pct { font-family: var(--font-mono); font-weight: 700; color: var(--accent); text-align: right; }
+.idea-fn { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .idea-phase { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); text-align: center; }
 .idea-modal-footer {
   padding: 12px 20px;
@@ -2625,6 +2672,47 @@ async function onAiFill() {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ─── 비커 로딩 오버레이 ─── */
+.beaker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(250, 248, 244, 0.88);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.beaker-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 48px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 8px 40px rgba(139, 115, 85, 0.18);
+}
+.beaker-overlay-msg {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-sub);
+  letter-spacing: 0.2px;
+  margin: 0;
+}
+.beaker-overlay-step {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  margin: 0;
+  min-height: 16px;
+}
+.beaker-fade-enter-active,
+.beaker-fade-leave-active { transition: opacity 0.3s ease; }
+.beaker-fade-enter-from,
+.beaker-fade-leave-to { opacity: 0; }
 
 /* ─── 물성 조정 모달 ─── */
 .spec-modal { width: min(760px, 95vw); max-height: 82vh; display: flex; flex-direction: column; }
