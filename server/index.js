@@ -307,7 +307,7 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
     // 1. ingredient_master 기본 정보
     const { rows: masterRows } = await pool.query(
       `SELECT id, inci_name, korean_name, cas_number, ec_number, ingredient_type,
-              description, origin, ewg_score, purpose, source AS data_source, updated_at
+              description, origin, ewg_score, source AS data_source, updated_at
        FROM ingredient_master WHERE id = $1`,
       [id]
     )
@@ -330,15 +330,21 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
         const parsed = parseRestrictionField(r.restriction)
         let rawObj = null
         try { rawObj = typeof r.restriction === 'object' ? r.restriction : JSON.parse(r.restriction) } catch (_) {}
+        // JSON 내부 max_concentration이 "null" 문자열이면 무시
+        const jsonMaxConc = rawObj?.max_concentration
+        const maxConc = r.max_concentration ||
+          (jsonMaxConc && jsonMaxConc !== 'null' && jsonMaxConc !== 'undefined' ? jsonMaxConc : null)
         const entry = {
           source: r.source,
-          max_concentration: r.max_concentration || null,
-          restriction_text: parsed.text || (typeof r.restriction === 'string' ? r.restriction : null),
+          max_concentration: maxConc,
+          restriction_text: typeof r.restriction === 'string' && !r.restriction.startsWith('{') ? r.restriction : null,
           reg_status: parsed.reg_status || null,
-          annex: rawObj?.annex_type || rawObj?.annex || null,
+          annex: rawObj?.annex_type || (rawObj?.annex && rawObj.annex !== 'null' ? rawObj.annex : null) || null,
           note: (rawObj?.note && rawObj.note !== 'null') ? rawObj.note : null,
           summary: rawObj?.summary || null,
           cfr: rawObj?.cfr || null,
+          cir_assessment: rawObj?.cir_assessment || null,
+          concerns: Array.isArray(rawObj?.concerns) && rawObj.concerns.length ? rawObj.concerns : null,
           updated_at: r.updated_at,
         }
         if (/MFDS|KR|KOREA/.test(src)) regulations.KR.push(entry)

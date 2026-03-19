@@ -256,9 +256,17 @@
                         <span class="crc-label">CFR</span>
                         <span class="crc-val mono-text">{{ entry.cfr }}</span>
                       </div>
-                      <div v-if="entry.summary || entry.note || entry.restriction_text" class="crc-row crc-row-note">
+                      <div v-if="entry.concerns && entry.concerns.length" class="crc-row crc-row-note">
+                        <span class="crc-label">우려사항</span>
+                        <span class="crc-val crc-note-text">{{ entry.concerns.join(', ') }}</span>
+                      </div>
+                      <div v-if="entry.note || entry.restriction_text" class="crc-row crc-row-note">
                         <span class="crc-label">비고</span>
-                        <span class="crc-val crc-note-text">{{ entry.summary || entry.note || entry.restriction_text }}</span>
+                        <span class="crc-val crc-note-text">{{ entry.note || entry.restriction_text }}</span>
+                      </div>
+                      <div v-if="entry.cir_assessment" class="crc-row crc-row-note">
+                        <span class="crc-label">CIR</span>
+                        <span class="crc-val crc-note-text">{{ entry.cir_assessment }}</span>
                       </div>
                       <div v-if="entry.source" class="crc-row crc-row-source">
                         <span class="crc-source-badge">{{ entry.source }}</span>
