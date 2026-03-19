@@ -141,8 +141,8 @@
                     <span v-else class="cell-empty">-</span>
                   </td>
                   <td class="cell-ph mono-text">
-                    <span v-if="validPh(item.ph_min) || validPh(item.ph_max)">
-                      {{ validPh(item.ph_min) ? item.ph_min : '?' }} ~ {{ validPh(item.ph_max) ? item.ph_max : '?' }}
+                    <span v-if="validPh(item.ph_min) && validPh(item.ph_max)">
+                      {{ item.ph_min }} ~ {{ item.ph_max }}
                     </span>
                     <span v-else class="cell-empty">-</span>
                   </td>
@@ -249,9 +249,9 @@
                     <span class="prop-label">기능</span>
                     <span class="prop-val">{{ ingredientTypeLabel(detailData.ingredient_type) }}</span>
                   </template>
-                  <template v-if="validPh(detailData.ph_min) || validPh(detailData.ph_max)">
+                  <template v-if="validPh(detailData.ph_min) && validPh(detailData.ph_max)">
                     <span class="prop-label">pH 범위</span>
-                    <span class="prop-val mono-text">{{ validPh(detailData.ph_min) ? detailData.ph_min : '?' }} ~ {{ validPh(detailData.ph_max) ? detailData.ph_max : '?' }}</span>
+                    <span class="prop-val mono-text">{{ detailData.ph_min }} ~ {{ detailData.ph_max }}</span>
                   </template>
                   <template v-if="detailData.usage_min != null || detailData.usage_max != null">
                     <span class="prop-label">사용 농도</span>
@@ -339,9 +339,9 @@
                 <div class="detail-props-grid">
                   <span class="prop-label">기능</span>
                   <span class="prop-val">{{ ingredientTypeLabel(selectedItem.ingredient_type) }}</span>
-                  <template v-if="validPh(selectedItem.ph_min) || validPh(selectedItem.ph_max)">
+                  <template v-if="validPh(selectedItem.ph_min) && validPh(selectedItem.ph_max)">
                     <span class="prop-label">pH 범위</span>
-                    <span class="prop-val mono-text">{{ validPh(selectedItem.ph_min) ? selectedItem.ph_min : '?' }} ~ {{ validPh(selectedItem.ph_max) ? selectedItem.ph_max : '?' }}</span>
+                    <span class="prop-val mono-text">{{ selectedItem.ph_min }} ~ {{ selectedItem.ph_max }}</span>
                   </template>
                   <template v-if="selectedItem.ewg_score != null && selectedItem.ewg_score > 0">
                     <span class="prop-label">EWG 등급</span>
