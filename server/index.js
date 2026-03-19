@@ -5357,6 +5357,138 @@ function getBaseKey(product_type) {
   return null
 }
 
+// ─── 제형별 절대 강제 규칙 (프롬프트 최상단 삽입용) ───
+function getMandatoryRules(baseKey) {
+  if (baseKey === '선크림') {
+    return `
+🚨🚨🚨 [절대 규칙 — 선크림 전용 — 위반 시 처방 무효] 🚨🚨🚨
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+이 처방은 선크림(SPF 자외선차단제)입니다. 아래 6가지를 반드시 모두 지키세요:
+
+1. ⚡ Zinc Oxide (INCI: Zinc Oxide)를 반드시 10% 이상 포함하세요.
+   → PA++++는 UVA 차단 = ZnO 없이 달성 불가능. 최소 8%, 권장 10~20%.
+
+2. ⚡ Titanium Dioxide (INCI: Titanium Dioxide)를 반드시 3% 이상 포함하세요.
+   → UVB 차단의 핵심 물리적 필터.
+
+3. ⚡ 정제수(Aqua)는 반드시 60% 이하로 유지하세요.
+   → 무기필터 제형에서 수분 과다 시 안정성 저하.
+
+4. ⚡ 화학적 자외선차단제(Ethylhexyl Methoxycinnamate, Bis-Ethylhexyloxyphenol Methoxyphenyl Triazine, Diethylamino Hydroxybenzoyl Hexyl Benzoate 등) 최소 1종 포함.
+   → 물리+화학 병용으로 광범위 UVA/UVB 차단.
+
+5. ⚡ 무기필터 분산제(Polyhydroxystearic Acid 또는 Isostearic Acid)를 반드시 포함하세요.
+   → ZnO/TiO2 응집 방지 필수.
+
+6. ⚡ 피막형성제(VP/Eicosene Copolymer, Trimethylsiloxysilicate, Acrylates/Octylacrylamide Copolymer 등) 1종 이상 포함.
+   → 워터프루프 성능과 밀착력 필수.
+
+위 6가지 중 하나라도 빠지면 처방을 즉시 재설계하세요.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`
+  }
+  if (baseKey === '립스틱') {
+    return `
+🚨🚨🚨 [절대 규칙 — 립스틱 전용 — 위반 시 처방 무효] 🚨🚨🚨
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+이 처방은 립스틱(무수 Anhydrous 제형)입니다. 아래 3가지를 반드시 지키세요:
+
+1. ⚡ 정제수(Aqua, Water)를 절대 포함하지 마세요. Aqua = 0%.
+   → 립스틱은 100% 무수 제형입니다.
+
+2. ⚡ Iron Oxide 색소(CI 77491/CI 77492/CI 77499) 중 최소 1종 이상 포함하세요.
+
+3. ⚡ 왁스(Wax/Cera)를 반드시 2종 이상 포함하세요.
+   → Carnauba Wax, Candelilla Wax, Ozokerite, Ceresin, Cera Alba 중 2종+.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`
+  }
+  if (baseKey === '쿠션' || baseKey === 'BB크림' || baseKey === '파운데이션') {
+    return `
+🚨🚨🚨 [절대 규칙 — 쿠션/파운데이션 전용 — 위반 시 처방 무효] 🚨🚨🚨
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+이 처방은 쿠션/파운데이션(커버리지 제형)입니다. 아래 5가지를 반드시 지키세요:
+
+1. ⚡ Iron Oxide 색소 3종(CI 77491/CI 77492/CI 77499)을 반드시 모두 포함하세요.
+
+2. ⚡ Titanium Dioxide(CI 77891)를 3% 이상 포함하세요. 커버력 핵심.
+
+3. ⚡ Mica(CI 77019)를 반드시 포함하세요. 광택감+발림성 필수.
+
+4. ⚡ 체질 안료(Silica, Nylon-12, Boron Nitride 등) 중 1종 이상 포함하세요.
+
+5. ⚡ 실리콘 베이스(Cyclopentasiloxane, Dimethicone, Phenyl Trimethicone) 중 1종 포함하세요.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`
+  }
+  return ''
+}
+
+// ─── 제형별 필수 성분 후처리 자동 주입/제거 ───
+function autoFixFormulaByType(ingredients, baseKey) {
+  const fixes = []
+
+  if (baseKey === '선크림') {
+    const znoItem = ingredients.find(i => /zinc oxide/i.test(i.inci_name || ''))
+    const hasTiO2 = ingredients.some(i => /titanium dioxide/i.test(i.inci_name || ''))
+
+    if (!znoItem) {
+      ingredients.push({
+        inci_name: 'Zinc Oxide', korean_name: '징크옥사이드', percentage: 10.0,
+        function: '물리적 자외선차단제 (UVA/UVB)', phase: 'B', name: '징크옥사이드',
+      })
+      fixes.push('Zinc Oxide 10% 자동 추가 (선크림 필수)')
+    } else if (znoItem.percentage < 8) {
+      const old = znoItem.percentage
+      znoItem.percentage = 10.0
+      fixes.push(`Zinc Oxide ${old}% → 10% 상향 (최소 8% 규정)`)
+    }
+
+    if (!hasTiO2) {
+      ingredients.push({
+        inci_name: 'Titanium Dioxide', korean_name: '티타늄디옥사이드', percentage: 5.0,
+        function: '물리적 자외선차단제 (UVB)', phase: 'B', name: '티타늄디옥사이드',
+      })
+      fixes.push('Titanium Dioxide 5% 자동 추가 (선크림 필수)')
+    }
+  }
+
+  if (baseKey === '립스틱') {
+    for (let i = ingredients.length - 1; i >= 0; i--) {
+      const inci = (ingredients[i].inci_name || '').toLowerCase()
+      const nm = ingredients[i].name || ''
+      if (inci === 'aqua' || inci === 'water' || nm === '정제수') {
+        const pct = ingredients[i].percentage || 0
+        ingredients.splice(i, 1)
+        fixes.push(`Aqua ${pct}% 제거 (립스틱 무수 제형)`)
+      }
+    }
+  }
+
+  if (baseKey === '쿠션' || baseKey === 'BB크림' || baseKey === '파운데이션') {
+    const has77491 = ingredients.some(i => /77491/i.test(i.inci_name || ''))
+    const has77492 = ingredients.some(i => /77492/i.test(i.inci_name || ''))
+    const has77499 = ingredients.some(i => /77499/i.test(i.inci_name || ''))
+    if (!has77491) {
+      ingredients.push({ inci_name: 'CI 77491', korean_name: '적색산화철', percentage: 0.5, function: '색소 (적)', phase: 'B', name: '적색산화철' })
+      fixes.push('CI 77491 0.5% 자동 추가')
+    }
+    if (!has77492) {
+      ingredients.push({ inci_name: 'CI 77492', korean_name: '황색산화철', percentage: 1.0, function: '색소 (황)', phase: 'B', name: '황색산화철' })
+      fixes.push('CI 77492 1.0% 자동 추가')
+    }
+    if (!has77499) {
+      ingredients.push({ inci_name: 'CI 77499', korean_name: '흑색산화철', percentage: 0.1, function: '색소 (흑)', phase: 'B', name: '흑색산화철' })
+      fixes.push('CI 77499 0.1% 자동 추가')
+    }
+  }
+
+  if (fixes.length > 0) console.log(`[AUTO-FIX] ${baseKey} 후처리:`, fixes.join(' | '))
+  return { ingredients, fixes }
+}
+
 // ─── POST /api/formula/generate-idea — 제품유형 베이스 강제 + 키워드 보정 ────
 app.post('/api/formula/generate-idea', async (req, res) => {
   try {
@@ -5729,7 +5861,7 @@ ${_guideCommon}
     const aiPrompt = `╔══════════════════════════════════════╗
 ║     화장품 처방 설계 전문가 역할      ║
 ╚══════════════════════════════════════╝
-
+${getMandatoryRules(baseKey)}
 [제품유형]: ${product_type}
 [처방명]: ${formula_name || '(미지정)'}
 [추가요구사항]: ${requirements || '(없음)'}
@@ -5895,6 +6027,15 @@ ${colorantStr}
     }
 
     const usedIngredients = aiResult?.formula_input || baseIngredients
+
+    // ── 14-a. 제형별 필수 성분 후처리: ZnO/TiO2 주입, Aqua 제거, Iron Oxide 주입 ──
+    if (baseKey && aiResult) {
+      const { fixes: autoFixNotes } = autoFixFormulaByType(usedIngredients, baseKey)
+      if (autoFixNotes.length > 0) {
+        if (!aiResult.autoFixes) aiResult.autoFixes = []
+        aiResult.autoFixes.push(...autoFixNotes)
+      }
+    }
 
     // ── 14-b. 무수(anhydrous) 제형: AI가 추가한 Aqua 제거 ──
     // balance_key가 Aqua가 아닌 제형(오일/왁스/파우더 베이스)에서만 Aqua 완전 제거
