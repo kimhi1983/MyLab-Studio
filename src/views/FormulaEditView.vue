@@ -95,42 +95,11 @@
             <input v-model="form.title" class="form-input" placeholder="처방명을 입력하세요">
           </div>
           <div class="form-group">
-            <label class="form-label">제품 유형</label>
-            <input
-              v-model="form.product_type"
-              list="product-type-list"
-              class="form-input"
-              placeholder="선택 또는 직접 입력"
-            >
-            <datalist id="product-type-list">
-              <option v-for="t in allProductOptions" :key="t.value" :value="t.label">{{ t.group }} — {{ t.label }}</option>
-            </datalist>
-          </div>
-          <div class="form-group">
             <label class="form-label">프로젝트</label>
             <select v-model="form.project_id" class="form-input">
               <option value="">없음</option>
               <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
-          </div>
-
-          <!-- Purpose Gate 자동 감지 결과 -->
-          <div v-if="purposeDetectResult" class="purpose-gate-hint">
-            <div class="pg-detect-row">
-              <span class="pg-badge pg-cat">{{ purposeDetectResult.category_key }}</span>
-              <span class="pg-sep">|</span>
-              <span class="pg-label">주 목적</span>
-              <span class="pg-badge pg-purpose">{{ purposeDetectResult.primary_purpose }}</span>
-              <span class="pg-sep">|</span>
-              <span class="pg-label">신뢰도</span>
-              <span class="pg-badge" :class="purposeDetectResult.confidence === 'high' ? 'pg-high' : purposeDetectResult.confidence === 'medium' ? 'pg-med' : 'pg-low'">
-                {{ purposeDetectResult.confidence }}
-              </span>
-            </div>
-            <div v-if="purposeRequiredPreview.length" class="pg-required-row">
-              <span class="pg-req-label">필수 성분</span>
-              <span class="pg-req-list">{{ purposeRequiredPreview.map(i => i.korean_name || i.inci_name).join(', ') }}</span>
-            </div>
           </div>
 
           <!-- 전성분 자동 채우기 -->
@@ -139,13 +108,12 @@
             <input v-model="aiRequirements" class="form-input" placeholder="예: 고보습, 민감성 피부, 비건, EWG 그린">
             <button
               class="btn-ai-fill"
-              :disabled="!form.product_type || isAiFilling"
+              :disabled="isAiFilling"
               @click="onGenerateIdea"
             >
               <span v-if="isAiFilling" class="ai-spinner"></span>
               {{ isAiFilling ? aiFillStep : '스마트 처방 생성' }}
             </button>
-            <div v-if="!form.product_type" class="ai-hint">제품 유형을 먼저 선택하세요</div>
           </div>
         </div>
       </div>
@@ -155,7 +123,6 @@
         <div class="panel-header">
           <span class="section-label">PHYSICAL SPEC</span>
           <span class="section-title">물성 · 안정성</span>
-          <span v-if="!form.product_type" class="props-hint">제품 유형을 선택하면 기본값이 채워집니다</span>
           <button
             v-if="form.formula_data.ingredients.length >= 1 && specChangedFields.length > 0"
             class="btn-spec-adjust"
@@ -217,28 +184,6 @@
     <div v-if="ingredientSumWarning" class="sum-warning-banner" :class="ingredientSumClass">
       <span class="sum-icon">⚠</span>
       <span>{{ ingredientSumWarning }}</span>
-    </div>
-
-    <!-- Purpose Gate 검증 결과 배너 -->
-    <div v-if="purposeValidateResult" class="purpose-validate-banner">
-      <div class="pvb-header">
-        <span class="pvb-title">Purpose Gate 검증</span>
-        <span class="pvb-score" :style="{ color: purposeValidateResult.purpose_score >= 70 ? 'var(--green)' : purposeValidateResult.purpose_score >= 40 ? '#f59e0b' : 'var(--red)' }">
-          목적 적합도 {{ purposeValidateResult.purpose_score }}점
-        </span>
-        <button class="pvb-close" @click="purposeValidateResult = null">×</button>
-      </div>
-      <div v-if="purposeValidateResult.warnings?.length" class="pvb-warnings">
-        <div
-          v-for="(w, i) in purposeValidateResult.warnings"
-          :key="i"
-          class="pvb-warn-item"
-          :class="w.startsWith('⛔') ? 'pvb-error' : w.startsWith('⚠') ? 'pvb-warn' : 'pvb-info'"
-        >{{ w }}</div>
-      </div>
-      <div v-if="!purposeValidateResult.warnings?.length" class="pvb-ok">
-        ✓ 처방이 목적 성분 기준을 충족합니다
-      </div>
     </div>
 
     <!-- Ingredient Table -->
@@ -720,12 +665,6 @@ function stopBeakerAnimation() {
 const showIdeaModal = ref(false)
 const ideaResult = ref(null)
 
-// Purpose Gate
-const purposeDetectResult = ref(null)
-const purposeRequiredPreview = ref([])
-const purposeValidateResult = ref(null)
-let purposeDebounceTimer = null
-
 // 기능 2: 물성 연동 조정
 const showSpecModal = ref(false)
 const isSpecAdjusting = ref(false)
@@ -857,37 +796,6 @@ const statuses = [
   { value: 'review', label: '검토중', ...statusStyles.review },
   { value: 'done', label: '완료', ...statusStyles.done },
 ]
-
-// 제품 유형 변경 시 물성 기본값 자동 채움
-watch(() => form.product_type, (newType) => {
-  if (newType) generatePhysicalProps(newType)
-})
-
-// 제품 유형 변경 시 Purpose Gate 자동 감지 (debounce 500ms)
-watch(() => form.product_type, (newType) => {
-  purposeDetectResult.value = null
-  purposeRequiredPreview.value = []
-  if (!newType) return
-  clearTimeout(purposeDebounceTimer)
-  purposeDebounceTimer = setTimeout(async () => {
-    try {
-      const res = await api.detectPurpose(newType)
-      if (res?.success) {
-        purposeDetectResult.value = res
-        // REQUIRED 성분 미리보기 최대 5개
-        const primary = res.primary_purpose
-        if (primary) {
-          const ingRes = await api.getPurposeIngredients(primary, 'REQUIRED', 5)
-          if (ingRes?.success) {
-            purposeRequiredPreview.value = ingRes.ingredients || []
-          }
-        }
-      }
-    } catch (_) {
-      // Purpose Gate 감지 실패는 조용히 처리
-    }
-  }, 500)
-})
 
 // 물성 값 변경 감지 — 처방 자동 조정 버튼 활성화
 watch(
@@ -1387,7 +1295,7 @@ function onIngredientsUpdate(newIngredients) {
 // ───────────────────────────────────────────────
 
 async function onGenerateIdea() {
-  if (!form.product_type || isAiFilling.value) return
+  if (!form.title.trim() || isAiFilling.value) return
 
   isAiFilling.value = true
   aiFillStep.value = '처방 생성 중...'
@@ -1396,7 +1304,6 @@ async function onGenerateIdea() {
 
   try {
     const res = await api.generateFormulaIdea({
-      product_type: form.product_type,
       formula_name: form.title || '',
       requirements: aiRequirements.value || '',
     })
@@ -1432,7 +1339,7 @@ async function applyIdeaResult() {
   }))
   form.formula_data.total_percentage = ideaResult.value.totalPercentage || 100
 
-  if (!form.title.trim()) form.title = `${form.product_type} 처방`
+  if (!form.title.trim()) form.title = '스마트 처방'
   if (!form.tags.includes('스마트처방')) form.tags.push('스마트처방')
 
   // 예상 물성 반영
@@ -1445,15 +1352,6 @@ async function applyIdeaResult() {
 
   showIdeaModal.value = false
   ideaResult.value = null
-
-  // Purpose Gate 자동 검증
-  const ings = form.formula_data.ingredients
-  if (form.product_type && ings.length) {
-    try {
-      const vRes = await api.validatePurposeGate(form.product_type, ings)
-      if (vRes?.success) purposeValidateResult.value = vRes
-    } catch (_) {}
-  }
 }
 
 // ───────────────────────────────────────────────
@@ -1520,7 +1418,7 @@ function isSpecNew(ing) {
 // ───────────────────────────────────────────────
 
 async function onAiFill() {
-  if (!form.product_type || isAiFilling.value) return
+  if (isAiFilling.value) return
 
   const hasIngredients = form.formula_data.ingredients.length > 0
   if (hasIngredients && !confirm('기존 원료 배합표를 덮어씌웁니다. 계속하시겠습니까?')) return
@@ -1535,8 +1433,8 @@ async function onAiFill() {
       .filter(f => physicalProps[f.key])
       .map(f => `${f.label}: ${physicalProps[f.key]}`)
     const res = await api.generateAiFormula({
-      productType: form.product_type,
-      requirements: aiRequirements.value || form.product_type,
+      productType: form.title || '',
+      requirements: aiRequirements.value || '',
       physicalSpecs: specEntries.length ? specEntries : undefined,
     })
 
@@ -1553,12 +1451,12 @@ async function onAiFill() {
 
       // 처방명이 비어있으면 자동 설정
       if (!form.title.trim()) {
-        form.title = `${form.product_type} 처방`
+        form.title = '스마트 처방'
       }
       // 태그 추가
       if (!form.tags.includes('스마트처방')) form.tags.push('스마트처방')
       // 메모에 복합원료 + 제조방법 생성
-      res.data._productType = form.product_type
+      res.data._productType = form.title || ''
       form.memo = buildAiMemo(res.data, form.memo)
 
     } else {
@@ -1890,51 +1788,6 @@ async function onAiFill() {
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-dim);
-}
-
-/* ─── Purpose Gate UI ─────────────────────────── */
-.purpose-gate-hint {
-  margin: 6px 0 8px;
-  padding: 8px 10px;
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-  border-radius: 6px;
-  font-size: 12px;
-}
-.pg-detect-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.pg-sep { color: var(--border); }
-.pg-label { color: var(--text-sub); }
-.pg-badge {
-  padding: 1px 7px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.pg-cat { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
-.pg-purpose { background: color-mix(in srgb, #10b981 15%, transparent); color: #10b981; }
-.pg-high { background: #d1fae5; color: #065f46; }
-.pg-med { background: #fef3c7; color: #92400e; }
-.pg-low { background: #fee2e2; color: #991b1b; }
-.pg-required-row {
-  margin-top: 5px;
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-.pg-req-label {
-  flex-shrink: 0;
-  color: var(--text-sub);
-  font-size: 11px;
-}
-.pg-req-list {
-  color: var(--text);
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 /* Purpose Gate 검증 배너 */

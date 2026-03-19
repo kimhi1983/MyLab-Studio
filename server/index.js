@@ -5287,7 +5287,7 @@ function getBaseKey(product_type) {
 app.post('/api/formula/generate-idea', async (req, res) => {
   try {
     // UTF-8 안전 디코딩 (한글 깨짐 방지)
-    const product_type = Buffer.from(req.body.product_type || '', 'utf8').toString('utf8')
+    const product_type_raw = Buffer.from(req.body.product_type || '', 'utf8').toString('utf8')
     const formula_name = Buffer.from(req.body.formula_name  || '', 'utf8').toString('utf8')
     const requirements = Buffer.from(req.body.requirements  || '', 'utf8').toString('utf8')
     const kw = (formula_name + ' ' + requirements).toLowerCase()
@@ -5302,7 +5302,23 @@ app.post('/api/formula/generate-idea', async (req, res) => {
     const highGloss = kw.includes('고광택') || kw.includes('글로시') || kw.includes('shiny') || kw.includes('gloss')
     const waterproofMode = kw.includes('워터프루프') || kw.includes('waterproof')
 
-    // 2. 제품유형 베이스 강제 결정
+    // 2. 제품유형 자동 감지 — product_type이 없으면 formula_name + requirements에서 추출
+    // getBaseKey()는 썬크림/크림/샴푸/립스틱 등 키워드 매칭
+    let product_type = product_type_raw
+    if (!product_type) {
+      // formula_name + requirements 텍스트에서 제형 자동 감지
+      const autoDetectText = `${formula_name} ${requirements}`
+      const autoKey = getBaseKey(autoDetectText)
+      if (autoKey) {
+        product_type = autoKey  // e.g. '선크림', '크림', '샴푸'
+        console.log(`[AUTO DETECT] formula_name="${formula_name}" + requirements="${requirements}" → 제형: ${autoKey}`)
+      } else {
+        product_type = '크림'  // 감지 실패 시 기본값
+        console.log(`[AUTO DETECT] formula_name="${formula_name}" + requirements="${requirements}" → 감지 실패, 기본값: 크림`)
+      }
+    }
+
+    // 2b. 제품유형 베이스 강제 결정
     const baseKey = getBaseKey(product_type)
     const baseStructure = baseKey ? PRODUCT_BASE[baseKey] : null
     console.log(`[generate-idea] product_type="${product_type}" → baseKey="${baseKey}", aqua_max=${baseStructure?.aqua_max ?? 'N/A'}`)
@@ -5338,9 +5354,11 @@ app.post('/api/formula/generate-idea', async (req, res) => {
     })
 
     // 4. Purpose Gate: matchTemplateFromDb로 목적 감지 + 필수/권장/금지 성분 조회
+    //    product_type이 자동 감지된 경우 formula_name도 함께 전달해 목적 감지 정확도 향상
+    const pgSearchText = product_type_raw ? product_type : `${formula_name} ${product_type}`
     let pgRequired = [], pgRecommended = [], pgForbidden = [], pgDetected = []
     try {
-      const pgResult = await matchTemplateFromDb(product_type, requirements)
+      const pgResult = await matchTemplateFromDb(pgSearchText, `${formula_name} ${requirements}`)
       if (pgResult?.purposes) {
         pgRequired    = pgResult.purposes.required    || []
         pgRecommended = pgResult.purposes.recommended || []
