@@ -338,8 +338,13 @@ app.get('/api/ingredients/:id/detail', async (req, res) => {
           source: r.source,
           max_concentration: maxConc,
           restriction_text: typeof r.restriction === 'string' && !r.restriction.startsWith('{') ? r.restriction : null,
-          reg_status: parsed.reg_status || null,
-          annex: rawObj?.annex_ref || rawObj?.annex_type || (rawObj?.annex && rawObj.annex !== 'null' ? rawObj.annex : null) || null,
+          reg_status: parsed.reg_status || (typeof r.restriction === 'string' && !r.restriction.startsWith('{')
+            ? (r.restriction.includes('금지') || r.restriction.includes('prohibit') ? 'prohibited'
+               : r.restriction.includes('제한') || r.restriction.includes('restrict') ? 'restricted'
+               : (r.restriction.includes('없음') || r.restriction.includes('허용') || r.restriction.includes('allowed')) ? 'allowed'
+               : null)
+            : null),
+          annex: rawObj?.annex_ref || rawObj?.restriction_code || rawObj?.annex_type || (rawObj?.annex && rawObj.annex !== 'null' ? rawObj.annex : null) || null,
           note: (rawObj?.note && rawObj.note !== 'null') ? rawObj.note : null,
           summary: rawObj?.summary || null,
           cfr: rawObj?.cfr || null,
@@ -4928,7 +4933,7 @@ app.get('/api/ingredients/db', async (req, res) => {
     const countRes = await pool.query(`SELECT COUNT(*) FROM ingredient_master im ${whereClause}`, params.slice(0, idx - 1))
     params.push(lim, off)
     const { rows } = await pool.query(
-      `SELECT im.inci_name, im.korean_name, im.cas_number, im.ingredient_type, im.ewg_score,
+      `SELECT im.id, im.inci_name, im.korean_name, im.cas_number, im.ingredient_type, im.ewg_score,
               im.description,
               im.function_inci, im.ph_min, im.ph_max,
               im.usage_level_min, im.usage_level_max
@@ -4992,6 +4997,7 @@ app.get('/api/ingredients/db', async (req, res) => {
       // function_inci: 없으면 purpose 폴백
       const function_inci = r.function_inci || r.purpose || null
       return {
+        id: r.id,
         inci_name: r.inci_name,
         korean_name: r.korean_name,
         cas_number: r.cas_number,
