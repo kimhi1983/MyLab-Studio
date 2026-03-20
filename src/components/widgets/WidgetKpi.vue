@@ -13,37 +13,6 @@
       </div>
     </div>
 
-    <!-- 원료DB 현황 -->
-    <div class="db-status-bar" v-if="dbIngredients > 0">
-      <div class="db-status-item">
-        <span class="db-status-label">총 원료</span>
-        <span class="db-status-val">{{ fmtNum(dbIngredients) }}</span>
-      </div>
-      <div class="db-status-divider"></div>
-      <div class="db-status-item">
-        <span class="db-status-label">물성 보강</span>
-        <span class="db-status-val">{{ fmtNum(enrichedIngredients) }}
-          <span class="db-status-pct" v-if="dbIngredients > 0">
-            {{ Math.round(enrichedIngredients / dbIngredients * 100) }}%
-          </span>
-        </span>
-      </div>
-      <div class="db-status-divider"></div>
-      <div class="db-status-item">
-        <span class="db-status-label">규제 수집</span>
-        <span class="db-status-val">{{ fmtNum(regulationCovered) }}</span>
-      </div>
-      <div class="db-status-divider"></div>
-      <div class="db-status-item">
-        <span class="db-status-label">추출물</span>
-        <span class="db-status-val">{{ fmtNum(extractCount) }}</span>
-      </div>
-      <div class="db-status-divider"></div>
-      <div class="db-status-item">
-        <span class="db-status-label">금지물질</span>
-        <span class="db-status-val" style="color: var(--red)">{{ fmtNum(pharmaCount) }}</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -74,24 +43,6 @@ const dbProducts = computed(() => store.stats.value?.totalProducts || 0)
 
 // DB 복합성분 수
 const dbCompounds = computed(() => store.stats.value?.totalCompounds || 0)
-
-// 물성 보강 완료 (ph_min IS NOT NULL)
-const enrichedIngredients = computed(() => store.stats.value?.enrichedIngredients || 0)
-
-// 규제 커버리지
-const regulationCovered = computed(() => store.stats.value?.regulationCoveredIngredients || 0)
-
-// 추출물류 건수
-const extractCount = computed(() => {
-  const types = store.stats.value?.ingredientsByType || []
-  return types.find(t => t.type === 'extract')?.count || 0
-})
-
-// 금지물질 건수
-const pharmaCount = computed(() => {
-  const types = store.stats.value?.ingredientsByType || []
-  return types.find(t => t.type === 'pharma_prohibited')?.count || 0
-})
 
 // 규제 소스 요약
 const regSources = computed(() => {
@@ -201,55 +152,6 @@ const kpis = computed(() => [
 }
 .kpi-sub {
   display: none;
-}
-
-/* ─── 원료DB 현황 바 ─── */
-.db-status-bar {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-  flex-wrap: wrap;
-  overflow: hidden;
-}
-.db-status-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-  padding: 2px 6px;
-}
-.db-status-label {
-  font-size: 9px;
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-.db-status-val {
-  font-size: 11px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--text);
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.db-status-pct {
-  font-size: 9px;
-  font-weight: 400;
-  color: var(--green);
-}
-.db-status-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--border);
-  flex-shrink: 0;
 }
 
 /* 좁은 위젯: 1열, 더 작은 폰트 */
