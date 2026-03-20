@@ -4952,6 +4952,113 @@ ${text.slice(0, 6000)}
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ─── 요청/문의 시스템 ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function initRequestsDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_requests (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      user_name VARCHAR(100),
+      request_type VARCHAR(50) NOT NULL,
+      title VARCHAR(300) NOT NULL,
+      description TEXT NOT NULL,
+      reference_url TEXT,
+      status VARCHAR(20) DEFAULT '접수',
+      admin_reply TEXT,
+      admin_replied_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_ur_user_id ON user_requests(user_id)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_ur_status ON user_requests(status)`)
+}
+
+// POST /api/requests — 요청 생성
+app.post('/api/requests', authenticateToken, async (req, res) => {
+  try {
+    const { request_type, title, description, reference_url } = req.body
+    if (!request_type || !title?.trim() || !description?.trim()) {
+      return res.status(400).json({ error: '요청 유형, 제목, 상세 내용은 필수입니다.' })
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO user_requests (user_id, user_name, request_type, title, description, reference_url)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.user.id, req.user.name || req.user.email, request_type, title.trim(), description.trim(), reference_url || null]
+    )
+    res.json({ success: true, data: rows[0] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/requests/my — 내 요청 목록
+app.get('/api/requests/my', authenticateToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM user_requests WHERE user_id = $1 ORDER BY created_at DESC`,
+      [req.user.id]
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/requests/all — 전체 목록 (관리자)
+app.get('/api/requests/all', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, request_type } = req.query
+    const where = []
+    const params = []
+    if (status) { where.push(`status = $${params.length + 1}`); params.push(status) }
+    if (request_type) { where.push(`request_type = $${params.length + 1}`); params.push(request_type) }
+    const sql = `SELECT * FROM user_requests${where.length ? ' WHERE ' + where.join(' AND ') : ''}
+      ORDER BY CASE status WHEN '접수' THEN 1 WHEN '검토중' THEN 2 WHEN '진행중' THEN 3 ELSE 4 END, created_at DESC`
+    const { rows } = await pool.query(sql, params)
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/requests/:id/status — 상태 변경 + 답변 (관리자)
+app.put('/api/requests/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { status, admin_reply } = req.body
+    const { rows } = await pool.query(
+      `UPDATE user_requests SET status=$1, admin_reply=$2, admin_replied_at=NOW(), updated_at=NOW()
+       WHERE id=$3 RETURNING *`,
+      [status, admin_reply || null, req.params.id]
+    )
+    if (!rows.length) return res.status(404).json({ error: '요청을 찾을 수 없습니다.' })
+    res.json({ success: true, data: rows[0] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/requests/:id — 본인 요청 삭제 (접수 상태만)
+app.delete('/api/requests/:id', authenticateToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM user_requests WHERE id=$1`, [req.params.id])
+    if (!rows.length) return res.status(404).json({ error: '요청을 찾을 수 없습니다.' })
+    const req_ = rows[0]
+    if (req_.user_id !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: '권한이 없습니다.' })
+    }
+    if (req_.status !== '접수' && req.user.role !== 'admin') {
+      return res.status(400).json({ error: '접수 상태인 요청만 삭제할 수 있습니다.' })
+    }
+    await pool.query(`DELETE FROM user_requests WHERE id=$1`, [req.params.id])
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 인증 시스템 ─────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -7632,6 +7739,12 @@ if (existsSync(DIST_DIR)) {
     if (process.env.ADMIN_EMAIL) console.log(`[Auth] 관리자 계정 설정: ${process.env.ADMIN_EMAIL}`)
   } catch (err) {
     console.error('[Auth] 관리자 계정 설정 실패:', err.message)
+  }
+  try {
+    await initRequestsDB()
+    console.log('[Requests] DB 초기화 완료')
+  } catch (err) {
+    console.error('[Requests] DB 초기화 실패:', err.message)
   }
   const server = app.listen(PORT, () => {
     console.log(`[MyLab API] Running on http://localhost:${PORT}`)

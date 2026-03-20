@@ -61,6 +61,8 @@ const navItems = computed(() => [
   { sep: true },
   { to: '/journal', icon: '▤', label: '일지' },
   { to: '/notes', icon: '▧', label: '연구 노트' },
+  { sep: true },
+  { to: '/request', icon: '✉', label: '요청/문의' },
   ...(isAdmin.value ? [{ sep: true }, { to: '/admin', icon: '⚙', label: '관리자' }] : []),
 ])
 </script>
