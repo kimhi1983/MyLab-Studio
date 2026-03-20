@@ -90,16 +90,16 @@
                 <div class="product-brand">{{ selectedProduct.brand_name }}</div>
                 <div class="product-name">{{ selectedProduct.product_name }}</div>
                 <div class="product-chips">
-                  <span class="chip">{{ selectedProduct.category || '미분류' }}</span>
+                  <span v-if="selectedProduct.category" class="chip chip-gold">{{ selectedProduct.category }}</span>
                   <span v-if="selectedProduct.product_type" class="chip">{{ selectedProduct.product_type }}</span>
                   <span v-if="selectedProduct.data_quality_grade" class="chip chip-grade" :class="'g-' + selectedProduct.data_quality_grade">
                     {{ selectedProduct.data_quality_grade }}등급
                   </span>
                 </div>
                 <div class="product-tags">
-                  <span v-if="selectedProduct.ph" class="ptag">pH {{ selectedProduct.ph }}</span>
-                  <span v-if="selectedProduct.skin_type" class="ptag">{{ selectedProduct.skin_type }}</span>
-                  <span v-if="selectedProduct.claims" class="ptag">{{ selectedProduct.claims }}</span>
+                  <span v-if="selectedProduct.ph_value" class="ptag">pH {{ selectedProduct.ph_value }}</span>
+                  <span v-if="selectedProduct.country_of_origin" class="ptag">원산지: {{ selectedProduct.country_of_origin }}</span>
+                  <span v-if="selectedProduct.target_skin_type" class="ptag">{{ selectedProduct.target_skin_type }}</span>
                 </div>
               </div>
               <button class="btn-remove" @click="clearProduct" title="선택 해제">
@@ -111,16 +111,39 @@
             <div v-if="selectedProduct.full_ingredients" class="ingredients-box">
               <div class="ingredients-header">
                 <span class="ingredients-label">전성분 ({{ ingredientCount }}개)</span>
-                <button class="btn-expand" @click="ingredientsExpanded = !ingredientsExpanded">
-                  {{ ingredientsExpanded ? '접기' : '펼치기' }}
-                  <svg :class="{ rotated: ingredientsExpanded }" viewBox="0 0 16 16" width="12" height="12">
-                    <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-                  </svg>
-                </button>
               </div>
-              <div class="ingredients-text" :class="{ expanded: ingredientsExpanded }">
-                {{ selectedProduct.full_ingredients }}
+              <div class="ingredients-scroll">{{ selectedProduct.full_ingredients }}</div>
+            </div>
+
+            <!-- 전성분 없음 → 직접 입력 -->
+            <div v-else class="ingredients-box no-inci-box">
+              <div class="no-inci-warn">
+                <svg viewBox="0 0 20 20" width="15" height="15" fill="none">
+                  <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M10 6v5M10 13.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                전성분 정보가 없는 제품입니다. 직접 입력하면 처방을 진행할 수 있습니다.
               </div>
+              <textarea
+                v-model="manualIngredients"
+                class="manual-inci-input"
+                placeholder="Water, Glycerin, Niacinamide, Butylene Glycol, ..."
+                rows="3"
+              ></textarea>
+            </div>
+
+            <!-- 카피 처방 진행 버튼 -->
+            <div class="proceed-section">
+              <button
+                class="btn-proceed"
+                :disabled="!selectedProduct.full_ingredients && !manualIngredients.trim()"
+                @click="showStep2 = true"
+              >
+                이 제품으로 카피 처방 진행
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+                  <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
             </div>
           </div>
         </transition>
@@ -133,7 +156,7 @@
     </div>
 
     <!-- STEP 2: 역처방 옵션 -->
-    <div class="step-card" :class="{ 'step-disabled': !selectedProduct }">
+    <div v-if="showStep2" class="step-card">
       <div class="step-badge">2</div>
       <div class="step-content">
         <div class="step-header">
@@ -175,7 +198,7 @@
     </div>
 
     <!-- 생성 버튼 -->
-    <div class="generate-section">
+    <div v-if="showStep2" class="generate-section">
       <button
         class="btn-generate"
         :disabled="!selectedProduct || isGenerating"
@@ -249,6 +272,8 @@ let searchTimer = null
 const selectedProduct = ref(null)
 const loadingProduct = ref(false)
 const ingredientsExpanded = ref(false)
+const showStep2 = ref(false)
+const manualIngredients = ref('')
 
 // ── 옵션 ──
 const markets = [
@@ -317,11 +342,18 @@ function onSearchBlur() {
 async function onSelectProduct(prod) {
   showDropdown.value = false
   searchQuery.value = prod.product_name || ''
+  showStep2.value = false
+  manualIngredients.value = ''
   loadingProduct.value = true
   try {
-    const detail = await api.getProduct(prod.id)
+    const detail = await api.fetchJSON(`/api/products/${prod.id}/detail`)
     selectedProduct.value = detail?.data || detail || prod
-  } catch { selectedProduct.value = prod }
+  } catch {
+    try {
+      const fallback = await api.getProduct(prod.id)
+      selectedProduct.value = fallback?.data || fallback || prod
+    } catch { selectedProduct.value = prod }
+  }
   finally { loadingProduct.value = false; ingredientsExpanded.value = false }
 }
 
@@ -332,6 +364,8 @@ function clearProduct() {
   generateResult.value = null
   generateError.value = ''
   ingredientsExpanded.value = false
+  showStep2.value = false
+  manualIngredients.value = ''
 }
 
 // ── 처방 생성 ──
@@ -365,7 +399,7 @@ async function onGenerate() {
       productName: selectedProduct.value.product_name,
       brandName: selectedProduct.value.brand_name,
       category: selectedProduct.value.category,
-      fullIngredients: selectedProduct.value.full_ingredients,
+      fullIngredients: selectedProduct.value.full_ingredients || manualIngredients.value,
       market: selectedMarket.value,
       requirements: requirements.value,
     })
@@ -719,6 +753,13 @@ function onSaveFormula() {
   border: none;
 }
 
+.chip-gold {
+  background: #C8A96E;
+  color: #fff;
+  border-color: #C8A96E;
+  font-weight: 600;
+}
+
 .product-tags {
   display: flex;
   flex-wrap: wrap;
@@ -811,6 +852,74 @@ function onSaveFormula() {
   display: block;
   -webkit-line-clamp: unset;
 }
+
+.ingredients-scroll {
+  font-size: 13px;
+  color: var(--text-sub);
+  line-height: 1.7;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  background: #FAF8F5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 150px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+
+.no-inci-box { background: #FFFAF5; }
+
+.no-inci-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: #B87333;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.manual-inci-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  color: var(--text);
+  background: var(--surface);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.manual-inci-input:focus { border-color: var(--accent); }
+
+.proceed-section {
+  border-top: 1px solid var(--border);
+  padding: 14px 16px;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--surface);
+}
+
+.btn-proceed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 22px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btn-proceed:hover { background: #a87d4a; }
+.btn-proceed:active { transform: scale(0.98); }
+.btn-proceed:disabled { background: var(--border); cursor: not-allowed; color: var(--text-dim); }
 
 /* ─── Loading ─── */
 .loading-inline {

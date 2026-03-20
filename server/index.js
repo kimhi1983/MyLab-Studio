@@ -1057,6 +1057,25 @@ app.get('/api/products/autocomplete', async (req, res) => {
 })
 
 // ─── 제품 상세 (전성분 포함) ───
+// ─── 제품 상세 (카피 처방용 — 전성분 포함 특화) ───
+app.get('/api/products/:id/detail', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { rows } = await pool.query(
+      `SELECT brand_name, product_name, product_name_local, category, subcategory,
+              product_type, target_skin_type, ph_value, notable_claims,
+              full_ingredients, key_ingredients, image_url,
+              country_of_origin, data_quality_grade, source
+       FROM product_master WHERE id = $1`,
+      [id]
+    )
+    if (!rows.length) return res.status(404).json({ success: false, error: 'Not found' })
+    res.json({ success: true, data: rows[0] })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+})
+
 app.get('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params
