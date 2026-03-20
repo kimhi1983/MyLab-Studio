@@ -22,56 +22,60 @@
               class="search-input"
               placeholder="예: CeraVe, La Roche-Posay, 수분크림..."
               @input="onSearchInput"
-              @focus="searchFocused = true; showDropdown = true"
-              @blur="onSearchBlur"
+              @focus="searchFocused = true"
+              @blur="searchFocused = false"
               autocomplete="off"
             >
             <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''; searchResults = []">
               <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
           </div>
+        </div>
 
-          <!-- 검색 결과 드롭다운 -->
-          <div v-if="showDropdown && (searchResults.length > 0 || isSearching)" class="dropdown">
-            <div v-if="isSearching" class="dropdown-loading">
-              <span class="dot-pulse"></span>
-              <span>검색 중...</span>
-            </div>
-            <template v-else>
-              <div
-                v-for="prod in searchResults"
-                :key="prod.id"
-                class="dropdown-item"
-                @mousedown.prevent="onSelectProduct(prod)"
+        <!-- 초기 상태 안내 -->
+        <div v-if="!searchQuery && !selectedProduct" class="search-hint">
+          브랜드명 또는 제품명을 입력하세요
+        </div>
+
+        <!-- 검색 로딩 -->
+        <div v-if="isSearching" class="search-loading">
+          <span class="spinner-sm"></span>
+          <span>검색 중...</span>
+        </div>
+
+        <!-- 검색 결과 없음 -->
+        <div v-else-if="searchQuery.length >= 2 && !isSearching && searchResults.length === 0 && !selectedProduct" class="search-empty">
+          검색 결과가 없습니다. 다른 키워드로 검색해보세요.
+        </div>
+
+        <!-- 검색 결과 카드 그리드 -->
+        <div v-else-if="searchResults.length > 0 && !selectedProduct" class="search-results-grid">
+          <div
+            v-for="prod in searchResults"
+            :key="prod.id"
+            class="result-card"
+            @click="onSelectProduct(prod)"
+          >
+            <div class="rc-img-wrap">
+              <img
+                v-if="prod.image_url"
+                :src="prod.image_url"
+                :alt="prod.product_name"
+                class="rc-img"
+                @error="$event.target.style.display='none'"
               >
-                <div class="dropdown-thumb">
-                  <img v-if="prod.image_url" :src="prod.image_url" :alt="prod.product_name" class="dropdown-img">
-                  <div v-else class="dropdown-initial" :style="{ background: getAvatarColor(prod.brand_name) }">
-                    {{ getInitials(prod.brand_name) }}
-                  </div>
-                </div>
-                <div class="dropdown-body">
-                  <div class="dropdown-name">{{ prod.product_name }}</div>
-                  <div class="dropdown-meta">
-                    <span>{{ prod.brand_name }}</span>
-                    <span class="dot-sep"></span>
-                    <span>{{ prod.category || '미분류' }}</span>
-                    <span v-if="prod.data_quality_grade" class="dropdown-grade" :class="'g-' + prod.data_quality_grade">
-                      {{ prod.data_quality_grade }}
-                    </span>
-                  </div>
-                </div>
-                <svg class="dropdown-arrow" viewBox="0 0 16 16" width="14" height="14">
-                  <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-                </svg>
+              <div v-else class="rc-img-placeholder">
+                <span>{{ categoryEmoji(prod.category) }}</span>
               </div>
-            </template>
-            <div v-if="!isSearching && searchResults.length === 0 && searchQuery.length >= 2" class="dropdown-empty">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
-                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/>
-                <path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              </svg>
-              <span>검색 결과가 없습니다</span>
+            </div>
+            <div class="rc-body">
+              <div class="rc-brand">{{ prod.brand_name }}</div>
+              <div class="rc-name">{{ prod.product_name }}</div>
+              <div class="rc-meta">
+                <span v-if="prod.category" class="rc-tag-cat">{{ prod.category }}</span>
+                <span v-if="prod.country_of_origin" class="rc-tag-country">{{ prod.country_of_origin }}</span>
+              </div>
+              <div v-if="prod.ingredient_count > 0" class="rc-count">전성분 {{ prod.ingredient_count }}개</div>
             </div>
           </div>
         </div>
@@ -378,7 +382,6 @@ const searchInputRef = ref(null)
 const searchQuery = ref('')
 const searchResults = ref([])
 const isSearching = ref(false)
-const showDropdown = ref(false)
 const searchFocused = ref(false)
 let searchTimer = null
 
@@ -417,45 +420,44 @@ const ingredientCount = computed(() => {
 
 // ── 유틸 ──
 const COLORS = ['#4a7c59','#6b5a7e','#5a7296','#8a6a4a','#5a8a7a','#7a5a6b','#6a8a5a','#5a6b8a','#8a5a7a','#7a8a5a']
+function getAvatarColor(name = '') { return COLORS[name.charCodeAt(0) % COLORS.length] }
+function getInitials(name = '') { return name.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() }
 
-function getAvatarColor(name = '') {
-  return COLORS[name.charCodeAt(0) % COLORS.length]
-}
-
-function getInitials(name = '') {
-  return name.split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase()
+function categoryEmoji(cat) {
+  if (!cat) return '🧴'
+  const c = cat.toLowerCase()
+  if (c.includes('스킨') || c.includes('토너')) return '💧'
+  if (c.includes('크림') || c.includes('로션')) return '🧴'
+  if (c.includes('세럼') || c.includes('에센스') || c.includes('앰플')) return '💊'
+  if (c.includes('클렌') || c.includes('폼') || c.includes('세정')) return '🫧'
+  if (c.includes('선') || c.includes('자외선')) return '🌤'
+  if (c.includes('마스크') || c.includes('팩')) return '🎭'
+  if (c.includes('립') || c.includes('틴트')) return '💄'
+  if (c.includes('파운데이션') || c.includes('쿠션') || c.includes('색조')) return '✨'
+  if (c.includes('샴푸') || c.includes('헤어') || c.includes('모발')) return '💆'
+  if (c.includes('바디')) return '🛁'
+  return '🧪'
 }
 
 // ── 검색 로직 ──
 function onSearchInput() {
   clearTimeout(searchTimer)
   if (searchQuery.value.length < 2) { searchResults.value = []; return }
-  searchTimer = setTimeout(doSearch, 300)
+  searchTimer = setTimeout(doSearch, 350)
 }
 
 async function doSearch() {
   if (searchQuery.value.length < 2) return
   isSearching.value = true
   try {
-    const res = await api.fetchJSON('/api/products/autocomplete?q=' + encodeURIComponent(searchQuery.value) + '&limit=10')
-    if (res?.items) searchResults.value = res.items
-    else if (res?.data) searchResults.value = res.data
-    else if (Array.isArray(res)) searchResults.value = res
-    else {
-      const fallback = await api.getProducts({ q: searchQuery.value, limit: 10 })
-      searchResults.value = fallback?.items || fallback?.data || []
-    }
+    const res = await api.fetchJSON(`/api/products/list?search=${encodeURIComponent(searchQuery.value)}&limit=12`)
+    searchResults.value = res?.items || []
   } catch { searchResults.value = [] }
   finally { isSearching.value = false }
 }
 
-function onSearchBlur() {
-  searchFocused.value = false
-  setTimeout(() => { showDropdown.value = false }, 150)
-}
-
 async function onSelectProduct(prod) {
-  showDropdown.value = false
+  searchResults.value = []
   searchQuery.value = prod.product_name || ''
   showStep2.value = false
   manualIngredients.value = ''
@@ -674,8 +676,7 @@ function scoreClass(score) {
 
 /* ─── Search ─── */
 .search-wrap {
-  position: relative;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .search-box {
@@ -726,118 +727,134 @@ function scoreClass(score) {
 
 .search-clear:hover { color: var(--text); background: var(--bg); }
 
-/* ─── Dropdown ─── */
-.dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-  z-index: 100;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.dropdown-loading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px;
+/* ─── Search States ─── */
+.search-hint {
   font-size: 13px;
   color: var(--text-dim);
+  text-align: center;
+  padding: 28px 0 12px;
 }
 
-.dropdown-item {
+.search-loading {
   display: flex;
   align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 20px 0 8px;
+}
+
+.search-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 24px 0 12px;
+}
+
+/* ─── Search Result Grid ─── */
+.search-results-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
-  padding: 10px 14px;
+  margin-bottom: 4px;
+}
+
+.result-card {
+  border: 1px solid #E8E0D4;
+  border-radius: 10px;
+  background: var(--surface);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: box-shadow 0.2s, border-color 0.2s, transform 0.15s;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.dropdown-item:hover { background: var(--bg); }
-
-.dropdown-item + .dropdown-item { border-top: 1px solid var(--border); }
-
-.dropdown-thumb { flex-shrink: 0; }
-
-.dropdown-img {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  object-fit: cover;
-  border: 1px solid var(--border);
+.result-card:hover {
+  border-color: #C8A96E;
+  box-shadow: 0 4px 16px rgba(200,169,110,0.18);
+  transform: translateY(-2px);
 }
 
-.dropdown-initial {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
+.rc-img-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: #FAF8F4;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
 }
 
-.dropdown-body { flex: 1; min-width: 0; }
-
-.dropdown-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.rc-img {
+  width: 100%; height: 100%;
+  object-fit: cover;
 }
 
-.dropdown-meta {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-top: 2px;
+.rc-img-placeholder {
+  width: 100%; height: 100%;
   display: flex;
   align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #FAF8F4, #F0EDE6);
+  font-size: 36px;
+}
+
+.rc-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
-.dot-sep {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-dim);
-}
-
-.dropdown-grade {
-  padding: 1px 5px;
-  border-radius: 3px;
+.rc-brand {
   font-size: 10px;
   font-weight: 700;
-  margin-left: 4px;
+  color: #C8A96E;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.g-A { background: #e6f4ea; color: #2e7d32; }
-.g-B { background: #e8f5e9; color: #388e3c; }
-.g-C { background: #fff8e1; color: #f57f17; }
-.g-D { background: #fce4ec; color: #c62828; }
-
-.dropdown-arrow {
-  color: var(--text-dim);
-  flex-shrink: 0;
+.rc-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
 }
 
-.dropdown-empty {
+.rc-meta {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 20px 16px;
-  font-size: 13px;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.rc-tag-cat {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: #C8A96E;
+  color: #fff;
+}
+
+.rc-tag-country {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: #F0EDE8;
+  color: #888;
+}
+
+.rc-count {
+  font-size: 10px;
   color: var(--text-dim);
+  margin-top: 2px;
 }
 
 /* ─── Product Card ─── */
