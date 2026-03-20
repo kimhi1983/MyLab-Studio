@@ -235,7 +235,7 @@ async function doDelete() {
   background: none;
   border: none;
   cursor: pointer;
-  color: #bbb;
+  color: #999;
   padding: 5px;
   border-radius: 5px;
   display: flex;
@@ -265,7 +265,7 @@ async function doDelete() {
   border-radius: 6px;
   padding: 5px 6px;
   cursor: pointer;
-  color: #bbb;
+  color: #999;
   display: flex;
   align-items: center;
   justify-content: center;
