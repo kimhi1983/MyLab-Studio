@@ -5852,10 +5852,24 @@ const PRODUCT_BASE = {
       { inci: 'Phenoxyethanol',          korean: '페녹시에탄올',         pct:  0.5, function: '방부제',     phase: 'D' },
     ],
   },
+  '손소독제': {
+    aqua_max: 20,
+    balance_key: 'Ethanol',
+    base_ingredients: [
+      { inci: 'Ethanol',         korean: '에탄올',    pct: 75.0, function: '살균 용제', phase: 'A' },
+      { inci: 'Aqua',            korean: '정제수',    pct: 20.0, function: '용매',      phase: 'A' },
+      { inci: 'Glycerin',        korean: '글리세린',  pct:  2.0, function: '보습제',    phase: 'A' },
+      { inci: 'Carbomer',        korean: '카보머',    pct:  0.5, function: '점증제',    phase: 'C' },
+      { inci: 'Triethanolamine', korean: '트리에탄올아민', pct: 0.5, function: 'pH 조정제', phase: 'D' },
+      { inci: 'Hydrogen Peroxide', korean: '과산화수소', pct: 0.1, function: '보조 살균제', phase: 'A' },
+    ],
+  },
 }
 
 function getBaseKey(product_type) {
   const pt = (product_type || '').toLowerCase()
+  // 손소독제 (최우선 — 에탄올 필수 제형)
+  if (pt.includes('손소독') || pt.includes('소독제') || pt.includes('sanitizer') || pt.includes('hand sanitizer') || pt.includes('핸드새니타이저')) return '손소독제'
   // 색조 (구체적인 것 먼저)
   if (pt.includes('립스틱') || pt.includes('lipstick')) return '립스틱'
   if (pt.includes('립글로스') || pt.includes('lipgloss') || pt.includes('lip gloss')) return '립글로스'
@@ -5889,6 +5903,31 @@ function getBaseKey(product_type) {
 
 // ─── 제형별 절대 강제 규칙 (프롬프트 최상단 삽입용) ───
 function getMandatoryRules(baseKey) {
+  if (baseKey === '손소독제') {
+    return `
+🚨🚨🚨 [절대 규칙 — 손소독제 전용 — 위반 시 처방 무효] 🚨🚨🚨
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+이 처방은 손소독제(Hand Sanitizer)입니다. 아래 규칙을 반드시 모두 지키세요:
+
+1. ⚡ Ethanol (INCI: Ethanol)을 반드시 60~80% 포함하세요. 권장 70~75%.
+   → CDC/WHO 권고: 최소 60% 이상이어야 살균 효과 있음. 에탄올 없으면 처방 무효.
+
+2. ⚡ Carbomer를 0.3~1.0% 포함하세요 (겔 점증제).
+   → 겔 제형 구조 형성. Triethanolamine으로 중화 필수.
+
+3. ⚡ Glycerin을 1~3% 포함하세요 (피부 보습).
+   → 에탄올의 피부 건조 방지.
+
+4. ⚡ 정제수(Aqua)는 20% 이하로 제한하세요.
+   → 수분 과다 시 에탄올 농도 희석 → 살균력 저하.
+
+5. ⚡ Fragrance(향료), 색소(Colorant)는 절대 포함하지 마세요.
+   → 소독제 본연의 목적에 불필요, 규제 위험.
+
+6. ⚡ 일반 화장품 크림/에멀전 구조(유화제, 폴리머 에멀전 등)를 사용하지 마세요.
+   → 손소독제는 수성 알코올 겔 구조입니다.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+  }
   if (baseKey === '선크림') {
     return `
 🚨🚨🚨 [절대 규칙 — 선크림 전용 — 위반 시 처방 무효] 🚨🚨🚨
@@ -6249,6 +6288,7 @@ async function analyzeFormulaIntent(formulaName, requirements) {
 }
 
 판단 규칙 (반드시 적용):
+- 손소독/소독제/sanitizer/hand sanitizer/핸드새니타이저 → base_form=겔, water_percent.max=20, must_have_ingredients에 "Ethanol 70-80%", "Carbomer 0.3-1%", "Glycerin 1-3%" 반드시 포함, must_not_ingredients에 "Fragrance, Colorant" 추가, similar_category=손소독제
 - 멀티밤/립밤/선스틱/바디밤/헤어밤/클렌징밤/슬리핑밤/연고/크림밤 → 무수 제형, water_percent.max=0, similar_category=립스틱
 - 오일세럼/페이셜오일/드라이오일 → 무수 제형, water_percent.max=0, similar_category=에센스
 - 선세럼/선에센스/선크림/선스크린/SPF/PA → similar_category=선크림
