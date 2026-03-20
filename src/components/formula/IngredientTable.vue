@@ -102,7 +102,7 @@
           </td>
           <td>
             <input v-if="editable" v-model="ing.function" class="cell-input" placeholder="기능">
-            <span v-else>{{ ing.function }}</span>
+            <span v-else>{{ fnKo(ing.function) }}</span>
           </td>
           <td class="cell-ewg">
             <span v-if="batchInfo[ing.inci_name]?.ewg != null"
@@ -288,6 +288,37 @@ function closeSuggestions(idx) {
 function closeSuggestionsDelayed(idx) {
   setTimeout(() => closeSuggestions(idx), 200)
 }
+
+// ─── 기능명 한글 매핑 ───
+const FN_KO = {
+  'Solvent': '용제',
+  'Humectant': '보습제',
+  'Emollient': '에몰리언트',
+  'Emulsifier': '유화제',
+  'Thickener': '증점제',
+  'Preservative': '방부제',
+  'Antioxidant': '항산화제',
+  'Chelating Agent': '킬레이트제',
+  'Stabilizer': '안정제',
+  'Surfactant': '계면활성제',
+  'UV Filter (Inorganic)': '자외선차단제(무기)',
+  'UV Filter (Organic)': '자외선차단제(유기)',
+  'Active (Whitening)': '미백 기능성',
+  'Active (Anti-wrinkle)': '주름개선 기능성',
+  'Active, Skin Barrier': '피부장벽 강화',
+  'Skin Soothing': '진정',
+  'pH Adjuster': 'pH조절제',
+  'Film Former': '피막형성제',
+  'Colorant': '색소',
+  'Fragrance': '향료',
+  'Viscosity Controller': '점도조절제',
+  'Opacifier': '불투명화제',
+  'Conditioning Agent': '컨디셔닝제',
+  'Humectant, Solvent': '보습제, 용제',
+  'Humectant, Skin Soothing': '보습제, 진정',
+  'Emollient, UV Filter Solvent': '에몰리언트, 자차용제',
+}
+function fnKo(fn) { return fn ? (FN_KO[fn] || fn) : fn }
 
 function ewgClass(score) {
   if (score <= 2) return 'ewg-low'

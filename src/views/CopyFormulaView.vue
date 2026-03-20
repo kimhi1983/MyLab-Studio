@@ -331,7 +331,7 @@
             <CostAnalysisCard
               v-if="generateResult.candidates[selectedCandIdx].formula?.ingredients?.length"
               :ingredients="generateResult.candidates[selectedCandIdx].formula.ingredients"
-              style="margin-top: 16px"
+              :compact="true"
             />
 
             <!-- 채택 버튼 -->

@@ -3054,9 +3054,23 @@ app.post('/api/ingredients/batch-info', async (req, res) => {
     if (!lowerNames.length) return res.json({})
     const placeholders = lowerNames.map((_, i) => `$${i + 1}`).join(', ')
 
+    const FN_KO_MAP = {
+      'Solvent':'용제','Humectant':'보습제','Emollient':'에몰리언트','Emulsifier':'유화제',
+      'Thickener':'증점제','Preservative':'방부제','Antioxidant':'항산화제',
+      'Chelating Agent':'킬레이트제','Stabilizer':'안정제','Surfactant':'계면활성제',
+      'UV Filter (Inorganic)':'자외선차단제(무기)','UV Filter (Organic)':'자외선차단제(유기)',
+      'Active (Whitening)':'미백 기능성','Active (Anti-wrinkle)':'주름개선 기능성',
+      'Active, Skin Barrier':'피부장벽 강화','Skin Soothing':'진정','pH Adjuster':'pH조절제',
+      'Film Former':'피막형성제','Colorant':'색소','Fragrance':'향료',
+      'Viscosity Controller':'점도조절제','Opacifier':'불투명화제','Conditioning Agent':'컨디셔닝제',
+      'Humectant, Solvent':'보습제, 용제','Humectant, Skin Soothing':'보습제, 진정',
+      'Emollient, UV Filter Solvent':'에몰리언트, 자차용제',
+    }
+    const mapFnKo = fn => fn ? (FN_KO_MAP[fn] || fn) : null
+
     const [ewgRes, regRes] = await Promise.all([
       pool.query(
-        `SELECT inci_name, ewg_score FROM ingredient_master WHERE LOWER(inci_name) IN (${placeholders})`,
+        `SELECT inci_name, ewg_score, function_inci FROM ingredient_master WHERE LOWER(inci_name) IN (${placeholders})`,
         lowerNames
       ),
       pool.query(
@@ -3083,7 +3097,11 @@ app.post('/api/ingredients/batch-info', async (req, res) => {
       const ewgRow = ewgRes.rows.find(r => r.inci_name.toLowerCase() === lower)
       // ewg_score = -1 은 DB에서 "데이터 없음" 의미 → null로 변환
       const ewg = ewgRow?.ewg_score
-      result[orig] = { ewg: (ewg != null && ewg !== -1) ? ewg : null, reg_kr: null, reg_eu: null }
+      result[orig] = {
+        ewg: (ewg != null && ewg !== -1) ? ewg : null,
+        reg_kr: null, reg_eu: null,
+        function: ewgRow?.function_inci ? mapFnKo(ewgRow.function_inci) : null,
+      }
     }
 
     for (const row of regRes.rows) {

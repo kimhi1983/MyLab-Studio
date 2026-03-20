@@ -483,7 +483,7 @@
                     <td class="idea-name">{{ ing.name }}</td>
                     <td class="idea-inci">{{ ing.inci_name }}</td>
                     <td class="idea-pct">{{ Number(ing.percentage).toFixed(2) }}%</td>
-                    <td class="idea-fn">{{ ing.function }}</td>
+                    <td class="idea-fn">{{ fnKo(ing.function) }}</td>
                     <td class="idea-phase">{{ ing.phase }}</td>
                   </tr>
                 </tbody>
@@ -491,7 +491,7 @@
             </div>
 
             <!-- 예상 원가 -->
-            <CostAnalysisCard v-if="ideaResult?.ingredients?.length" :ingredients="ideaResult.ingredients" />
+            <CostAnalysisCard v-if="ideaResult?.ingredients?.length" :ingredients="ideaResult.ingredients" :compact="true" />
 
           </div>
           <div class="idea-modal-footer">
@@ -672,6 +672,22 @@ function stopBeakerAnimation() {
     beakerTimer = null
   }, 600)
 }
+
+// ─── 기능명 한글 매핑 ───
+const FN_KO = {
+  'Solvent': '용제', 'Humectant': '보습제', 'Emollient': '에몰리언트',
+  'Emulsifier': '유화제', 'Thickener': '증점제', 'Preservative': '방부제',
+  'Antioxidant': '항산화제', 'Chelating Agent': '킬레이트제', 'Stabilizer': '안정제',
+  'Surfactant': '계면활성제', 'UV Filter (Inorganic)': '자외선차단제(무기)',
+  'UV Filter (Organic)': '자외선차단제(유기)', 'Active (Whitening)': '미백 기능성',
+  'Active (Anti-wrinkle)': '주름개선 기능성', 'Active, Skin Barrier': '피부장벽 강화',
+  'Skin Soothing': '진정', 'pH Adjuster': 'pH조절제', 'Film Former': '피막형성제',
+  'Colorant': '색소', 'Fragrance': '향료', 'Viscosity Controller': '점도조절제',
+  'Opacifier': '불투명화제', 'Conditioning Agent': '컨디셔닝제',
+  'Humectant, Solvent': '보습제, 용제', 'Humectant, Skin Soothing': '보습제, 진정',
+  'Emollient, UV Filter Solvent': '에몰리언트, 자차용제',
+}
+function fnKo(fn) { return fn ? (FN_KO[fn] || fn) : fn }
 
 // 기능 1: AI 처방 아이디어 미리보기
 const showIdeaModal = ref(false)
