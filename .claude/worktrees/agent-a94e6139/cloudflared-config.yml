@@ -1,7 +1,0 @@
-tunnel: 7f59d6e8-7cc4-42a1-8838-488ce9a350b5
-credentials-file: C:\Users\user\.cloudflared\7f59d6e8-7cc4-42a1-8838-488ce9a350b5.json
-
-ingress:
-  - hostname: api.kproscorp.com
-    service: http://localhost:3001
-  - service: http_status:404
