@@ -649,8 +649,9 @@ function startBeakerAnimation() {
   beakerStep.value = 1
   clearInterval(beakerTimer)
   beakerTimer = setInterval(() => {
-    if (beakerStep.value < 3) beakerStep.value++
-  }, 12000) // 12s마다 1단계씩 진행 (1→2→3, 4는 완료 시)
+    if (beakerStep.value < 4) beakerStep.value++
+    else clearInterval(beakerTimer)
+  }, 45000) // 45s마다 1단계씩 진행 (1→2→3→4, 총 180s 커버)
 }
 function stopBeakerAnimation() {
   beakerStep.value = 4

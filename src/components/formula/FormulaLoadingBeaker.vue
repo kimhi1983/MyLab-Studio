@@ -146,7 +146,7 @@ const pctTextStyle = computed(() => ({
 }))
 
 // 단계 레이블
-const LABELS = ['성분 분석 중', '배합비 계산 중', '처방 설계 중', '완성!']
+const LABELS = ['성분 분석 중', '배합비 계산 중', '처방 설계 중', '최종 검증 중']
 const stepLabel = computed(() => LABELS[props.step - 1] ?? '')
 </script>
 

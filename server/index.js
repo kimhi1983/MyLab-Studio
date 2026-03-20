@@ -1962,7 +1962,7 @@ async function _fetchGemini(prompt) {
           responseMimeType: 'application/json',
         },
       }),
-      signal: AbortSignal.timeout(90000), // 90초 (Pro는 최대 20~30초 소요)
+      signal: AbortSignal.timeout(180000), // 180초 (복잡한 제형 대응)
     }
   )
 
@@ -5499,6 +5499,98 @@ function autoFixFormulaByType(ingredients, baseKey) {
   return { ingredients, fixes }
 }
 
+// ─── ensureTotal100: 무수 제형 포함 전 제형 배합비 100% 강제 보정 ──────────────
+function ensureTotal100(ingredients, balanceKey) {
+  if (!ingredients.length) return
+  const totalInt = ingredients.reduce((s, i) => s + Math.round((parseFloat(i.percentage) || 0) * 100), 0)
+  if (totalInt === 10000) return // 이미 100.00%
+
+  // 밸런스 대상: Aqua 또는 지정된 balanceKey
+  let balIdx = ingredients.findIndex(i =>
+    (i.inci_name || '').toLowerCase() === (balanceKey || 'aqua').toLowerCase()
+  )
+  // 없으면 Aqua 재탐색
+  if (balIdx === -1) {
+    balIdx = ingredients.findIndex(i => /^aqua$/i.test(i.inci_name || ''))
+  }
+  // Aqua도 없으면 (무수 제형) → 가장 비율 큰 성분에서 조정
+  if (balIdx === -1) {
+    let maxPct = -1
+    ingredients.forEach((ing, idx) => {
+      const p = parseFloat(ing.percentage) || 0
+      if (p > maxPct) { maxPct = p; balIdx = idx }
+    })
+  }
+  if (balIdx === -1) return
+
+  const otherInt = ingredients.reduce((s, i, idx) => {
+    if (idx === balIdx) return s
+    return s + Math.round((parseFloat(i.percentage) || 0) * 100)
+  }, 0)
+  const balInt = 10000 - otherInt
+  if (balInt > 0) {
+    const before = ingredients[balIdx].percentage
+    ingredients[balIdx].percentage = parseFloat((balInt / 100).toFixed(2))
+    console.log(`[ensureTotal100] ${ingredients[balIdx].inci_name}: ${before}% → ${ingredients[balIdx].percentage}% (Δ=${((balInt/100) - before).toFixed(2)}%)`)
+  }
+}
+
+// ─── matchIngredientsToDb: INCI 3단계 매칭으로 DB 메타데이터 보강 ──────────────
+async function matchIngredientsToDb(ingredients) {
+  let matched = 0
+  for (const ing of ingredients) {
+    const inci = (ing.inci_name || '').trim()
+    if (!inci) { ing.db_matched = false; continue }
+
+    // 1차: 대소문자 무시 정확 매칭
+    let result = await pool.query(
+      `SELECT id, inci_name, korean_name, cas_number, ewg_score, function_inci
+       FROM ingredient_master WHERE LOWER(inci_name) = LOWER($1) LIMIT 1`,
+      [inci]
+    ).catch(() => ({ rows: [] }))
+
+    // 2차: 하이픈/이중공백 정규화 후 매칭
+    if (!result.rows.length) {
+      const norm = inci.replace(/[-\s]+/g, ' ').trim()
+      result = await pool.query(
+        `SELECT id, inci_name, korean_name, cas_number, ewg_score, function_inci
+         FROM ingredient_master
+         WHERE LOWER(REGEXP_REPLACE(inci_name, '[-\\s]+', ' ', 'g')) = LOWER($1) LIMIT 1`,
+        [norm]
+      ).catch(() => ({ rows: [] }))
+    }
+
+    // 3차: 첫 단어 LIKE 부분 매칭 (5자 이상일 때만)
+    if (!result.rows.length) {
+      const firstWord = inci.split(/[\s\-]/)[0]
+      if (firstWord.length >= 5) {
+        result = await pool.query(
+          `SELECT id, inci_name, korean_name, cas_number, ewg_score, function_inci
+           FROM ingredient_master
+           WHERE LOWER(inci_name) LIKE LOWER($1) LIMIT 1`,
+          [firstWord + '%']
+        ).catch(() => ({ rows: [] }))
+      }
+    }
+
+    if (result.rows.length) {
+      const row = result.rows[0]
+      ing.db_id       = row.id
+      ing.korean_name = ing.korean_name || row.korean_name || ''
+      ing.cas_number  = row.cas_number  || ''
+      ing.ewg_score   = row.ewg_score   ?? null
+      ing.db_matched  = true
+      matched++
+    } else {
+      ing.db_matched = false
+    }
+  }
+  const total = ingredients.length
+  const pct = total ? Math.round(matched / total * 100) : 0
+  console.log(`[DB MATCH] ${matched}/${total} (${pct}%)`)
+  return ingredients
+}
+
 // ─── POST /api/formula/generate-idea — 제품유형 베이스 강제 + 키워드 보정 ────
 app.post('/api/formula/generate-idea', async (req, res) => {
   try {
@@ -6082,6 +6174,12 @@ ${colorantStr}
         usedIngredients[aquaIdxFinal].percentage = parseFloat((aquaPctInt / 100).toFixed(2))
       }
     }
+
+    // ── 15-b. ensureTotal100: Aqua 없는 무수 제형 포함 전체 보정 ──
+    ensureTotal100(usedIngredients, balanceKeyFinal)
+
+    // ── 16. DB 매칭: 3단계 INCI 매칭으로 한글명/EWG/CAS 보강 ──
+    await matchIngredientsToDb(usedIngredients)
 
     const finalTotal = parseFloat(usedIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2))
 
