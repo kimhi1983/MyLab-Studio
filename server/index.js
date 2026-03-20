@@ -5765,7 +5765,7 @@ async function analyzeFormulaIntent(formulaName, requirements) {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
     }
   )
   if (!geminiRes.ok) throw new Error(`Flash API 오류 (${geminiRes.status})`)
@@ -6924,7 +6924,9 @@ if (existsSync(DIST_DIR)) {
   } catch (err) {
     console.error('[Auth] 관리자 계정 설정 실패:', err.message)
   }
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`[MyLab API] Running on http://localhost:${PORT}`)
   })
+  server.timeout = 300000          // 5분
+  server.keepAliveTimeout = 305000 // timeout보다 약간 길게
 })()

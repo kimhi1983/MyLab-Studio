@@ -2,7 +2,7 @@ const http = require('http');
 
 const TEST_CASES = [
   { id: 'A1', name: '고보습 수분크림', req: '세라마이드 필수 포함, 히알루론산 0.1% 이상, 민감성 피부',
-    check: (r) => { const i = getInci(r); return { 'ceramide포함': /ceramide/i.test(i), 'hyaluronic포함': /hyaluronic/i.test(i) }; }},
+    check: (r) => { const i = getInci(r); return { 'ceramide포함': /ceramide/i.test(i), 'hyaluronic포함': /hyaluronic|hyaluronate/i.test(i) }; }},
   { id: 'A2', name: '미백 톤업 세럼', req: '나이아신아마이드 3%, 알파알부틴 1%, EWG 그린 등급',
     check: (r) => { const i = getInci(r); return { 'niacinamide포함': /niacinamide/i.test(i), 'arbutin포함': /arbutin/i.test(i) }; }},
   { id: 'A3', name: '시카 진정 에센스', req: '민감성 피부, 무향, 무알코올, 판테놀 포함',
@@ -44,7 +44,7 @@ function getAquaPct(r) {
 function apiCall(path, body) {
   return new Promise((resolve, reject) => {
     const req = http.request({ hostname:'localhost', port:3001, path, method:'POST',
-      headers:{'Content-Type':'application/json'}, timeout:120000 }, (res) => {
+      headers:{'Content-Type':'application/json'}, timeout:300000 }, (res) => {
       let d=''; res.on('data',c=>d+=c); res.on('end',()=>{ try{resolve(JSON.parse(d))}catch{resolve({raw:d})} });
     });
     req.on('error',reject); req.on('timeout',()=>{req.destroy();reject(new Error('TIMEOUT'))});
