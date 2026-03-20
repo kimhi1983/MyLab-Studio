@@ -362,13 +362,14 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
 import CostAnalysisCard from '../components/CostAnalysisCard.vue'
 
 const router = useRouter()
+const route = useRoute()
 const { addFormula } = useFormulaStore()
 const api = useAPI()
 
@@ -481,6 +482,23 @@ function clearProduct() {
   showStep2.value = false
   manualIngredients.value = ''
 }
+
+// ?productId=xxx 쿼리로 진입 시 자동 선택
+onMounted(async () => {
+  const pid = route.query.productId
+  if (!pid) return
+  loadingProduct.value = true
+  try {
+    const detail = await api.fetchJSON(`/api/products/${pid}/detail`)
+    const prod = detail?.data || detail
+    if (prod?.id) {
+      selectedProduct.value = prod
+      searchQuery.value = prod.product_name || ''
+      showStep2.value = true
+    }
+  } catch { /* 조용히 실패 */ }
+  finally { loadingProduct.value = false }
+})
 
 // ── 처방 생성 ──
 async function onGenerate() {

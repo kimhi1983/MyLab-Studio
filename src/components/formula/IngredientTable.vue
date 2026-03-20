@@ -59,7 +59,7 @@
                 >
                   <span class="sug-name">{{ s.korean_name || s.inci_name }}</span>
                   <span class="sug-inci">{{ s.inci_name }}</span>
-                  <span v-if="s.ewg_score != null" class="sug-ewg" :class="ewgClass(s.ewg_score)">EWG {{ s.ewg_score }}</span>
+                  <span v-if="s.ewg_score != null && s.ewg_score > 0" class="sug-ewg" :class="ewgClass(s.ewg_score)">EWG {{ s.ewg_score }}</span>
                 </div>
               </div>
             </template>
@@ -90,7 +90,7 @@
                 >
                   <span class="sug-inci">{{ s.inci_name }}</span>
                   <span class="sug-name">{{ s.korean_name }}</span>
-                  <span v-if="s.ewg_score != null" class="sug-ewg" :class="ewgClass(s.ewg_score)">EWG {{ s.ewg_score }}</span>
+                  <span v-if="s.ewg_score != null && s.ewg_score > 0" class="sug-ewg" :class="ewgClass(s.ewg_score)">EWG {{ s.ewg_score }}</span>
                 </div>
               </div>
             </template>

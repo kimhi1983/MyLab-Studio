@@ -3046,20 +3046,31 @@ app.post('/api/ingredients/batch-info', async (req, res) => {
       ),
     ])
 
+    // "1-10%", "0.3-1%", "5%" 등 다양한 형식에서 최댓값 추출
+    function parseMaxConc(str) {
+      if (!str) return null
+      const nums = str.match(/[\d.]+/g)
+      if (!nums || !nums.length) return null
+      const values = nums.map(Number).filter(n => !isNaN(n) && n > 0)
+      return values.length ? Math.max(...values) : null
+    }
+
     const result = {}
     for (const orig of inci_names) {
       if (!orig) continue
       const lower = orig.toLowerCase()
       const ewgRow = ewgRes.rows.find(r => r.inci_name.toLowerCase() === lower)
-      result[orig] = { ewg: ewgRow?.ewg_score ?? null, reg_kr: null, reg_eu: null }
+      // ewg_score = -1 은 DB에서 "데이터 없음" 의미 → null로 변환
+      const ewg = ewgRow?.ewg_score
+      result[orig] = { ewg: (ewg != null && ewg !== -1) ? ewg : null, reg_kr: null, reg_eu: null }
     }
 
     for (const row of regRes.rows) {
       const lower = row.inci_name.toLowerCase()
       const origKey = inci_names.find(n => n && n.toLowerCase() === lower)
       if (!origKey) continue
-      const maxNum = parseFloat(row.max_concentration)
-      if (isNaN(maxNum)) continue
+      const maxNum = parseMaxConc(row.max_concentration)
+      if (maxNum === null) continue
       if (row.source === 'GEMINI_KR' || row.source === 'MFDS_SEED') {
         if (result[origKey].reg_kr === null || maxNum < result[origKey].reg_kr) result[origKey].reg_kr = maxNum
       } else if (row.source === 'GEMINI_EU') {
@@ -3207,99 +3218,234 @@ app.get('/api/guide-formulas/:id', async (req, res) => {
 // ─── 카피 처방 (역처방: DB 우선, productId 기반) ───
 app.post('/api/copy-formula', async (req, res) => {
   try {
-    const { productId, productName, targetMarket = 'KR' } = req.body
+    const { productId, productName, targetMarket = 'KR', requirements = '' } = req.body
 
-    // productId가 제공된 경우: DB 기반 역산
+    // ── productId 제공 시: 병렬 Pro 파이프라인 ──
     if (productId) {
-      // 1. product_master에서 제품 + 전성분 조회
+      // 1. 제품 + 전성분 조회
       const { rows: prodRows } = await pool.query(
         'SELECT id, brand_name, product_name, category, subcategory, product_type, full_ingredients, key_ingredients FROM product_master WHERE id = $1',
         [productId]
       )
-      if (!prodRows.length) {
-        return res.status(404).json({ success: false, error: '제품을 찾을 수 없습니다.' })
-      }
+      if (!prodRows.length) return res.status(404).json({ success: false, error: '제품을 찾을 수 없습니다.' })
       const product = prodRows[0]
 
-      // 2. full_ingredients 파싱 (쉼표 구분 INCI 목록)
-      const rawIngredients = product.full_ingredients || ''
-      const inciList = rawIngredients
-        .split(',')
-        .map(s => s.trim())
-        .filter(s => s.length > 0)
+      // 2. 전성분 파싱
+      const inciList = (product.full_ingredients || '').split(',').map(s => s.trim()).filter(Boolean)
+      if (inciList.length === 0) return res.status(400).json({ success: false, error: '해당 제품의 전성분 정보가 없습니다.' })
 
-      if (inciList.length === 0) {
-        return res.status(400).json({ success: false, error: '해당 제품의 전성분 정보가 없습니다.' })
-      }
-
-      // 3. ingredient_master에서 korean_name 매칭 (ILIKE)
+      // 3. ingredient_master korean_name 매칭
       const { rows: imRows } = await pool.query(
-        'SELECT inci_name, korean_name FROM ingredient_master WHERE inci_name = ANY($1)',
-        [inciList]
+        'SELECT inci_name, korean_name FROM ingredient_master WHERE inci_name = ANY($1)', [inciList]
       )
       const koreanMap = {}
       for (const r of imRows) koreanMap[r.inci_name.toLowerCase()] = r.korean_name
 
-      // 4. regulation_cache에서 시장별 max_concentration 조회
+      // 4. regulation_cache 배합비 역산 (참고용)
       const marketSourceMap = { KR: ['GEMINI_KR', 'MFDS_SEED'], EU: ['GEMINI_EU'], US: ['GEMINI_US'] }
-      const marketSources = marketSourceMap[targetMarket] || marketSourceMap['KR']
       const { rows: regRows } = await pool.query(
         'SELECT inci_name, max_concentration FROM regulation_cache WHERE inci_name = ANY($1) AND source = ANY($2)',
-        [inciList, marketSources]
+        [inciList, marketSourceMap[targetMarket] || marketSourceMap['KR']]
       )
       const regMaxMap = {}
       for (const r of regRows) {
         if (!r.max_concentration) continue
-        const m = r.max_concentration.match(/([\d.]+)\s*%/)
-        if (m) {
-          const val = parseFloat(m[1])
-          const key = r.inci_name
-          if (!regMaxMap[key] || val < regMaxMap[key]) regMaxMap[key] = val
-        }
+        const nums = r.max_concentration.match(/[\d.]+/g)
+        if (!nums) continue
+        // 범위 "1-10%" → 최댓값(10%) 사용 (역산 참고용)
+        const v = Math.max(...nums.map(Number).filter(n => !isNaN(n) && n > 0))
+        if (v > 0 && (!regMaxMap[r.inci_name] || v < regMaxMap[r.inci_name])) regMaxMap[r.inci_name] = v
+      }
+      const dbPercentages = reverseCalcPercentages(inciList, regMaxMap)
+      const dbRefStr = inciList.map((inci, i) => `${inci}: ~${dbPercentages[i] ?? 0.4}%`).join(', ')
+
+      // 5. Pro 의도 분석
+      const apiKey = process.env.GEMINI_API_KEY
+      const formulaName = `${product.brand_name || ''} ${product.product_name || ''} 역처방`.trim()
+      let formulaIntent = null
+      try {
+        formulaIntent = await analyzeFormulaIntent(formulaName, requirements)
+        console.log(`[COPY-INTENT] detected_type="${formulaIntent?.detected_type}" purposes=${JSON.stringify(formulaIntent?.key_purposes)}`)
+      } catch (e) {
+        console.warn('[COPY-INTENT] 의도 분석 실패, 폴백:', e.message)
       }
 
-      // 5. 배합비 역산
-      const percentages = reverseCalcPercentages(inciList, regMaxMap)
+      // 6. Purpose Gate DB 조회
+      const purposes = formulaIntent?.key_purposes || []
+      const purposeGateSection = await loadPurposeGateContext(purposes, product.category || '')
 
-      // 6. 결과 조립
-      const ingredients = inciList.map((inci, i) => {
-        const phase = assignPhaseFromMap(inci)
-        const type = guessType(inci, {})
-        return {
-          inci_name: inci,
-          korean_name: koreanMap[inci.toLowerCase()] || null,
-          percentage: percentages[i] ?? 0.4,
-          phase,
-          function: guessFunction(inci, {}),
-          type,
+      const intentSection = formulaIntent ? `## 제형 분석
+- 감지된 제형: ${formulaIntent.detected_type || ''}
+- 베이스: ${formulaIntent.base_form || ''}
+- 수분 비율: ${formulaIntent.water_percent?.min ?? 0}~${formulaIntent.water_percent?.max ?? 70}%
+- 주요 목적: ${purposes.join(', ')}
+- 필수 성분: ${(formulaIntent.must_have_ingredients || []).join(', ')}
+- 금지 성분: ${(formulaIntent.must_not_ingredients || []).join(', ')}` : ''
+
+      // 7. 역처방 프롬프트 생성
+      const aiPrompt = `당신은 화장품 역처방(reverse formulation) 전문가입니다.
+아래 시판 제품의 공개 전성분을 분석하여 유사 구조의 연구용 실험 후보 처방을 설계하세요.
+
+## 원본 제품 정보
+- 브랜드: ${product.brand_name || '미상'}
+- 제품명: ${product.product_name || '미상'}
+- 카테고리: ${product.category || '미상'}
+- 타겟 시장: ${targetMarket}
+
+## 원본 전성분 (INCI, 고농도→저농도 순)
+${inciList.join(', ')}
+
+## DB 역산 참고 배합비 (규제 DB 추정, 참고용)
+${dbRefStr}
+
+${intentSection}
+${purposeGateSection}
+
+## 추가 요구사항
+${requirements || '없음'}
+
+## 설계 원칙
+1. 원본 전성분의 성분 구성을 참고하되 연구용 최적화 처방으로 재설계
+2. 배합비 합계 = 정확히 100.00%
+3. 정제수(Aqua)는 역산으로 계산
+4. 유화 시스템 안정성(HLB), pH 호환성, 물리적 안정성 확인
+5. Purpose Gate 필수/금지 성분 반드시 준수
+
+## 반드시 아래 JSON 형식으로만 응답:
+{
+  "formula_input": [
+    { "name": "한글성분명", "inci_name": "INCI명", "percentage": 숫자, "function": "기능", "phase": "A/B/C/D" }
+  ],
+  "total_wt": 100,
+  "formulation_notes": "제조 공정 요약 (A상 가열온도, 유화 방법, 냉각 후 첨가 성분 등)",
+  "detected_type": "제형명",
+  "key_purposes": ["목적1", "목적2"]
+}`
+
+      // 8. 병렬 Pro 생성 (A + B)
+      console.log('[COPY] 병렬 Pro A(0.3) + B(0.6) 생성 시작')
+      const { resultA, resultB } = await generateFormulaParallel(aiPrompt, apiKey)
+
+      // 9. Pro 조합
+      let combinedRaw
+      if (resultA && resultB) {
+        console.log('[COPY] 두 처방 Pro 조합 시작')
+        combinedRaw = await combineFormulas(resultA, resultB, intentSection, purposeGateSection, apiKey)
+      } else if (resultA || resultB) {
+        console.log('[COPY] 하나만 성공, 단일 결과 사용')
+        combinedRaw = resultA || resultB
+      } else {
+        throw new Error('병렬 Pro 생성 모두 실패')
+      }
+
+      // 10. 파싱 헬퍼
+      function parseCandidateRaw(rawText) {
+        let parsed
+        try { parsed = JSON.parse(rawText) } catch {
+          const cleaned = rawText.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim()
+          parsed = JSON.parse(cleaned)
         }
-      })
+        if (!parsed.formula_input && Array.isArray(parsed.ingredients)) parsed.formula_input = parsed.ingredients
+        else if (!parsed.formula_input && Array.isArray(parsed.formula)) parsed.formula_input = parsed.formula
+        if (!Array.isArray(parsed.formula_input) || !parsed.formula_input.length) throw new Error('formula_input 없음')
+        parsed.formula_input = parsed.formula_input.map(i => ({
+          name: i.korean_name || i.name || '',
+          inci_name: i.inci || i.inci_name || '',
+          percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
+          function: i.function || '',
+          phase: i.phase || 'A',
+        }))
+        return parsed
+      }
 
-      // 실제 합계 재계산 및 보정
-      const actualSum = ingredients.reduce((s, i) => s + i.percentage, 0)
-      const totalPct = parseFloat(actualSum.toFixed(2))
+      // 11. 3개 후보 조립
+      const candidates = []
 
-      const phases = buildPhaseSummary(
-        ingredients.map(i => ({ ...i, inci_name: i.inci_name }))
-      )
-      const process = buildDefaultProcess(phases)
+      if (resultA) {
+        try {
+          const pa = parseCandidateRaw(resultA)
+          const va = await validateAndRetry(pa.formula_input, formulaIntent)
+          candidates.push({
+            label: '후보 A (안정 구조)',
+            formula: { ingredients: pa.formula_input, notes: pa.formulation_notes || '' },
+            score: va.score,
+            process_text: pa.formulation_notes || '',
+            detected_type: pa.detected_type || formulaIntent?.detected_type || '',
+          })
+        } catch (e) { console.warn('[COPY] 후보 A 파싱 실패:', e.message) }
+      }
+
+      if (resultB) {
+        try {
+          const pb = parseCandidateRaw(resultB)
+          const vb = await validateAndRetry(pb.formula_input, formulaIntent)
+          candidates.push({
+            label: '후보 B (창의 구조)',
+            formula: { ingredients: pb.formula_input, notes: pb.formulation_notes || '' },
+            score: vb.score,
+            process_text: pb.formulation_notes || '',
+            detected_type: pb.detected_type || formulaIntent?.detected_type || '',
+          })
+        } catch (e) { console.warn('[COPY] 후보 B 파싱 실패:', e.message) }
+      }
+
+      // 12. 최적 조합 (+ retry if score < 95)
+      try {
+        let pc = parseCandidateRaw(combinedRaw)
+        let vc = await validateAndRetry(pc.formula_input, formulaIntent)
+        if (vc.score < 95 && vc.shouldRetry) {
+          console.log(`[COPY-RETRY] score=${vc.score} < 95, 재조합 시작`)
+          const retryPrompt = aiPrompt + `\n\n⚠️⚠️⚠️ [검증 피드백 — 반드시 수정]\n${vc.feedback}\n⚠️⚠️⚠️`
+          const retryRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+            {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: retryPrompt }] }],
+                generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+              }),
+              signal: AbortSignal.timeout(180000),
+            }
+          )
+          if (retryRes.ok) {
+            const rd = await retryRes.json()
+            const rt = rd.candidates?.[0]?.content?.parts?.[0]?.text
+            if (rt) {
+              try { pc = parseCandidateRaw(rt); vc = await validateAndRetry(pc.formula_input, formulaIntent); pc.retried = true } catch {}
+            }
+          }
+        }
+        candidates.push({
+          label: '최적 조합 (추천)',
+          formula: { ingredients: pc.formula_input, notes: pc.formulation_notes || '' },
+          score: vc.score,
+          process_text: pc.formulation_notes || '',
+          detected_type: pc.detected_type || formulaIntent?.detected_type || '',
+          recommended: true,
+          retried: pc.retried || false,
+        })
+      } catch (e) { console.warn('[COPY] 최적 조합 파싱 실패:', e.message) }
+
+      if (candidates.length === 0) throw new Error('모든 후보안 생성 실패')
+
+      console.log(`[COPY] 완료 — 후보 ${candidates.length}개, scores=${candidates.map(c=>c.score).join('/')}`)
 
       return res.json({
         success: true,
         data: {
-          description: `[${product.brand_name || ''} ${product.product_name}] DB 기반 역처방. 전성분 ${inciList.length}종, ${targetMarket} 시장 규제 적용.`,
-          ingredients,
-          phases,
-          process,
-          totalPercentage: totalPct,
-          generatedAt: new Date().toISOString(),
-          source: 'db-reverse',
-          sourceProduct: {
-            id: product.id,
-            brand_name: product.brand_name,
-            product_name: product.product_name,
-            category: product.category,
+          source_product: {
+            id: product.id, brand_name: product.brand_name,
+            product_name: product.product_name, category: product.category,
+            full_ingredients: product.full_ingredients,
           },
+          candidates,
+          analysis: {
+            detected_type: formulaIntent?.detected_type || '',
+            key_purposes: purposes,
+            risks: [],
+            regulatory_notes: [],
+          },
+          cost_estimate: null,
         },
       })
     }

@@ -95,6 +95,18 @@
             <input v-model="form.title" class="form-input" placeholder="처방명을 입력하세요">
           </div>
           <div class="form-group">
+            <label class="form-label">제품 유형</label>
+            <input
+              v-model="form.product_type"
+              list="product-type-list"
+              class="form-input"
+              placeholder="선택 또는 직접 입력"
+            >
+            <datalist id="product-type-list">
+              <option v-for="t in allProductOptions" :key="t.value" :value="t.label">{{ t.group }} — {{ t.label }}</option>
+            </datalist>
+          </div>
+          <div class="form-group">
             <label class="form-label">프로젝트</label>
             <select v-model="form.project_id" class="form-input">
               <option value="">없음</option>
@@ -104,27 +116,17 @@
 
           <!-- 전성분 자동 채우기 -->
           <div class="form-group ai-fill-group">
-            <label class="form-label">추가 요구사항</label>
-            <textarea v-model="aiRequirements" class="form-input" rows="3" placeholder="예: 고보습, 민감성 피부, 비건, EWG 그린" style="resize: vertical;"></textarea>
+            <label class="form-label">추가 요구사항 (선택)</label>
+            <input v-model="aiRequirements" class="form-input" placeholder="예: 고보습, 민감성 피부, 비건, EWG 그린">
             <button
               class="btn-ai-fill"
-              :disabled="isAiFilling"
+              :disabled="!form.product_type || isAiFilling"
               @click="onGenerateIdea"
             >
               <span v-if="isAiFilling" class="ai-spinner"></span>
               {{ isAiFilling ? aiFillStep : '스마트 처방 생성' }}
             </button>
-            <p style="font-size: 12px; color: #999; margin-top: 8px; line-height: 1.8;">
-              <span style="font-weight: 600;">💡 추가 요구사항에 상세히 적을수록 더 정확한 처방이 생성됩니다.</span><br>
-              원하는 내용을 자유롭게 적어주세요. 분석하여 처방에 반영됩니다.<br>
-              <span style="color: #b0a080; font-style: italic;">
-                "민감성 피부용 고보습 크림, 히알루론산 필수 포함, 레티놀 제외, 비건 인증 가능"<br>
-                "미백 + 주름개선 기능, 나이아신아마이드 3% 이상, 무향, EWG 그린 등급"<br>
-                "50대 탄력 개선용, PDRN 포함, 저자극, 무알코올"<br>
-                "남성용 올인원, 쿨링감, 지성피부, 산뜻한 사용감"
-              </span><br>
-              <span style="color: #aaa; font-size: 11px;">기능, 피부타입, 특정 성분, 사용감, 인증, 타겟 등 무엇이든 적을 수 있습니다.</span>
-            </p>
+            <div v-if="!form.product_type" class="ai-hint">제품 유형을 먼저 선택하세요</div>
           </div>
         </div>
       </div>
@@ -134,6 +136,7 @@
         <div class="panel-header">
           <span class="section-label">PHYSICAL SPEC</span>
           <span class="section-title">물성 · 안정성</span>
+          <span v-if="!form.product_type" class="props-hint">제품 유형을 선택하면 기본값이 채워집니다</span>
           <button
             v-if="form.formula_data.ingredients.length >= 1 && specChangedFields.length > 0"
             class="btn-spec-adjust"
@@ -200,12 +203,8 @@
     <!-- Ingredient Table -->
     <div style="margin-top: 4px">
       <IngredientTable :ingredients="form.formula_data.ingredients" :editable="true"
-        @update:ingredients="onIngredientsUpdate"
-        @show-ingredient-detail="onShowIngDetail" />
+        @update:ingredients="onIngredientsUpdate" />
     </div>
-
-    <!-- 예상 원가 -->
-    <CostAnalysisCard v-if="form.formula_data.ingredients.length >= 1" :ingredients="form.formula_data.ingredients" style="margin-top: 16px" />
 
     <!-- pH 예측 + 방부제 효력 -->
     <div v-if="form.formula_data.ingredients.length >= 2" class="panel" style="margin-top: 16px">
@@ -236,6 +235,38 @@
             <div class="preserv-info">
               <span class="preserv-name">{{ p.name }} (유효 pH {{ p.phRange }})</span>
               <span class="preserv-msg">{{ p.message }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 유사 제품 검색 -->
+    <div v-if="form.formula_data.ingredients.length >= 2" class="panel" style="margin-top: 16px">
+      <div class="panel-header">
+        <span class="section-label">SIMILAR PRODUCTS</span>
+        <span class="section-title">유사 제품 검색</span>
+        <button class="btn-search-similar" @click="onSearchSimilar" :disabled="isSearchingSimilar">
+          {{ isSearchingSimilar ? '검색 중...' : '유사 제품 찾기' }}
+        </button>
+      </div>
+      <div class="similar-body">
+        <div v-if="!similarProducts.length && !isSearchingSimilar" class="similar-empty">
+          현재 처방의 INCI 성분을 기준으로 DB에서 유사 제품을 검색합니다.
+        </div>
+        <div v-if="similarProducts.length" class="similar-list">
+          <div v-for="(prod, idx) in similarProducts" :key="prod.id || idx" class="similar-item">
+            <div class="similar-rank">{{ idx + 1 }}</div>
+            <div class="similar-info">
+              <span class="similar-name">{{ prod.product_name || prod.name }}</span>
+              <span class="similar-brand" v-if="prod.brand">{{ prod.brand }}</span>
+              <span class="similar-category" v-if="prod.category">{{ prod.category }}</span>
+            </div>
+            <div class="similar-match">
+              <span class="similar-match-count">{{ prod.matchCount || prod.match_count || 0 }}개 일치</span>
+              <span class="similar-match-bar">
+                <span class="similar-match-fill" :style="{ width: similarMatchPct(prod) + '%' }"></span>
+              </span>
             </div>
           </div>
         </div>
@@ -466,9 +497,6 @@
             <!-- 원료 목록 미리보기 -->
             <div class="idea-table-wrap">
               <table class="idea-table">
-                <colgroup>
-                  <col class="col-name" /><col class="col-inci" /><col class="col-pct" /><col class="col-fn" /><col class="col-phase" />
-                </colgroup>
                 <thead>
                   <tr>
                     <th>원료명</th>
@@ -489,9 +517,6 @@
                 </tbody>
               </table>
             </div>
-
-            <!-- 예상 원가 -->
-            <CostAnalysisCard v-if="ideaResult?.ingredients?.length" :ingredients="ideaResult.ingredients" />
 
           </div>
           <div class="idea-modal-footer">
@@ -575,49 +600,12 @@
     <!-- Actions -->
     <div class="form-actions">
       <router-link to="/formulas" class="btn btn-ghost">취소</router-link>
-      <button class="btn btn-primary"
-        :class="{ 'btn-save-done': saveState === 'done', 'btn-save-error': saveState === 'error' }"
-        :disabled="saveState === 'saving'"
-        @click="onSave">
-        {{ saveState === 'done' ? '저장 완료 ✓' : saveState === 'error' ? '저장 실패' : isNew ? '초안으로 저장' : '저장' }}
-      </button>
+      <button class="btn btn-primary" @click="onSave">{{ isNew ? '초안으로 저장' : '저장' }}</button>
     </div>
 
     </template>
     <!-- /기존 새 처방/편집 UI -->
   </div>
-
-  <!-- 성분 상세 팝업 (규제 클릭 시) -->
-  <Teleport to="body">
-    <div v-if="ingDetailInci" class="ing-detail-overlay" @click.self="ingDetailInci = ''">
-      <div class="ing-detail-modal">
-        <div class="ing-detail-header">
-          <span class="ing-detail-title">{{ ingDetailInci }}</span>
-          <button class="ing-detail-close" @click="ingDetailInci = ''">×</button>
-        </div>
-        <div class="ing-detail-body" v-if="ingDetailInfo">
-          <div class="ing-detail-row" v-if="ingDetailInfo.korean_name"><span class="ing-d-label">한글명</span><span>{{ ingDetailInfo.korean_name }}</span></div>
-          <div class="ing-detail-row" v-if="ingDetailInfo.ewg_score != null"><span class="ing-d-label">EWG</span><span>{{ ingDetailInfo.ewg_score }}</span></div>
-          <div class="ing-detail-row" v-if="ingDetailInfo.ingredient_type"><span class="ing-d-label">유형</span><span>{{ ingDetailInfo.ingredient_type }}</span></div>
-          <div class="ing-detail-row" v-if="ingDetailInfo.max_concentration"><span class="ing-d-label">최대농도</span><span>{{ ingDetailInfo.max_concentration }}</span></div>
-          <div class="ing-detail-row" v-if="ingDetailInfo.description"><span class="ing-d-label">설명</span><span class="ing-d-desc">{{ ingDetailInfo.description }}</span></div>
-        </div>
-        <div class="ing-detail-body" v-else><span style="color:#999;font-size:13px">상세 정보를 불러오는 중...</span></div>
-      </div>
-    </div>
-  </Teleport>
-
-  <!-- ─── 비커 로딩 오버레이 ─── -->
-  <Teleport to="body">
-    <Transition name="beaker-fade">
-      <div v-if="isAiFilling" class="beaker-overlay">
-        <div class="beaker-overlay-card">
-          <FormulaLoadingBeaker :step="beakerStep" />
-          <p class="beaker-overlay-msg">최적의 처방을 설계하고 있습니다...</p>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
 </template>
 
 <script setup>
@@ -631,8 +619,6 @@ import { useExport } from '../composables/useExport.js'
 import StatusChip from '../components/common/StatusChip.vue'
 import IngredientTable from '../components/formula/IngredientTable.vue'
 import CopyFormulaView from './CopyFormulaView.vue'
-import CostAnalysisCard from '../components/CostAnalysisCard.vue'
-import FormulaLoadingBeaker from '../components/formula/FormulaLoadingBeaker.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -654,24 +640,6 @@ const activeCreateTab = ref('new')
 const aiRequirements = ref('')
 const isAiFilling = ref(false)
 const aiFillStep = ref('')
-const beakerStep = ref(1)
-let beakerTimer = null
-
-function startBeakerAnimation() {
-  beakerStep.value = 1
-  clearInterval(beakerTimer)
-  beakerTimer = setInterval(() => {
-    if (beakerStep.value < 4) beakerStep.value++
-    else clearInterval(beakerTimer)
-  }, 45000) // 45s마다 1단계씩 진행 (1→2→3→4, 총 180s 커버)
-}
-function stopBeakerAnimation() {
-  beakerStep.value = 4
-  setTimeout(() => {
-    clearInterval(beakerTimer)
-    beakerTimer = null
-  }, 600)
-}
 
 // 기능 1: AI 처방 아이디어 미리보기
 const showIdeaModal = ref(false)
@@ -809,6 +777,11 @@ const statuses = [
   { value: 'done', label: '완료', ...statusStyles.done },
 ]
 
+// 제품 유형 변경 시 물성 기본값 자동 채움
+watch(() => form.product_type, (newType) => {
+  if (newType) generatePhysicalProps(newType)
+})
+
 // 물성 값 변경 감지 — 처방 자동 조정 버튼 활성화
 watch(
   () => [physicalProps.ph, physicalProps.viscosity, physicalProps.appearance],
@@ -828,21 +801,6 @@ onMounted(() => {
       formula.value = f
       loadForm(f)
     }
-  }
-  // ?tab=copy 로 진입 시 카피 처방 탭 자동 활성화
-  if (isNew.value && route.query.tab === 'copy') {
-    activeCreateTab.value = 'copy'
-  }
-  // 성분DB에서 "처방에 추가" 버튼으로 진입 시 성분 자동 추가
-  const addInci = route.query.addIngredient
-  if (addInci) {
-    form.formula_data.ingredients.push({
-      name: addInci,
-      inci_name: addInci,
-      percentage: 1.0,
-      function: '',
-      phase: '',
-    })
   }
 })
 
@@ -874,38 +832,21 @@ function addTag() {
   }
 }
 
-const saveState = ref('idle') // 'idle' | 'saving' | 'done' | 'error'
-
 function onSave() {
   if (!form.title.trim()) {
     alert('처방명을 입력하세요')
     return
   }
   form.formula_data.total_percentage = form.formula_data.ingredients.reduce((s, i) => s + (Number(i.percentage) || 0), 0)
-  saveState.value = 'saving'
-  try {
-    if (isNew.value) {
-      const created = addFormula({ ...form })
-      router.push('/formulas/' + created.id)
-    } else {
-      const updated = updateFormula(route.params.id, { ...form })
-      if (updated) formula.value = updated
-      saveState.value = 'done'
-      setTimeout(() => { saveState.value = 'idle' }, 2000)
-    }
-  } catch {
-    saveState.value = 'error'
-    setTimeout(() => { saveState.value = 'idle' }, 2000)
-  }
-}
 
-// 성분 상세 모달 (규제 클릭)
-const ingDetailInci = ref('')
-const ingDetailInfo = ref(null)
-async function onShowIngDetail(inciName) {
-  ingDetailInci.value = inciName
-  const res = await api.fetchJSON(`/api/ingredients/db?q=${encodeURIComponent(inciName)}&limit=1`)
-  ingDetailInfo.value = res?.items?.[0] || null
+  if (isNew.value) {
+    const created = addFormula({ ...form })
+    router.push('/formulas/' + created.id)
+  } else {
+    const updated = updateFormula(route.params.id, { ...form })
+    if (updated) formula.value = updated
+    router.push('/formulas')
+  }
 }
 
 function onDelete() {
@@ -945,11 +886,13 @@ function formatDate(iso) {
 }
 
 function onExportExcel() {
-  exportFormulaExcel({ ...form, id: formula.value?.id || route.params.id })
+  if (!formula.value?.id) return
+  exportFormulaExcel(formula.value)
 }
 
 function onExportPdf() {
-  window.print()
+  if (!formula.value?.id) return
+  exportFormulaPdf(formula.value)
 }
 
 function getProcessByType(productType) {
@@ -1235,6 +1178,39 @@ const phRangeStyle = computed(() => {
 })
 
 // ───────────────────────────────────────────────
+// 유사 제품 검색
+// ───────────────────────────────────────────────
+const isSearchingSimilar = ref(false)
+const similarProducts = ref([])
+
+async function onSearchSimilar() {
+  const ings = form.formula_data.ingredients
+  if (ings.length < 2) return
+  isSearchingSimilar.value = true
+  try {
+    const inciNames = ings.map(i => i.inci_name || i.name).filter(Boolean)
+    const res = await api.searchSimilarProducts(inciNames, 10)
+    if (res?.success && res.data) {
+      similarProducts.value = res.data
+    } else {
+      similarProducts.value = []
+    }
+  } catch (e) {
+    console.error('[SimilarProducts]', e)
+    similarProducts.value = []
+  } finally {
+    isSearchingSimilar.value = false
+  }
+}
+
+function similarMatchPct(prod) {
+  const totalIngs = form.formula_data.ingredients.length
+  if (!totalIngs) return 0
+  const matchCount = prod.matchCount || prod.match_count || 0
+  return Math.min((matchCount / totalIngs) * 100, 100)
+}
+
+// ───────────────────────────────────────────────
 // 배치 스케일러
 // ───────────────────────────────────────────────
 const batchCurrentG = ref(100)
@@ -1304,15 +1280,15 @@ function onIngredientsUpdate(newIngredients) {
 // ───────────────────────────────────────────────
 
 async function onGenerateIdea() {
-  if (!form.title.trim() || isAiFilling.value) return
+  if (!form.product_type || isAiFilling.value) return
 
   isAiFilling.value = true
-  aiFillStep.value = '처방 생성 중...'
+  aiFillStep.value = '처방 아이디어 생성 중...'
   ideaResult.value = null
-  startBeakerAnimation()
 
   try {
     const res = await api.generateFormulaIdea({
+      product_type: form.product_type,
       formula_name: form.title || '',
       requirements: aiRequirements.value || '',
     })
@@ -1322,19 +1298,18 @@ async function onGenerateIdea() {
       showIdeaModal.value = true
     } else {
       // DB 처방이 없으면 기존 AI 처방 생성으로 폴백
-      aiFillStep.value = '처방 생성 중...'
+      aiFillStep.value = 'AI 처방 생성 중...'
       await onAiFill()
     }
   } catch (err) {
-    alert('처방 생성 실패: ' + (err.message || '서버 오류'))
+    alert('처방 아이디어 생성 실패: ' + (err.message || '서버 오류'))
   } finally {
-    stopBeakerAnimation()
     isAiFilling.value = false
     aiFillStep.value = ''
   }
 }
 
-async function applyIdeaResult() {
+function applyIdeaResult() {
   if (!ideaResult.value) return
   const hasIngredients = form.formula_data.ingredients.length > 0
   if (hasIngredients && !confirm('기존 원료 배합표를 덮어씌웁니다. 계속하시겠습니까?')) return
@@ -1348,7 +1323,7 @@ async function applyIdeaResult() {
   }))
   form.formula_data.total_percentage = ideaResult.value.totalPercentage || 100
 
-  if (!form.title.trim()) form.title = '스마트 처방'
+  if (!form.title.trim()) form.title = `${form.product_type} 처방`
   if (!form.tags.includes('스마트처방')) form.tags.push('스마트처방')
 
   // 예상 물성 반영
@@ -1427,7 +1402,7 @@ function isSpecNew(ing) {
 // ───────────────────────────────────────────────
 
 async function onAiFill() {
-  if (isAiFilling.value) return
+  if (!form.product_type || isAiFilling.value) return
 
   const hasIngredients = form.formula_data.ingredients.length > 0
   if (hasIngredients && !confirm('기존 원료 배합표를 덮어씌웁니다. 계속하시겠습니까?')) return
@@ -1442,8 +1417,8 @@ async function onAiFill() {
       .filter(f => physicalProps[f.key])
       .map(f => `${f.label}: ${physicalProps[f.key]}`)
     const res = await api.generateAiFormula({
-      productType: form.title || '',
-      requirements: aiRequirements.value || '',
+      productType: form.product_type,
+      requirements: aiRequirements.value || form.product_type,
       physicalSpecs: specEntries.length ? specEntries : undefined,
     })
 
@@ -1460,12 +1435,12 @@ async function onAiFill() {
 
       // 처방명이 비어있으면 자동 설정
       if (!form.title.trim()) {
-        form.title = '스마트 처방'
+        form.title = `${form.product_type} 처방`
       }
       // 태그 추가
       if (!form.tags.includes('스마트처방')) form.tags.push('스마트처방')
       // 메모에 복합원료 + 제조방법 생성
-      res.data._productType = form.title || ''
+      res.data._productType = form.product_type
       form.memo = buildAiMemo(res.data, form.memo)
 
     } else {
@@ -1797,60 +1772,6 @@ async function onAiFill() {
   margin-top: 4px;
   font-size: 11px;
   color: var(--text-dim);
-}
-
-/* Purpose Gate 검증 배너 */
-.purpose-validate-banner {
-  margin: 8px 0 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.pvb-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
-}
-.pvb-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-sub);
-  flex: 1;
-}
-.pvb-score {
-  font-size: 13px;
-  font-weight: 700;
-}
-.pvb-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-dim);
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 2px;
-}
-.pvb-warnings {
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.pvb-warn-item {
-  font-size: 12px;
-  padding: 5px 10px;
-  border-radius: 5px;
-}
-.pvb-error { background: #fef2f2; color: #dc2626; }
-.pvb-warn  { background: #fffbeb; color: #d97706; }
-.pvb-info  { background: #eff6ff; color: #2563eb; }
-.pvb-ok {
-  padding: 8px 12px;
-  font-size: 12px;
-  color: #059669;
 }
 
 /* 메모 확대 버튼 */
@@ -2319,6 +2240,52 @@ async function onAiFill() {
 .preserv-name { font-weight: 600; color: var(--text); display: block; }
 .preserv-msg  { color: var(--text-sub); font-size: 11px; }
 
+/* ── 유사 제품 검색 ── */
+.btn-search-similar {
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--border-mid, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-search-similar:hover { background: var(--bg); }
+.btn-search-similar:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.similar-body { padding: 16px 20px; }
+.similar-empty { color: var(--text-dim); font-size: 12px; }
+.similar-list { display: flex; flex-direction: column; gap: 8px; }
+.similar-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.similar-rank {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 11px; font-weight: 700;
+  flex-shrink: 0;
+}
+.similar-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.similar-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.similar-brand { font-size: 11px; color: var(--text-sub); }
+.similar-category { font-size: 10px; color: var(--text-dim); }
+.similar-match { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; min-width: 80px; }
+.similar-match-count { font-size: 11px; font-weight: 600; color: var(--accent); font-family: var(--font-mono); }
+.similar-match-bar { width: 60px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.similar-match-fill { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+
 /* ── 배치 스케일러 ── */
 .batch-body { padding: 16px 20px; }
 .batch-inputs { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
@@ -2439,63 +2406,36 @@ async function onAiFill() {
 .btn-spec-adjust:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── AI 아이디어 모달 ─── */
-.idea-modal { width: min(95vw, 1400px); min-width: min(1100px, 95vw); max-height: 90vh; display: flex; flex-direction: column; }
+.idea-modal { width: min(720px, 95vw); max-height: 80vh; display: flex; flex-direction: column; }
 .idea-modal-body { overflow-y: auto; padding: 16px 20px; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .idea-spec-bar {
   display: flex;
   gap: 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 .idea-spec-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   flex: 1;
-  padding: 14px 16px;
-  border-right: 1px solid #ece6d8;
-  white-space: nowrap;
-  text-align: center;
+  padding: 8px 12px;
+  border-right: 1px solid var(--border);
+  min-width: 80px;
 }
 .idea-spec-item:last-child { border-right: none; }
-.idea-spec-label {
-  font-size: 12px;
-  color: var(--text-dim);
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-  text-align: center;
-  margin-bottom: 4px;
-}
-.idea-spec-val {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text);
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  text-align: center;
-  line-height: 1.2;
-}
+.idea-spec-label { font-size: 9px; font-family: var(--font-mono); text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; }
+.idea-spec-val { font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; font-family: var(--font-mono); }
 .idea-table-wrap { overflow-x: auto; }
-.idea-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  table-layout: fixed;
-}
-.idea-table colgroup col.col-name { width: 150px; }
-.idea-table colgroup col.col-inci { width: 280px; }
-.idea-table colgroup col.col-pct  { width: 80px; }
-.idea-table colgroup col.col-fn   { width: 100px; }
-.idea-table colgroup col.col-phase { width: 60px; }
+.idea-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .idea-table th { text-align: left; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
-.idea-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.idea-name { font-weight: 600; color: var(--text); }
-.idea-inci { font-family: var(--font-mono); font-size: 11px; color: var(--text-sub); }
-.idea-pct { font-family: var(--font-mono); font-weight: 700; color: var(--accent); text-align: right; }
-.idea-fn { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idea-table td { padding: 5px 10px; border-bottom: 1px solid var(--border); }
+.idea-name { font-weight: 600; color: var(--text); min-width: 100px; }
+.idea-inci { font-family: var(--font-mono); font-size: 11px; color: var(--text-sub); min-width: 120px; }
+.idea-pct { font-family: var(--font-mono); font-weight: 700; color: var(--accent); text-align: right; min-width: 60px; }
+.idea-fn { font-size: 11px; color: var(--text-dim); }
 .idea-phase { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); text-align: center; }
 .idea-modal-footer {
   padding: 12px 20px;
@@ -2504,47 +2444,6 @@ async function onAiFill() {
   justify-content: flex-end;
   gap: 8px;
 }
-
-/* ─── 비커 로딩 오버레이 ─── */
-.beaker-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(250, 248, 244, 0.88);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.beaker-overlay-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 40px 48px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 8px 40px rgba(139, 115, 85, 0.18);
-}
-.beaker-overlay-msg {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-sub);
-  letter-spacing: 0.2px;
-  margin: 0;
-}
-.beaker-overlay-step {
-  font-size: 12px;
-  font-family: var(--font-mono);
-  color: var(--text-dim);
-  margin: 0;
-  min-height: 16px;
-}
-.beaker-fade-enter-active,
-.beaker-fade-leave-active { transition: opacity 0.3s ease; }
-.beaker-fade-enter-from,
-.beaker-fade-leave-to { opacity: 0; }
 
 /* ─── 물성 조정 모달 ─── */
 .spec-modal { width: min(760px, 95vw); max-height: 82vh; display: flex; flex-direction: column; }
@@ -2583,41 +2482,4 @@ async function onAiFill() {
 .spec-ing-name { flex: 1; color: var(--text); }
 .spec-ing-pct { font-family: var(--font-mono); font-weight: 600; color: var(--text-sub); min-width: 44px; text-align: right; }
 .spec-ing-new { font-size: 9px; font-weight: 700; color: var(--green); background: rgba(58,144,104,0.12); padding: 1px 5px; border-radius: 3px; }
-
-/* 저장 버튼 피드백 */
-.btn-save-done { background: #4CAF50 !important; border-color: #4CAF50 !important; }
-.btn-save-error { background: #F44336 !important; border-color: #F44336 !important; }
-
-/* 성분 상세 팝업 */
-.ing-detail-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 9500;
-  display: flex; align-items: center; justify-content: center;
-}
-.ing-detail-modal {
-  background: var(--surface, #fff); border-radius: 12px;
-  width: 420px; max-width: 92vw;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-}
-.ing-detail-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px 12px; border-bottom: 1px solid #E8E0D4;
-}
-.ing-detail-title { font-size: 14px; font-weight: 700; color: var(--text, #222); }
-.ing-detail-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #999; }
-.ing-detail-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
-.ing-detail-row { display: flex; gap: 12px; font-size: 13px; }
-.ing-d-label { min-width: 60px; font-weight: 600; color: #888; flex-shrink: 0; }
-.ing-d-desc { color: #555; line-height: 1.5; white-space: pre-wrap; }
-
-/* @media print */
-@media print {
-  .app-sidebar, .app-header, .page-top, .title-actions,
-  .btn, .form-actions, .create-tab-header, .panel-header button,
-  .btn-batch-calc, .btn-save-version, .btn-export, .btn-danger,
-  .ing-detail-overlay, .beaker-overlay { display: none !important; }
-
-  .formula-edit-page { padding: 0 !important; }
-  .panel { page-break-inside: avoid; }
-  .ingredient-table-wrap { page-break-inside: avoid; }
-}
 </style>
