@@ -5691,7 +5691,7 @@ async function validateAndRetry(generatedIngredients, formulaIntent) {
 
   console.log(`[VALIDATE] score=${score} violations=${violations.length} required=${requiredFound.length}/${requiredTotal}`)
 
-  if (score < 70 && (violations.length > 0 || requiredMissing > 2)) {
+  if (score < 95) {
     const feedbackLines = []
     if (violations.length > 0) {
       feedbackLines.push(`🚫 금지 성분 위반: ${violations.map(v => v.inci_name).join(', ')} — 반드시 제거하세요`)
@@ -5757,7 +5757,7 @@ async function analyzeFormulaIntent(formulaName, requirements) {
 - 숫자+% 패턴 감지 시 해당 성분의 구체적 농도를 must_have_ingredients에 명시`
 
   const geminiRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5765,16 +5765,117 @@ async function analyzeFormulaIntent(formulaName, requirements) {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(60000),
     }
   )
-  if (!geminiRes.ok) throw new Error(`Flash API 오류 (${geminiRes.status})`)
+  if (!geminiRes.ok) throw new Error(`Pro(Intent) API 오류 (${geminiRes.status})`)
   const data = await geminiRes.json()
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text
-  if (!text) throw new Error('Flash 응답 없음')
+  if (!text) throw new Error('Pro(Intent) 응답 없음')
   const parsed = JSON.parse(text)
   console.log(`[INTENT] detected_type="${parsed.detected_type}" base_form="${parsed.base_form}" similar_category="${parsed.similar_category}" purposes=${JSON.stringify(parsed.key_purposes)}`)
   return parsed
+}
+
+// ─── generateFormulaParallel: Pro A(0.3) + Pro B(0.6) 병렬 생성 ──────────────
+async function generateFormulaParallel(aiPrompt, apiKey) {
+  const callGeminiRaw = async (temperature) => {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: aiPrompt }] }],
+          generationConfig: { temperature, responseMimeType: 'application/json' },
+        }),
+        signal: AbortSignal.timeout(180000),
+      }
+    )
+    if (!res.ok) {
+      const errBody = await res.text()
+      throw new Error(`Gemini Pro 오류 (${res.status}): ${errBody.slice(0, 200)}`)
+    }
+    const data = await res.json()
+    const candidate = data.candidates?.[0]
+    const text = candidate?.content?.parts?.[0]?.text
+    if (!text) {
+      const reason = candidate?.finishReason || JSON.stringify(data).slice(0, 200)
+      throw new Error(`Gemini Pro 응답 없음 (finishReason=${reason})`)
+    }
+    return text
+  }
+
+  const [resultA, resultB] = await Promise.all([
+    callGeminiRaw(0.3).catch(e => { console.warn('[Pro A] 실패:', e.message); return null }),
+    callGeminiRaw(0.6).catch(e => { console.warn('[Pro B] 실패:', e.message); return null }),
+  ])
+  console.log(`[PARALLEL] A=${resultA ? 'OK' : 'FAIL'} B=${resultB ? 'OK' : 'FAIL'}`)
+  return { resultA, resultB }
+}
+
+// ─── combineFormulas: Pro가 두 처방 장점 합산 ────────────────────────────────
+async function combineFormulas(formulaA, formulaB, intentSection, purposeGateSection, apiKey) {
+  const combinePrompt = `당신은 화장품 처방 최적화 전문가입니다.
+아래 두 처방(A, B)을 분석하여 최적의 단일 처방을 만들어주세요.
+
+## 조합 규칙 (반드시 준수)
+1. 각 처방에서 더 적합한 성분 선택을 취합
+2. 배합비 합계 = 정확히 100.00%
+3. 밸런스(정제수 등)는 역산으로만 계산
+4. 유화 시스템 안정성 확인 (HLB 밸런스)
+5. pH 호환성 확인 (산성 성분 충돌 여부)
+6. 성분 간 물리적 호환성 확인
+
+${intentSection}
+${purposeGateSection}
+
+## 처방 A (temperature 0.3 — 보수적)
+${formulaA}
+
+## 처방 B (temperature 0.6 — 창의적)
+${formulaB}
+
+## 출력 규칙
+- 두 처방에서 공통으로 포함된 성분은 우선 채택
+- A에만 있는 좋은 성분과 B에만 있는 좋은 성분을 모두 고려
+- REQUIRED 성분은 반드시 포함, FORBIDDEN 성분은 반드시 제외
+- 최종 배합비 합계 = 100.00%
+
+## 반드시 아래 JSON 형식으로만 응답하세요:
+{
+  "formula_input": [
+    { "name": "한글성분명", "inci_name": "INCI명", "percentage": 숫자, "function": "기능", "phase": "A/B/C" }
+  ],
+  "total_wt": 100,
+  "formulation_notes": "처방 특이사항"
+}`
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: combinePrompt }] }],
+        generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(180000),
+    }
+  )
+  if (!res.ok) {
+    const errBody = await res.text()
+    throw new Error(`Pro 조합 오류 (${res.status}): ${errBody.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  const candidate = data.candidates?.[0]
+  const text = candidate?.content?.parts?.[0]?.text
+  if (!text) {
+    const reason = candidate?.finishReason || JSON.stringify(data).slice(0, 200)
+    throw new Error(`Pro 조합 응답 없음 (finishReason=${reason})`)
+  }
+  console.log(`[COMBINE] 조합 완료, 응답 길이=${text.length}`)
+  return text
 }
 
 // ─── POST /api/formula/generate-idea — 제품유형 베이스 강제 + 키워드 보정 ────
@@ -6282,48 +6383,69 @@ ${colorantStr}
       console.log('[generate-idea] 캐시 히트 — 저장된 처방 반환')
       aiResult = cachedResult
     } else {
-      // 캐시 없음 → Gemini 호출 (최대 3회, 색소 필수 검증)
-      const MAX_RETRY = 3
-      for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+      // 캐시 없음 → 병렬 Pro 생성(A+B) + Pro 조합
+      const apiKey = process.env.GEMINI_API_KEY
+      try {
+        console.log('[PARALLEL] Pro A(0.3) + Pro B(0.6) 병렬 생성 시작')
+        const { resultA, resultB } = await generateFormulaParallel(aiPrompt, apiKey)
+
+        let finalRawText
+        if (resultA && resultB) {
+          console.log('[COMBINE] 두 처방 Pro 조합 시작')
+          finalRawText = await combineFormulas(resultA, resultB, intentSection, purposeGateSection, apiKey)
+        } else if (resultA || resultB) {
+          console.log('[PARALLEL] 하나만 성공, 단일 결과 사용')
+          finalRawText = resultA || resultB
+        } else {
+          throw new Error('병렬 Pro 생성 모두 실패')
+        }
+
+        // JSON 파싱 (코드펜스 제거 후 재시도)
+        let parsed
         try {
-          console.log(`[generate-idea] Gemini 호출 (시도 ${attempt + 1}/${MAX_RETRY})...`)
-          const parsed = await callGemini(aiPrompt, 'generate-idea', false)
-          if (!parsed || !Array.isArray(parsed.formula_input) || parsed.formula_input.length === 0) continue
+          parsed = JSON.parse(finalRawText)
+        } catch {
+          const cleaned = finalRawText.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim()
+          parsed = JSON.parse(cleaned)
+        }
 
-          // formula_input → 내부 포맷 정규화
-          parsed.formula_input = parsed.formula_input.map(i => ({
-            name: i.korean_name || i.name || '',
-            inci_name: i.inci || i.inci_name || '',
-            percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
-            function: i.function || '',
-            phase: i.phase || 'A',
-          }))
+        // formula_input 키 다양한 이름 허용 (ingredients, formula 폴백)
+        if (!parsed.formula_input && Array.isArray(parsed.ingredients)) parsed.formula_input = parsed.ingredients
+        else if (!parsed.formula_input && Array.isArray(parsed.formula)) parsed.formula_input = parsed.formula
+        if (!parsed || !Array.isArray(parsed.formula_input) || parsed.formula_input.length === 0) {
+          console.error('[PARALLEL] 조합 응답 키:', Object.keys(parsed || {}))
+          throw new Error('병렬 조합 결과 formula_input 없음')
+        }
 
-          // 색조 제형 색소 필수 검증
-          if (needsColorant) {
-            const hasColorant = parsed.formula_input.some(i =>
-              /CI\s*\d+|Iron Oxide|Mica|Carmine|Titanium Dioxide/i.test(i.inci_name || '')
-            )
-            if (!hasColorant) {
-              console.warn(`[generate-idea] 색소 누락 (시도 ${attempt + 1}) — 재시도`)
-              continue
-            }
+        // formula_input → 내부 포맷 정규화
+        parsed.formula_input = parsed.formula_input.map(i => ({
+          name: i.korean_name || i.name || '',
+          inci_name: i.inci || i.inci_name || '',
+          percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
+          function: i.function || '',
+          phase: i.phase || 'A',
+        }))
+
+        // 색조 제형 색소 필수 검증
+        if (needsColorant) {
+          const hasColorant = parsed.formula_input.some(i =>
+            /CI\s*\d+|Iron Oxide|Mica|Carmine|Titanium Dioxide/i.test(i.inci_name || '')
+          )
+          if (!hasColorant) {
+            console.warn('[PARALLEL] 색소 누락 — 그대로 진행 (조합 결과 우선)')
           }
+        }
 
-          aiResult = parsed
-          console.log(`[generate-idea] Gemini 성공 — ${parsed.formula_input.length}종, total=${parsed.total_wt}%`)
+        aiResult = parsed
+        console.log(`[PARALLEL] 최종 처방 — ${parsed.formula_input.length}종, total=${parsed.total_wt}%`)
 
-          // 캐시 저장 (30일)
-          await setCached(ideaCacheKey, 'gemini', 'generate-idea', aiResult)
-          break
-        } catch (geminiErr) {
-          const msg = geminiErr.message || ''
-          console.warn(`[generate-idea] Gemini 실패 (시도 ${attempt + 1}):`, msg)
-          // 403 (키 유출/만료/권한없음) → 재시도 무의미, 즉시 break
-          if (msg.includes('403') || msg.includes('PERMISSION_DENIED') || msg.includes('leaked') || msg.includes('expired')) {
-            console.error('[generate-idea] Gemini 403 — API 키 문제. DB 폴백으로 전환합니다.')
-            break
-          }
+        // 캐시 저장 (30일)
+        await setCached(ideaCacheKey, 'gemini', 'generate-idea', aiResult)
+      } catch (parallelErr) {
+        const msg = parallelErr.message || ''
+        console.error('[PARALLEL] 병렬 생성 실패:', msg)
+        if (msg.includes('403') || msg.includes('PERMISSION_DENIED') || msg.includes('leaked') || msg.includes('expired')) {
+          console.error('[PARALLEL] Gemini 403 — API 키 문제. DB 폴백으로 전환합니다.')
         }
       }
     }
@@ -6407,7 +6529,7 @@ ${colorantStr}
       try {
         validationResult = await validateAndRetry(usedIngredients, formulaIntent)
         if (validationResult.shouldRetry) {
-          console.log(`[RETRY] score=${validationResult.score} < 70 → 피드백 포함 재생성`)
+          console.log(`[RETRY] score=${validationResult.score} < 95 → 피드백 포함 재생성`)
           const retryPrompt = aiPrompt + `\n\n⚠️⚠️⚠️ [검증 피드백 — 이전 생성에서 아래 문제 발견, 반드시 수정] ⚠️⚠️⚠️\n${validationResult.feedback}\n⚠️⚠️⚠️ 위 피드백을 100% 반영하여 처방을 처음부터 다시 작성하세요. ⚠️⚠️⚠️`
           try {
             const retryParsed = await callGemini(retryPrompt, 'generate-idea-retry', false)
