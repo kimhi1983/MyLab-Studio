@@ -132,6 +132,7 @@
           </select>
         </div>
         <button class="btn-refresh-req" @click="fetchAllRequests">↻ 새로고침</button>
+        <button class="btn-excel-req" @click="downloadRequestsExcel" :disabled="allRequests.length === 0">↓ Excel 다운로드</button>
       </div>
 
       <div v-if="reqLoading" class="state-msg">불러오는 중...</div>
@@ -255,6 +256,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import * as XLSX from 'xlsx'
 import { useAuthStore } from '../stores/authStore.js'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
@@ -409,6 +411,30 @@ async function fetchAllRequests() {
   finally { reqLoading.value = false }
 }
 
+function downloadRequestsExcel() {
+  const header = ['#', '사용자', '요청 유형', '제목', '상세 내용', '상태', '접수일', '관리자 답변']
+  const rows = allRequests.value.map(r => [
+    r.id,
+    r.user_name || r.user_id,
+    r.request_type,
+    r.title,
+    r.description,
+    r.status,
+    r.created_at ? fmtDate(r.created_at) : '',
+    r.admin_reply || '',
+  ])
+  const ws = XLSX.utils.aoa_to_sheet([header, ...rows])
+  ws['!cols'] = [
+    { wch: 6 }, { wch: 12 }, { wch: 16 }, { wch: 30 },
+    { wch: 50 }, { wch: 8 }, { wch: 12 }, { wch: 40 },
+  ]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '요청관리')
+  const d = new Date()
+  const suffix = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`
+  XLSX.writeFile(wb, `요청관리_${suffix}.xlsx`)
+}
+
 function onTabRequests() {
   activeTab.value = 'requests'
   if (allRequests.value.length === 0) fetchAllRequests()
@@ -551,6 +577,14 @@ onMounted(() => {
   color: var(--text-sub); cursor: pointer; align-self: flex-end;
 }
 .btn-refresh-req:hover { background: var(--accent-light); color: var(--accent); }
+.btn-excel-req {
+  height: 34px; padding: 0 14px; border: 1px solid #3a9068;
+  border-radius: 6px; background: var(--green-bg); font-size: 12px;
+  color: #3a9068; cursor: pointer; align-self: flex-end; font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-excel-req:hover:not(:disabled) { background: #3a9068; color: #fff; }
+.btn-excel-req:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 사용자/요청 공통 테이블 */
 .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: auto; }
