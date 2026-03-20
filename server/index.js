@@ -1069,10 +1069,10 @@ app.get('/api/products/autocomplete', async (req, res) => {
 // ─── 완제품 DB 목록 (검색/필터/페이지네이션) ───────────────────────────────
 app.get('/api/products/list', async (req, res) => {
   try {
-    const { page = 1, limit = 12, search = '', category = '', country = '', sort = 'latest' } = req.query
+    const { page = 1, limit = 12, search = '', category = '', country = '', sort = 'latest', source = '' } = req.query
     const offset = (parseInt(page) - 1) * parseInt(limit)
 
-    const where = ["source != 'coching_legacy'"]
+    const where = []
     const params = []
     let idx = 1
 
@@ -1091,8 +1091,19 @@ app.get('/api/products/list', async (req, res) => {
       params.push(`%${country}%`)
       idx++
     }
+    if (source) {
+      if (source === 'Legacy') {
+        where.push(`source = 'coching_legacy'`)
+      } else if (source === 'Gemini') {
+        where.push(`source ILIKE 'gemini%'`)
+      } else {
+        where.push(`source = $${idx}`)
+        params.push(source)
+        idx++
+      }
+    }
 
-    const whereClause = 'WHERE ' + where.join(' AND ')
+    const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : ''
     const orderBy = sort === 'brand' ? 'brand_name, product_name'
       : sort === 'name' ? 'product_name'
       : 'updated_at DESC NULLS LAST, id DESC'
@@ -1102,7 +1113,7 @@ app.get('/api/products/list', async (req, res) => {
       pool.query(`SELECT COUNT(*) FROM product_master ${whereClause}`, params),
       pool.query(
         `SELECT id, brand_name, product_name, product_name_local, category,
-                country_of_origin, image_url, data_quality_grade,
+                country_of_origin, image_url, data_quality_grade, source,
                 CASE WHEN full_ingredients IS NOT NULL AND full_ingredients != ''
                   THEN array_length(regexp_split_to_array(trim(full_ingredients), ','), 1)
                   ELSE 0 END AS ingredient_count
@@ -1124,7 +1135,7 @@ app.get('/api/products/categories', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT DISTINCT category FROM product_master
-       WHERE category IS NOT NULL AND category != '' AND source != 'coching_legacy'
+       WHERE category IS NOT NULL AND category != ''
        ORDER BY category`
     )
     res.json(rows.map(r => r.category))

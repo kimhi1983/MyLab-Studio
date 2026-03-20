@@ -37,6 +37,12 @@
           <option value="유럽">유럽</option>
           <option value="중국">중국</option>
         </select>
+        <select v-model="filterSource" @change="loadProducts(1)" class="filter-select">
+          <option value="">전체 소스</option>
+          <option value="OBF">OBF</option>
+          <option value="Gemini">Gemini</option>
+          <option value="Legacy">Legacy</option>
+        </select>
         <select v-model="sortBy" @change="loadProducts(1)" class="filter-select">
           <option value="latest">최신순</option>
           <option value="brand">브랜드순</option>
@@ -82,6 +88,7 @@
           <div class="card-tags">
             <span v-if="prod.category" class="tag-cat">{{ prod.category }}</span>
             <span v-if="prod.country_of_origin" class="tag-country">{{ prod.country_of_origin }}</span>
+            <span v-if="prod.source" :class="sourceClass(prod.source)" class="tag-source">{{ sourceLabel(prod.source) }}</span>
           </div>
           <div class="card-meta" v-if="prod.ingredient_count > 0">
             전성분 {{ prod.ingredient_count }}개
@@ -227,6 +234,7 @@ const categories = ref([])
 const searchQ = ref('')
 const filterCategory = ref('')
 const filterCountry = ref('')
+const filterSource = ref('')
 const sortBy = ref('latest')
 
 const PAGE_SIZE = 12
@@ -268,6 +276,21 @@ function categoryEmoji(cat) {
   return '🧪'
 }
 
+// ── 소스 표시 ──
+function sourceLabel(src) {
+  if (!src) return null
+  if (src === 'coching_legacy') return 'Legacy'
+  if (src.toLowerCase().startsWith('gemini')) return 'Gemini'
+  return src
+}
+function sourceClass(src) {
+  const label = sourceLabel(src)
+  if (label === 'OBF') return 'tag-source-obf'
+  if (label === 'Gemini') return 'tag-source-gemini'
+  if (label === 'Legacy') return 'tag-source-legacy'
+  return 'tag-source-other'
+}
+
 // ── EWG 뱃지 ──
 function ewgDotClass(score) {
   if (score <= 2) return 'ewg-low'
@@ -286,6 +309,7 @@ async function loadProducts(p = 1) {
       search: searchQ.value,
       category: filterCategory.value,
       country: filterCountry.value,
+      source: filterSource.value,
       sort: sortBy.value,
     })
     const res = await api.fetchJSON(`/api/products/list?${params}`)
@@ -469,6 +493,14 @@ onMounted(() => {
   padding: 2px 8px; border-radius: 12px;
   background: #F0EDE8; color: #888;
 }
+.tag-source {
+  font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 12px;
+}
+.tag-source-obf    { background: #E8F5E9; color: #2E7D32; }
+.tag-source-gemini { background: #E3F2FD; color: #1565C0; }
+.tag-source-legacy { background: #F0EDE8; color: #999; }
+.tag-source-other  { background: #F0EDE8; color: #999; }
 
 /* ── 페이지네이션 ── */
 .pagination {
