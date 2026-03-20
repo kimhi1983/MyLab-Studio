@@ -20,7 +20,7 @@
           </select>
         </div>
         <div class="filter-group search-group">
-          <input v-model="searchQuery" class="filter-input" placeholder="처방명, 제형으로 검색..." @input="onSearch">
+          <input v-model="searchQuery" class="filter-input" placeholder="처방명, 제형으로 검색...">
         </div>
         <div class="filter-group">
           <button class="btn-ghost-sm" :class="{ active: viewMode === 'table' }" @click="viewMode = 'table'">테이블</button>
@@ -41,6 +41,7 @@
             <th>상태</th>
             <th>프로젝트</th>
             <th>수정일</th>
+            <th style="width:40px"></th>
           </tr>
         </thead>
         <tbody>
@@ -52,6 +53,13 @@
             <td><StatusChip :status="f.status" /></td>
             <td class="cell-project">{{ getProjectName(f.project_id) }}</td>
             <td class="cell-date">{{ formatDate(f.updated_at) }}</td>
+            <td class="cell-del" @click.stop>
+              <button class="btn-del" @click="confirmDelete(f)" title="삭제">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+                  <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 9h8l1-9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -62,9 +70,46 @@
 
     <!-- Card View -->
     <div v-else class="card-grid">
-      <FormulaCard v-for="f in filtered" :key="f.id" :formula="f" @click="$router.push('/formulas/' + f.id)" />
+      <div v-for="f in filtered" :key="f.id" class="card-wrap">
+        <FormulaCard :formula="f" @click="$router.push('/formulas/' + f.id)" />
+        <button class="btn-del-card" @click.stop="confirmDelete(f)" title="삭제">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none">
+            <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 9h8l1-9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
       <EmptyState v-if="!filtered.length" icon="⚗" title="처방이 없습니다" />
     </div>
+
+    <!-- 삭제 확인 모달 -->
+    <Teleport to="body">
+      <div v-if="deleteTarget" class="modal-overlay" @click.self="deleteTarget = null">
+        <div class="modal-box">
+          <div class="modal-header">
+            <span class="modal-title">처방 삭제</span>
+            <button class="modal-close" @click="deleteTarget = null">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="del-icon">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="#F44336" stroke-width="1.5"/>
+                <path d="M12 7v6M12 15.5v.5" stroke="#F44336" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <p class="del-msg">
+              <strong>'{{ deleteTarget.title }}'</strong> 처방을 삭제하시겠습니까?
+            </p>
+            <p class="del-warn">이 작업은 되돌릴 수 없습니다.</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-cancel" @click="deleteTarget = null">취소</button>
+            <button class="btn-confirm-del" :disabled="isDeleting" @click="doDelete">
+              {{ isDeleting ? '삭제 중...' : '삭제' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -72,17 +117,22 @@
 import { ref, computed } from 'vue'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useProjectStore } from '../stores/projectStore.js'
+import { useToast } from '../composables/useToast.js'
 import StatusChip from '../components/common/StatusChip.vue'
 import EmptyState from '../components/common/EmptyState.vue'
 import FormulaCard from '../components/formula/FormulaCard.vue'
 
-const { searchFormulas } = useFormulaStore()
+const { searchFormulas, deleteFormula } = useFormulaStore()
 const { projects } = useProjectStore()
+const { addToast } = useToast()
 
 const filterStatus = ref('')
 const filterProject = ref('')
 const searchQuery = ref('')
 const viewMode = ref('table')
+
+const deleteTarget = ref(null)
+const isDeleting = ref(false)
 
 const filtered = computed(() =>
   searchFormulas(searchQuery.value, {
@@ -101,7 +151,24 @@ function formatDate(iso) {
   const d = new Date(iso)
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
 }
-function onSearch() {}
+
+function confirmDelete(formula) {
+  deleteTarget.value = formula
+}
+
+async function doDelete() {
+  if (!deleteTarget.value) return
+  isDeleting.value = true
+  try {
+    deleteFormula(deleteTarget.value.id)
+    addToast('처방이 삭제되었습니다', 'success')
+    deleteTarget.value = null
+  } catch (e) {
+    addToast('삭제 실패: ' + e.message, 'error')
+  } finally {
+    isDeleting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -162,11 +229,115 @@ function onSearch() {}
 .cell-project { font-size: 12px; color: var(--text-sub); }
 .cell-date { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
 
+/* 삭제 버튼 (테이블) */
+.cell-del { padding: 0 8px; }
+.btn-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #bbb;
+  padding: 5px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.btn-del:hover { color: #F44336; background: #FFF0EF; }
+
+/* 카드 뷰 */
 .card-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
 }
+
+.card-wrap {
+  position: relative;
+}
+
+.btn-del-card {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 6px;
+  cursor: pointer;
+  color: #bbb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  z-index: 1;
+}
+.btn-del-card:hover { color: #F44336; border-color: #F44336; background: #FFF0EF; }
+
+/* 모달 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-box {
+  background: var(--surface);
+  border-radius: 12px;
+  width: 380px;
+  max-width: 92vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.modal-close {
+  background: none; border: none; font-size: 20px; cursor: pointer;
+  color: var(--text-dim); line-height: 1; padding: 0 4px;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body {
+  padding: 24px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.del-icon { margin-bottom: 4px; }
+.del-msg { font-size: 14px; color: var(--text); line-height: 1.6; }
+.del-warn { font-size: 12px; color: var(--text-dim); }
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border);
+}
+.btn-cancel {
+  height: 36px; padding: 0 18px;
+  border: 1.5px solid var(--border); border-radius: 8px;
+  background: none; color: var(--text-sub); font-size: 13px; cursor: pointer;
+}
+.btn-cancel:hover { background: var(--bg); }
+.btn-confirm-del {
+  height: 36px; padding: 0 22px;
+  border: none; border-radius: 8px;
+  background: #F44336; color: #fff;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-confirm-del:hover:not(:disabled) { background: #d32f2f; }
+.btn-confirm-del:disabled { opacity: 0.6; cursor: not-allowed; }
+
 .btn { padding: 8px 16px; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
 .btn-primary { background: var(--accent); color: #fff; }
 
