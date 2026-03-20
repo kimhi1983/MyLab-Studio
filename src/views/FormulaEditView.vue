@@ -114,9 +114,16 @@
               <span v-if="isAiFilling" class="ai-spinner"></span>
               {{ isAiFilling ? aiFillStep : '스마트 처방 생성' }}
             </button>
-            <p style="font-size: 12px; color: #999; margin-top: 8px; line-height: 1.6;">
-              💡 추가 요구사항에 상세히 적을수록 더 정확한 처방이 생성됩니다.<br>
-              예시: "고보습, 민감성 피부용, EWG 그린 등급, 비건 인증 가능, 무향, 히알루론산 필수 포함, 레티놀 제외"
+            <p style="font-size: 12px; color: #999; margin-top: 8px; line-height: 1.8;">
+              <span style="font-weight: 600;">💡 추가 요구사항에 상세히 적을수록 더 정확한 처방이 생성됩니다.</span><br>
+              원하는 내용을 자유롭게 적어주세요. 분석하여 처방에 반영됩니다.<br>
+              <span style="color: #b0a080; font-style: italic;">
+                "민감성 피부용 고보습 크림, 히알루론산 필수 포함, 레티놀 제외, 비건 인증 가능"<br>
+                "미백 + 주름개선 기능, 나이아신아마이드 3% 이상, 무향, EWG 그린 등급"<br>
+                "50대 탄력 개선용, PDRN 포함, 저자극, 무알코올"<br>
+                "남성용 올인원, 쿨링감, 지성피부, 산뜻한 사용감"
+              </span><br>
+              <span style="color: #aaa; font-size: 11px;">기능, 피부타입, 특정 성분, 사용감, 인증, 타겟 등 무엇이든 적을 수 있습니다.</span>
             </p>
           </div>
         </div>

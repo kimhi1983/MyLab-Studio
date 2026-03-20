@@ -550,7 +550,7 @@ function toggleExpand(key) { expandedMap.value = { ...expandedMap.value, [key]: 
 
 // AI 안정성 데이터 수집 요청 (스텁)
 function requestStabilityData(data) {
-  alert(`🤖 AI 안정성 수집 요청: ${data.inci_name}\n(기능 준비 중)`)
+  alert(`🔬 안정성 데이터 수집 요청: ${data.inci_name}\n(기능 준비 중)`)
 }
 
 // EWG 등급 CSS 클래스
