@@ -5007,6 +5007,16 @@ app.get('/api/requests/my', authenticateToken, async (req, res) => {
   }
 })
 
+// GET /api/requests/unread-count — 미처리 건수 (관리자, status='접수')
+app.get('/api/requests/unread-count', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT COUNT(*) AS cnt FROM user_requests WHERE status = '접수'`)
+    res.json({ count: Number(rows[0].cnt) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/requests/all — 전체 목록 (관리자)
 app.get('/api/requests/all', authenticateToken, requireAdmin, async (req, res) => {
   try {

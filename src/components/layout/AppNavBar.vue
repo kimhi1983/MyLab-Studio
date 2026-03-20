@@ -11,6 +11,7 @@
           :exact="item.exact"
         >
           <span class="tab-label">{{ item.label }}</span>
+          <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
         </router-link>
       </template>
       <div class="nav-tools">
@@ -21,11 +22,32 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '../../stores/authStore.js'
 
-const { user } = useAuthStore()
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const { user, getAuthHeader } = useAuthStore()
 const isAdmin = computed(() => user.value?.role === 'admin')
+
+const unreadCount = ref(0)
+let pollTimer = null
+
+async function fetchUnreadCount() {
+  if (!isAdmin.value) return
+  try {
+    const res = await fetch(`${API}/api/requests/unread-count`, { headers: getAuthHeader() })
+    if (res.ok) {
+      const data = await res.json()
+      unreadCount.value = data.count || 0
+    }
+  } catch {}
+}
+
+onMounted(() => {
+  fetchUnreadCount()
+  pollTimer = setInterval(fetchUnreadCount, 60000) // 1분마다 갱신
+})
+onUnmounted(() => clearInterval(pollTimer))
 
 const navItems = computed(() => [
   { to: '/', label: '대시보드', exact: true },
@@ -44,7 +66,10 @@ const navItems = computed(() => [
   { to: '/notes', label: '연구 노트', exact: true },
   { sep: true },
   { to: '/request', label: '✉ 요청/문의', exact: true },
-  ...(isAdmin.value ? [{ sep: true }, { to: '/admin', label: '⚙ 관리자', exact: true }] : []),
+  ...(isAdmin.value ? [
+    { sep: true },
+    { to: '/admin', label: '⚙ 관리자', exact: true, badge: unreadCount.value > 0 ? unreadCount.value : 0 },
+  ] : []),
 ])
 </script>
 
@@ -73,6 +98,7 @@ const navItems = computed(() => [
   position: relative;
   display: flex;
   align-items: center;
+  gap: 5px;
   padding: 8px 20px;
   font-size: 12px;
   font-weight: 500;
@@ -123,6 +149,21 @@ const navItems = computed(() => [
 .tab-label {
   font-size: 12px;
   letter-spacing: 0.2px;
+}
+
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  background: #e53935;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  line-height: 1;
 }
 
 .nav-tools {

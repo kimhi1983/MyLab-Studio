@@ -13,8 +13,12 @@
     <!-- 탭 -->
     <div class="tab-bar">
       <button class="tab-btn" :class="{ active: activeTab === 'users' }" @click="activeTab = 'users'">사용자 관리</button>
-      <button class="tab-btn" :class="{ active: activeTab === 'requests' }" @click="onTabRequests">
-        요청 관리
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'requests', 'tab-has-pending': pendingCount > 0 }"
+        @click="onTabRequests"
+      >
+        요청 관리<template v-if="pendingCount > 0"> ({{ pendingCount }})</template>
         <span v-if="pendingCount > 0" class="tab-badge">{{ pendingCount }}</span>
       </button>
     </div>
@@ -372,7 +376,20 @@ const replyDrafts = ref({})
 const replyStatuses = ref({})
 const savingReplyId = ref(null)
 
-const pendingCount = computed(() => allRequests.value.filter(r => r.status === '접수' || r.status === '검토중').length)
+// pendingCount: 로드된 요청 목록 기준 + 초기 진입 시 별도 카운트
+const pendingCountFromList = computed(() => allRequests.value.filter(r => r.status === '접수' || r.status === '검토중').length)
+const pendingCountInit = ref(0)
+const pendingCount = computed(() => allRequests.value.length > 0 ? pendingCountFromList.value : pendingCountInit.value)
+
+async function fetchPendingCount() {
+  try {
+    const res = await fetch(`${API}/api/requests/unread-count`, { headers: getAuthHeader() })
+    if (res.ok) {
+      const data = await res.json()
+      pendingCountInit.value = data.count || 0
+    }
+  } catch {}
+}
 
 async function fetchAllRequests() {
   reqLoading.value = true
@@ -452,7 +469,10 @@ function statusClass(s) {
   return map[s] || 'st-receipt'
 }
 
-onMounted(fetchUsers)
+onMounted(() => {
+  fetchUsers()
+  fetchPendingCount()
+})
 </script>
 
 <style scoped>
@@ -493,6 +513,8 @@ onMounted(fetchUsers)
 }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--accent); font-weight: 700; border-bottom-color: var(--accent); }
+.tab-btn.tab-has-pending:not(.active) { color: #E65100; }
+.tab-btn.tab-has-pending:not(.active):hover { color: #BF360C; }
 .tab-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px;
