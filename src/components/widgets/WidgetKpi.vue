@@ -35,12 +35,6 @@ const dbIngredients = computed(() => store.stats.value?.totalIngredients || 0)
 // DB 규제 수
 const dbRegulations = computed(() => store.stats.value?.totalRegulations || 0)
 
-// DB 지식 베이스 수
-const dbKnowledge = computed(() => store.stats.value?.totalKnowledge || 0)
-
-// DB 제품 수
-const dbProducts = computed(() => store.stats.value?.totalProducts || 0)
-
 // DB 복합성분 수
 const dbCompounds = computed(() => store.stats.value?.totalCompounds || 0)
 
@@ -83,22 +77,13 @@ const kpis = computed(() => [
     iconBg: '#f0f8f4',
     sub: `초안 ${draftCount.value} · 검토 ${reviewCount.value}`,
   },
-  {
-    label: '참조 제품',
-    value: fmtNum(dbProducts.value),
-    unit: '종',
-    icon: '◈',
-    iconColor: '#3a6fa8',
-    iconBg: '#f0f4fb',
-    sub: `지식베이스 ${dbKnowledge.value}건`,
-  },
 ])
 </script>
 
 <style scoped>
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   height: 100%;
 }
@@ -154,17 +139,15 @@ const kpis = computed(() => [
   display: none;
 }
 
-/* 좁은 위젯: 1열, 더 작은 폰트 */
+/* 좁은 위젯: 1열 */
 @container widget (max-width: 280px) {
   .kpi-grid { grid-template-columns: 1fr; gap: 6px; }
   .kpi-item { padding: 8px 10px; }
   .kpi-value { font-size: 11px; }
   .kpi-icon { width: 18px; height: 18px; font-size: 10px; }
 }
-/* 넓은 위젯: 4열 */
-@container widget (min-width: 600px) {
-  .kpi-grid { grid-template-columns: repeat(4, 1fr); }
-  .kpi-value { font-size: 14px; }
-  .kpi-icon { width: 26px; height: 26px; font-size: 14px; }
+/* 중간 위젯: 3열 유지 */
+@container widget (min-width: 281px) {
+  .kpi-grid { grid-template-columns: repeat(3, 1fr); }
 }
 </style>
