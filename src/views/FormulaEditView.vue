@@ -603,7 +603,6 @@
         <div class="beaker-overlay-card">
           <FormulaLoadingBeaker :step="beakerStep" />
           <p class="beaker-overlay-msg">최적의 처방을 설계하고 있습니다...</p>
-          <p class="beaker-overlay-step">{{ aiFillStep }}</p>
         </div>
       </div>
     </Transition>
