@@ -51,6 +51,7 @@ const navItems = computed(() => [
   { to: '/projects', icon: '◎', label: '프로젝트' },
   { sep: true },
   { to: '/ingredients', icon: '◇', label: '성분 DB' },
+  { to: '/products', icon: '◫', label: '완제품 DB' },
   { to: '/cost', icon: '₩', label: '원료 단가' },
   { to: '/hlb-calc', icon: '⊘', label: 'HLB 계산기' },
   { sep: true },

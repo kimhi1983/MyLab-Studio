@@ -18,6 +18,7 @@ const routes = [
   { path: '/verify', name: 'verify', component: () => import('./views/VerifyView.vue'), meta: { title: '처방 검증', requireAuth: true } },
   { path: '/admin', name: 'admin', component: () => import('./views/AdminView.vue'), meta: { title: '관리자', requireAuth: true, requireAdmin: true } },
   { path: '/cost', name: 'cost', component: () => import('./views/CostManageView.vue'), meta: { title: '원료 단가', requireAuth: true } },
+  { path: '/products', name: 'products', component: () => import('./views/ProductDbView.vue'), meta: { title: '완제품 DB', requireAuth: true } },
 ]
 
 const router = createRouter({

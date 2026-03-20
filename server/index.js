@@ -1056,6 +1056,132 @@ app.get('/api/products/autocomplete', async (req, res) => {
   }
 })
 
+// ─── 완제품 DB 목록 (검색/필터/페이지네이션) ───────────────────────────────
+app.get('/api/products/list', async (req, res) => {
+  try {
+    const { page = 1, limit = 12, search = '', category = '', country = '', sort = 'latest' } = req.query
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+
+    const where = ["source != 'coching_legacy'"]
+    const params = []
+    let idx = 1
+
+    if (search.trim()) {
+      where.push(`(brand_name ILIKE $${idx} OR product_name ILIKE $${idx} OR product_name_local ILIKE $${idx})`)
+      params.push(`%${search.trim()}%`)
+      idx++
+    }
+    if (category) {
+      where.push(`category = $${idx}`)
+      params.push(category)
+      idx++
+    }
+    if (country) {
+      where.push(`country_of_origin ILIKE $${idx}`)
+      params.push(`%${country}%`)
+      idx++
+    }
+
+    const whereClause = 'WHERE ' + where.join(' AND ')
+    const orderBy = sort === 'brand' ? 'brand_name, product_name'
+      : sort === 'name' ? 'product_name'
+      : 'updated_at DESC NULLS LAST, id DESC'
+
+    const dataParams = [...params, parseInt(limit), offset]
+    const [countRes, dataRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM product_master ${whereClause}`, params),
+      pool.query(
+        `SELECT id, brand_name, product_name, product_name_local, category,
+                country_of_origin, image_url, data_quality_grade,
+                CASE WHEN full_ingredients IS NOT NULL AND full_ingredients != ''
+                  THEN array_length(regexp_split_to_array(trim(full_ingredients), ','), 1)
+                  ELSE 0 END AS ingredient_count
+         FROM product_master ${whereClause}
+         ORDER BY ${orderBy}
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        dataParams
+      ),
+    ])
+
+    res.json({ total: parseInt(countRes.rows[0].count), page: parseInt(page), items: dataRes.rows })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 완제품 카테고리 목록 ───────────────────────────────────────────────────
+app.get('/api/products/categories', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT category FROM product_master
+       WHERE category IS NOT NULL AND category != '' AND source != 'coching_legacy'
+       ORDER BY category`
+    )
+    res.json(rows.map(r => r.category))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 완제품 성분 분석 ────────────────────────────────────────────────────────
+app.get('/api/products/:id/ingredients-analysis', async (req, res) => {
+  try {
+    const { id } = req.params
+    const { rows: pRows } = await pool.query(
+      `SELECT brand_name, product_name, category, country_of_origin, ph_value,
+              image_url, full_ingredients, key_ingredients, notable_claims
+       FROM product_master WHERE id = $1`, [id]
+    )
+    if (!pRows.length) return res.status(404).json({ error: 'Not found' })
+    const product = pRows[0]
+
+    const rawList = (product.full_ingredients || '').split(',').map(s => s.trim()).filter(Boolean)
+    let inciMap = {}
+    if (rawList.length > 0) {
+      const lowers = rawList.map(n => n.toLowerCase())
+      const placeholders = lowers.map((_, i) => `$${i + 1}`).join(', ')
+      const { rows: imRows } = await pool.query(
+        `SELECT inci_name, korean_name, ingredient_type, ewg_score, function_inci
+         FROM ingredient_master WHERE LOWER(inci_name) IN (${placeholders})`,
+        lowers
+      )
+      for (const row of imRows) inciMap[row.inci_name.toLowerCase()] = row
+    }
+
+    const ingredients = rawList.map((name, i) => {
+      const m = inciMap[name.toLowerCase()]
+      return {
+        rank: i + 1,
+        inci_name: name,
+        korean_name: m?.korean_name || null,
+        ingredient_type: m?.ingredient_type || null,
+        ewg_score: m?.ewg_score ?? null,
+        function: m?.function_inci || m?.ingredient_type || null,
+        matched: !!m,
+      }
+    })
+
+    const typeCounts = {}
+    for (const ing of ingredients) {
+      if (ing.ingredient_type) typeCounts[ing.ingredient_type] = (typeCounts[ing.ingredient_type] || 0) + 1
+    }
+    const typeBreakdown = Object.entries(typeCounts)
+      .map(([type, count]) => ({ type, count, pct: Math.round((count / (ingredients.length || 1)) * 100) }))
+      .sort((a, b) => b.count - a.count).slice(0, 7)
+
+    const { full_ingredients: _, ...productMeta } = product
+    res.json({
+      product: productMeta,
+      ingredients,
+      type_breakdown: typeBreakdown,
+      total_ingredients: ingredients.length,
+      matched_count: ingredients.filter(i => i.matched).length,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 제품 상세 (전성분 포함) ───
 // ─── 제품 상세 (카피 처방용 — 전성분 포함 특화) ───
 app.get('/api/products/:id/detail', async (req, res) => {
