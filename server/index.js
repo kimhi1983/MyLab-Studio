@@ -5591,6 +5591,62 @@ async function matchIngredientsToDb(ingredients) {
   return ingredients
 }
 
+// ─── analyzeFormulaIntent: Gemini Flash로 처방명+요구사항 1차 분석 ──────────────
+async function analyzeFormulaIntent(formulaName, requirements) {
+  const apiKey = process.env.GEMINI_API_KEY
+  const prompt = `당신은 화장품 처방 전문가입니다. 아래 처방명과 요구사항을 분석하세요.
+
+처방명: ${formulaName}
+추가 요구사항: ${requirements || '없음'}
+
+반드시 아래 JSON 형식으로만 답변하세요:
+{
+  "detected_type": "감지된 제형 (예: 멀티밤, 썬크림, 세럼, 크림 등)",
+  "base_form": "무수/O-W에멀전/W-S에멀전/수성/겔 중 하나",
+  "water_percent": {"min": 0, "max": 0},
+  "key_purposes": ["주름개선", "미백"],
+  "must_have_ingredients": ["Retinol 또는 Peptide", "Niacinamide 2~5%", "Alpha-Arbutin 1~2%"],
+  "must_not_ingredients": ["Aqua (무수 제형인 경우)"],
+  "similar_category": "가장 유사한 기존 카테고리 (립스틱/크림/세럼/토너/샴푸/선크림/쿠션/에센스/바디로션/샴푸 중 하나)",
+  "reasoning": "멀티밤은 립밤과 유사한 무수 반고체 제형으로, 왁스+오일 베이스로 설계해야 함"
+}
+
+판단 규칙 (반드시 적용):
+- 멀티밤/립밤/선스틱/바디밤/헤어밤/클렌징밤/슬리핑밤/연고/크림밤 → 무수 제형, water_percent.max=0, similar_category=립스틱
+- 오일세럼/페이셜오일/드라이오일 → 무수 제형, water_percent.max=0, similar_category=에센스
+- 선세럼/선에센스/선크림/선스크린/SPF/PA → similar_category=선크림
+- 앰플/PDRN/부스터 → similar_category=에센스
+- 두피토닉/두피에센스 → similar_category=토너
+- 탈모샴푸/두피샴푸 → similar_category=샴푸
+- 쿨링/토닉 → 토너 기반
+- 미백 요청 → must_have_ingredients에 Niacinamide 2~5% + Alpha-Arbutin 1~2% 포함
+- 주름개선 요청 → must_have_ingredients에 Adenosine 0.04% 또는 Retinol 0.01~0.1% 포함
+- 보습 요청 → must_have_ingredients에 Glycerin + Hyaluronic Acid 포함
+- 진정/시카 요청 → must_have_ingredients에 Centella Asiatica Extract + Panthenol 포함
+- PDRN/재생 요청 → must_have_ingredients에 PDRN 또는 Hydrolyzed DNA 포함
+- 탈모방지 요청 → must_have_ingredients에 Biotin 또는 Capixyl 포함`
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+      }),
+      signal: AbortSignal.timeout(15000),
+    }
+  )
+  if (!geminiRes.ok) throw new Error(`Flash API 오류 (${geminiRes.status})`)
+  const data = await geminiRes.json()
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+  if (!text) throw new Error('Flash 응답 없음')
+  const parsed = JSON.parse(text)
+  console.log(`[INTENT] detected_type="${parsed.detected_type}" base_form="${parsed.base_form}" similar_category="${parsed.similar_category}" purposes=${JSON.stringify(parsed.key_purposes)}`)
+  return parsed
+}
+
 // ─── POST /api/formula/generate-idea — 제품유형 베이스 강제 + 키워드 보정 ────
 app.post('/api/formula/generate-idea', async (req, res) => {
   try {
@@ -5610,19 +5666,32 @@ app.post('/api/formula/generate-idea', async (req, res) => {
     const highGloss = kw.includes('고광택') || kw.includes('글로시') || kw.includes('shiny') || kw.includes('gloss')
     const waterproofMode = kw.includes('워터프루프') || kw.includes('waterproof')
 
-    // 2. 제품유형 자동 감지 — product_type이 없으면 formula_name + requirements에서 추출
-    // getBaseKey()는 썬크림/크림/샴푸/립스틱 등 키워드 매칭
+    // 2. 제품유형 자동 감지 — Gemini Flash 1차 분석 우선, 키워드 매칭 폴백
     let product_type = product_type_raw
+    let formulaIntent = null
+    try {
+      formulaIntent = await analyzeFormulaIntent(formula_name, requirements)
+      if (!product_type && formulaIntent?.similar_category) {
+        // Flash 분석 결과의 similar_category로 baseKey 결정
+        const intentKey = getBaseKey(formulaIntent.similar_category)
+        if (intentKey) {
+          product_type = intentKey
+          console.log(`[INTENT DETECT] "${formula_name}" → detected_type="${formulaIntent.detected_type}" similar_category="${formulaIntent.similar_category}" → product_type="${product_type}"`)
+        }
+      }
+    } catch (e) {
+      console.warn('[analyzeFormulaIntent] Flash 분석 실패, 키워드 매칭으로 폴백:', e.message)
+    }
     if (!product_type) {
-      // formula_name + requirements 텍스트에서 제형 자동 감지
+      // 키워드 매칭 폴백
       const autoDetectText = `${formula_name} ${requirements}`
       const autoKey = getBaseKey(autoDetectText)
       if (autoKey) {
-        product_type = autoKey  // e.g. '선크림', '크림', '샴푸'
-        console.log(`[AUTO DETECT] formula_name="${formula_name}" + requirements="${requirements}" → 제형: ${autoKey}`)
+        product_type = autoKey
+        console.log(`[AUTO DETECT] "${formula_name}" → 제형: ${autoKey}`)
       } else {
-        product_type = '크림'  // 감지 실패 시 기본값
-        console.log(`[AUTO DETECT] formula_name="${formula_name}" + requirements="${requirements}" → 감지 실패, 기본값: 크림`)
+        product_type = '크림'
+        console.log(`[AUTO DETECT] "${formula_name}" → 감지 실패, 기본값: 크림`)
       }
     }
 
@@ -5960,11 +6029,24 @@ ${_guideCommon}
 ` : ''
     console.log(`[EXPERT GUIDE] base_key=${baseKey}, guide_length=${(_guideSpecific + _guideCommon).length}chars`)
 
+    // ── intent 분석 결과 → 프롬프트 강제 블록 ──
+    const intentSection = formulaIntent ? `
+🔬🔬🔬 [1차 제형 분석 결과 — 최우선 적용, 무시 시 처방 무효] 🔬🔬🔬
+감지된 제형: ${formulaIntent.detected_type}
+베이스 구조: ${formulaIntent.base_form}
+정제수 허용 범위: ${formulaIntent.water_percent?.min ?? 0}% ~ ${formulaIntent.water_percent?.max ?? 80}%
+핵심 목적: ${(formulaIntent.key_purposes || []).join(', ')}
+⚡ 필수 포함 성분: ${(formulaIntent.must_have_ingredients || []).join(' / ')}
+🚫 절대 금지 성분: ${(formulaIntent.must_not_ingredients || []).join(' / ')}
+분석 근거: ${formulaIntent.reasoning || ''}
+🔬🔬🔬 위 분석 결과가 아래 어떤 규칙보다 우선합니다. 🔬🔬🔬
+` : ''
+
     const aiPrompt = `╔══════════════════════════════════════╗
 ║     화장품 처방 설계 전문가 역할      ║
 ╚══════════════════════════════════════╝
-${getMandatoryRules(baseKey)}
-[제품유형]: ${product_type}
+${getMandatoryRules(baseKey)}${intentSection}
+[제품유형]: ${formulaIntent?.detected_type || product_type}
 [처방명]: ${formula_name || '(미지정)'}
 [추가요구사항]: ${requirements || '(없음)'}
 
@@ -6051,7 +6133,7 @@ ${colorantStr}
 
     // ── llm_cache 키: product_type + requirements 조합 (프롬프트 전체 해시 X → 재현성) ──
     const ideaCacheKey = makeCacheKey('gemini', 'generate-idea',
-      `${product_type}|${(requirements || '').trim()}|${excludeTypes.join(',')}|${ewgFilter}|${sensitiveFilter}`
+      `${formula_name.trim()}|${product_type}|${(requirements || '').trim()}|${excludeTypes.join(',')}|${ewgFilter}|${sensitiveFilter}`
     )
 
     // 캐시 확인
