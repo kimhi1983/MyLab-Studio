@@ -118,6 +118,7 @@ const app = express()
 app.use(cors())
 app.use(express.json({
   limit: '10mb',
+  strict: false,
   type: ['application/json', 'text/plain'],
 }))
 app.use((req, res, next) => {
@@ -2125,10 +2126,9 @@ async function _fetchGemini(prompt) {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.1,
-          responseMimeType: 'application/json',
         },
       }),
-      signal: AbortSignal.timeout(180000), // 180초 (복잡한 제형 대응)
+      signal: AbortSignal.timeout(120000),
     }
   )
 
@@ -2141,13 +2141,10 @@ async function _fetchGemini(prompt) {
   const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
   if (!text) throw new Error('Gemini 응답에 content가 없습니다.')
 
-  // JSON 파싱 (코드블록 래핑 제거)
-  const cleaned = text.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim()
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    throw new Error('Gemini 응답 JSON 파싱 실패: ' + cleaned.substring(0, 200))
-  }
+  const parsed = extractJSON(text)
+  if (parsed) return parsed
+  try { return JSON.parse(text) } catch {}
+  throw new Error('Gemini 응답 JSON 파싱 실패: ' + text.substring(0, 200))
 }
 
 // ─── Layer 1: guide_cache에서 유사 처방 검색 (RAG) ───
@@ -3379,11 +3376,9 @@ ${requirements || '없음'}
 
       // 10. 파싱 헬퍼
       function parseCandidateRaw(rawText) {
-        let parsed
-        try { parsed = JSON.parse(rawText) } catch {
-          const cleaned = rawText.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim()
-          parsed = JSON.parse(cleaned)
-        }
+        let parsed = extractJSON(rawText)
+        if (!parsed) { try { parsed = JSON.parse(rawText) } catch {} }
+        if (!parsed) throw new Error('JSON 파싱 실패')
         if (!parsed.formula_input && Array.isArray(parsed.ingredients)) parsed.formula_input = parsed.ingredients
         else if (!parsed.formula_input && Array.isArray(parsed.formula)) parsed.formula_input = parsed.formula
         if (!Array.isArray(parsed.formula_input) || !parsed.formula_input.length) throw new Error('formula_input 없음')
@@ -3441,9 +3436,9 @@ ${requirements || '없음'}
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: retryPrompt }] }],
-                generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+                generationConfig: { temperature: 0.2 },
               }),
-              signal: AbortSignal.timeout(180000),
+              signal: AbortSignal.timeout(120000),
             }
           )
           if (retryRes.ok) {
@@ -6288,7 +6283,7 @@ async function analyzeFormulaIntent(formulaName, requirements) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+        generationConfig: { temperature: 0.1 },
       }),
       signal: AbortSignal.timeout(60000),
     }
@@ -6297,9 +6292,19 @@ async function analyzeFormulaIntent(formulaName, requirements) {
   const data = await geminiRes.json()
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text
   if (!text) throw new Error('Pro(Intent) 응답 없음')
-  const parsed = JSON.parse(text)
+  const parsed = extractJSON(text) || JSON.parse(text)
   console.log(`[INTENT] detected_type="${parsed.detected_type}" base_form="${parsed.base_form}" similar_category="${parsed.similar_category}" purposes=${JSON.stringify(parsed.key_purposes)}`)
   return parsed
+}
+
+// ─── extractJSON: 텍스트에서 JSON 추출 (코드펜스 또는 중괄호 탐색) ────────────
+function extractJSON(text) {
+  if (!text) return null
+  const fenced = text.match(/```json\s*([\s\S]*?)```/)
+  if (fenced) { try { return JSON.parse(fenced[1].trim()) } catch {} }
+  const braced = text.match(/\{[\s\S]*\}/)
+  if (braced) { try { return JSON.parse(braced[0]) } catch {} }
+  return null
 }
 
 // ─── generateFormulaParallel: Pro A(0.3) + Pro B(0.6) 병렬 생성 ──────────────
@@ -6312,9 +6317,9 @@ async function generateFormulaParallel(aiPrompt, apiKey) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: aiPrompt }] }],
-          generationConfig: { temperature, responseMimeType: 'application/json' },
+          generationConfig: { temperature },
         }),
-        signal: AbortSignal.timeout(180000),
+        signal: AbortSignal.timeout(120000),
       }
     )
     if (!res.ok) {
@@ -6331,9 +6336,24 @@ async function generateFormulaParallel(aiPrompt, apiKey) {
     return text
   }
 
+  const callWithRetry = async (temperature, label) => {
+    try {
+      return await callGeminiRaw(temperature)
+    } catch (e) {
+      console.warn(`[${label}] 1차 실패: ${e.message} — 5초 후 재시도`)
+      await new Promise(r => setTimeout(r, 5000))
+      try {
+        return await callGeminiRaw(temperature)
+      } catch (e2) {
+        console.warn(`[${label}] 재시도 실패: ${e2.message}`)
+        return null
+      }
+    }
+  }
+
   const [resultA, resultB] = await Promise.all([
-    callGeminiRaw(0.3).catch(e => { console.warn('[Pro A] 실패:', e.message); return null }),
-    callGeminiRaw(0.6).catch(e => { console.warn('[Pro B] 실패:', e.message); return null }),
+    callWithRetry(0.3, 'Pro A'),
+    callWithRetry(0.6, 'Pro B'),
   ])
   console.log(`[PARALLEL] A=${resultA ? 'OK' : 'FAIL'} B=${resultB ? 'OK' : 'FAIL'}`)
   return { resultA, resultB }
@@ -6383,9 +6403,9 @@ ${formulaB}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: combinePrompt }] }],
-        generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+        generationConfig: { temperature: 0.2 },
       }),
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(120000),
     }
   )
   if (!res.ok) {
@@ -6396,7 +6416,11 @@ ${formulaB}
   const candidate = data.candidates?.[0]
   const text = candidate?.content?.parts?.[0]?.text
   if (!text) {
+    // COMBINE 실패 시 폴백: A/B 중 더 긴 응답 사용
     const reason = candidate?.finishReason || JSON.stringify(data).slice(0, 200)
+    console.warn(`[COMBINE] 응답 없음 (finishReason=${reason}) — 폴백: 더 긴 처방 사용`)
+    const fallback = (formulaA?.length || 0) >= (formulaB?.length || 0) ? formulaA : formulaB
+    if (fallback) return fallback
     throw new Error(`Pro 조합 응답 없음 (finishReason=${reason})`)
   }
   console.log(`[COMBINE] 조합 완료, 응답 길이=${text.length}`)
@@ -6925,14 +6949,12 @@ ${colorantStr}
           throw new Error('병렬 Pro 생성 모두 실패')
         }
 
-        // JSON 파싱 (코드펜스 제거 후 재시도)
-        let parsed
-        try {
-          parsed = JSON.parse(finalRawText)
-        } catch {
-          const cleaned = finalRawText.replace(/```json?\s*/g, '').replace(/```\s*/g, '').trim()
-          parsed = JSON.parse(cleaned)
+        // JSON 파싱 (extractJSON 활용)
+        let parsed = extractJSON(finalRawText)
+        if (!parsed) {
+          try { parsed = JSON.parse(finalRawText) } catch {}
         }
+        if (!parsed) throw new Error('JSON 파싱 실패')
 
         // formula_input 키 다양한 이름 허용 (ingredients, formula 폴백)
         if (!parsed.formula_input && Array.isArray(parsed.ingredients)) parsed.formula_input = parsed.ingredients
