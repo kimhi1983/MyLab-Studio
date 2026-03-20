@@ -5591,6 +5591,123 @@ async function matchIngredientsToDb(ingredients) {
   return ingredients
 }
 
+// ─── loadPurposeGateContext: purpose_ingredient_map DB → 프롬프트 주입 텍스트 생성 ──
+async function loadPurposeGateContext(purposes, productType) {
+  if (!purposes || purposes.length === 0) return ''
+
+  const [required, forbidden, recommended] = await Promise.all([
+    pool.query(`
+      SELECT DISTINCT m.inci_name, m.korean_name, m.role, m.reason,
+             m.default_pct_int, m.max_pct_int
+      FROM purpose_ingredient_map m
+      WHERE m.purpose_key = ANY($1) AND m.role = 'REQUIRED'
+      ORDER BY m.purpose_key, m.inci_name LIMIT 30
+    `, [purposes]).catch(() => ({ rows: [] })),
+    pool.query(`
+      SELECT DISTINCT m.inci_name, m.korean_name, m.reason
+      FROM purpose_ingredient_map m
+      WHERE m.purpose_key = ANY($1) AND m.role = 'FORBIDDEN'
+      LIMIT 20
+    `, [purposes]).catch(() => ({ rows: [] })),
+    pool.query(`
+      SELECT DISTINCT m.inci_name, m.korean_name, m.role, m.reason,
+             m.default_pct_int, m.max_pct_int
+      FROM purpose_ingredient_map m
+      WHERE m.purpose_key = ANY($1) AND m.role = 'RECOMMENDED'
+      ORDER BY m.purpose_key LIMIT 30
+    `, [purposes]).catch(() => ({ rows: [] })),
+  ])
+
+  let section = ''
+  if (required.rows.length > 0 || forbidden.rows.length > 0) {
+    section += '\n🔴🔴🔴 [PURPOSE GATE — DB 기반 필수/금지 성분] 🔴🔴🔴\n'
+    section += `처방 목적: ${purposes.join(', ')}\n\n`
+    if (required.rows.length > 0) {
+      section += '⚡ 필수 포함 성분 (REQUIRED — 최소 2개 반드시 포함):\n'
+      for (const r of required.rows) {
+        const pct = r.default_pct_int ? ` ${(r.default_pct_int / 100).toFixed(2)}%` : ''
+        section += `- ${r.inci_name} (${r.korean_name || ''})${pct} — ${r.reason || r.role}\n`
+      }
+    }
+    if (recommended.rows.length > 0) {
+      section += '\n✅ 권장 성분 (RECOMMENDED — 3~5개 선택):\n'
+      for (const r of recommended.rows) {
+        const pct = r.default_pct_int ? ` ${(r.default_pct_int / 100).toFixed(2)}%` : ''
+        section += `- ${r.inci_name} (${r.korean_name || ''})${pct}\n`
+      }
+    }
+    if (forbidden.rows.length > 0) {
+      section += '\n🚫 절대 금지 성분 (FORBIDDEN — 포함 시 처방 무효):\n'
+      for (const r of forbidden.rows) {
+        section += `- ${r.inci_name} (${r.korean_name || ''}) — 사유: ${r.reason || '목적 상충'}\n`
+      }
+    }
+    section += '🔴🔴🔴 위 필수/금지 목록은 DB 기반이므로 반드시 준수하세요. 🔴🔴🔴\n'
+  }
+
+  console.log(`[PURPOSE GATE] purposes=${purposes.join(',')} required=${required.rows.length} forbidden=${forbidden.rows.length} recommended=${recommended.rows.length}`)
+  return section
+}
+
+// ─── validateAndRetry: Purpose Gate 기반 생성 처방 검증 (70점 미만 → 재생성 신호) ──
+async function validateAndRetry(generatedIngredients, formulaIntent) {
+  const inciNames = (generatedIngredients || [])
+    .map(i => (i.inci_name || i.name || '').trim())
+    .filter(Boolean)
+  if (inciNames.length === 0) return { validated: false, score: 0, reason: 'no_ingredients' }
+
+  const purposes = formulaIntent?.key_purposes || []
+  if (purposes.length === 0) return { validated: true, score: 100 }
+
+  const [forbiddenCheck, requiredCheck] = await Promise.all([
+    pool.query(`
+      SELECT inci_name, reason FROM purpose_ingredient_map
+      WHERE purpose_key = ANY($1) AND role = 'FORBIDDEN'
+        AND LOWER(inci_name) = ANY($2)
+    `, [purposes, inciNames.map(n => n.toLowerCase())]).catch(() => ({ rows: [] })),
+    pool.query(`
+      SELECT DISTINCT inci_name FROM purpose_ingredient_map
+      WHERE purpose_key = ANY($1) AND role = 'REQUIRED'
+    `, [purposes]).catch(() => ({ rows: [] })),
+  ])
+
+  const formulaLower = inciNames.map(n => n.toLowerCase())
+  const requiredNames = requiredCheck.rows.map(r => r.inci_name.toLowerCase())
+  const requiredFound = requiredNames.filter(rn =>
+    formulaLower.some(fn => fn.includes(rn) || rn.includes(fn))
+  )
+
+  const violations = forbiddenCheck.rows
+  const requiredTotal = requiredNames.length
+  const requiredMissing = requiredTotal - requiredFound.length
+
+  let score = 100
+  score -= violations.length * 15
+  if (requiredTotal > 0) {
+    const ratio = requiredFound.length / Math.min(requiredTotal, 3)
+    score -= Math.round((1 - Math.min(ratio, 1)) * 40)
+  }
+  score = Math.max(0, score)
+
+  console.log(`[VALIDATE] score=${score} violations=${violations.length} required=${requiredFound.length}/${requiredTotal}`)
+
+  if (score < 70 && (violations.length > 0 || requiredMissing > 2)) {
+    const feedbackLines = []
+    if (violations.length > 0) {
+      feedbackLines.push(`🚫 금지 성분 위반: ${violations.map(v => v.inci_name).join(', ')} — 반드시 제거하세요`)
+    }
+    if (requiredMissing > 0) {
+      const missing = requiredNames
+        .filter(rn => !formulaLower.some(fn => fn.includes(rn) || rn.includes(fn)))
+        .slice(0, 5)
+      feedbackLines.push(`⚡ 필수 성분 누락: ${missing.join(', ')} — 반드시 포함하세요`)
+    }
+    return { validated: false, score, violations: violations.map(v => v.inci_name), feedback: feedbackLines.join('\n'), shouldRetry: true }
+  }
+
+  return { validated: true, score, violations: violations.map(v => v.inci_name) }
+}
+
 // ─── analyzeFormulaIntent: Gemini Flash로 처방명+요구사항 1차 분석 ──────────────
 async function analyzeFormulaIntent(formulaName, requirements) {
   const apiKey = process.env.GEMINI_API_KEY
@@ -5624,7 +5741,20 @@ async function analyzeFormulaIntent(formulaName, requirements) {
 - 보습 요청 → must_have_ingredients에 Glycerin + Hyaluronic Acid 포함
 - 진정/시카 요청 → must_have_ingredients에 Centella Asiatica Extract + Panthenol 포함
 - PDRN/재생 요청 → must_have_ingredients에 PDRN 또는 Hydrolyzed DNA 포함
-- 탈모방지 요청 → must_have_ingredients에 Biotin 또는 Capixyl 포함`
+- 탈모방지 요청 → must_have_ingredients에 Biotin 또는 Capixyl 포함
+
+추가 요구사항 파싱 규칙 (반드시 적용):
+- "~% 이상" / "~% 포함" → must_have_ingredients에 성분명 + 최소 농도 명시 (예: "Niacinamide 3% 이상")
+- "~ 제외" / "~ 빼줘" / "~ 없이" → must_not_ingredients에 해당 성분명 추가
+- "비건" / "vegan" → must_not_ingredients에 "Lanolin, Beeswax, Carmine, Collagen(동물), Keratin(동물)" 추가
+- "EWG 그린" / "ewg green" → must_not_ingredients에 "Phenoxyethanol(1%이상), Fragrance, DMDM Hydantoin" 추가
+- "무향" / "fragrance free" / "향료 없이" → must_not_ingredients에 "Fragrance, Parfum, Linalool, Limonene" 추가
+- "무알코올" → must_not_ingredients에 "Alcohol Denat., Ethanol, SD Alcohol" 추가
+- "무색소" → must_not_ingredients에 "CI 색소 (CI 77891 제외)" 추가
+- "워터프루프" / "지속력" → must_have_ingredients에 "Dimethicone, Trimethylsiloxysilicate, Acrylates Copolymer" 추가
+- "임산부" / "임산부용" / "pregnancy safe" → must_not_ingredients에 "Retinol, Retinyl Palmitate, Salicylic Acid, Hydroquinone" 추가
+- "저자극" / "hypoallergenic" → must_not_ingredients에 "Alcohol Denat., SLS, Fragrance" 추가 + must_have_ingredients에 "Allantoin, Panthenol" 추가
+- 숫자+% 패턴 감지 시 해당 성분의 구체적 농도를 must_have_ingredients에 명시`
 
   const geminiRes = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
@@ -6042,10 +6172,20 @@ ${_guideCommon}
 🔬🔬🔬 위 분석 결과가 아래 어떤 규칙보다 우선합니다. 🔬🔬🔬
 ` : ''
 
+    // ── Purpose Gate DB 조회 → purposeGateSection ──
+    let purposeGateSection = ''
+    if (formulaIntent?.key_purposes?.length > 0) {
+      try {
+        purposeGateSection = await loadPurposeGateContext(formulaIntent.key_purposes, product_type)
+      } catch (e) {
+        console.warn('[PURPOSE GATE] DB 조회 실패, 스킵:', e.message)
+      }
+    }
+
     const aiPrompt = `╔══════════════════════════════════════╗
 ║     화장품 처방 설계 전문가 역할      ║
 ╚══════════════════════════════════════╝
-${getMandatoryRules(baseKey)}${intentSection}
+${getMandatoryRules(baseKey)}${intentSection}${purposeGateSection}
 [제품유형]: ${formulaIntent?.detected_type || product_type}
 [처방명]: ${formula_name || '(미지정)'}
 [추가요구사항]: ${requirements || '(없음)'}
@@ -6260,7 +6400,41 @@ ${colorantStr}
     // ── 15-b. ensureTotal100: Aqua 없는 무수 제형 포함 전체 보정 ──
     ensureTotal100(usedIngredients, balanceKeyFinal)
 
-    // ── 16. DB 매칭: 3단계 INCI 매칭으로 한글명/EWG/CAS 보강 ──
+    // ── 16. Purpose Gate 검증 + 70점 미만 시 1회 재생성 ──
+    let validationResult = null
+    let retried = false
+    if (aiResult && formulaIntent?.key_purposes?.length > 0) {
+      try {
+        validationResult = await validateAndRetry(usedIngredients, formulaIntent)
+        if (validationResult.shouldRetry) {
+          console.log(`[RETRY] score=${validationResult.score} < 70 → 피드백 포함 재생성`)
+          const retryPrompt = aiPrompt + `\n\n⚠️⚠️⚠️ [검증 피드백 — 이전 생성에서 아래 문제 발견, 반드시 수정] ⚠️⚠️⚠️\n${validationResult.feedback}\n⚠️⚠️⚠️ 위 피드백을 100% 반영하여 처방을 처음부터 다시 작성하세요. ⚠️⚠️⚠️`
+          try {
+            const retryParsed = await callGemini(retryPrompt, 'generate-idea-retry', false)
+            if (retryParsed?.formula_input?.length > 0) {
+              const normalized = retryParsed.formula_input.map(i => ({
+                name: i.korean_name || i.name || '',
+                inci_name: i.inci || i.inci_name || '',
+                percentage: parseFloat(i.wt_pct ?? i.percentage ?? 0),
+                function: i.function || '',
+                phase: i.phase || 'A',
+              }))
+              usedIngredients.length = 0
+              usedIngredients.push(...normalized)
+              ensureTotal100(usedIngredients, balanceKeyFinal)
+              retried = true
+              console.log(`[RETRY] 재생성 완료 — ${usedIngredients.length}종`)
+            }
+          } catch (retryErr) {
+            console.warn('[RETRY] 재생성 실패, 원본 반환:', retryErr.message)
+          }
+        }
+      } catch (e) {
+        console.warn('[VALIDATE] 검증 실패, 스킵:', e.message)
+      }
+    }
+
+    // ── 17. DB 매칭: 3단계 INCI 매칭으로 한글명/EWG/CAS 보강 ──
     await matchIngredientsToDb(usedIngredients)
 
     const finalTotal = parseFloat(usedIngredients.reduce((s, i) => s + (parseFloat(i.percentage) || 0), 0).toFixed(2))
@@ -6285,6 +6459,9 @@ ${colorantStr}
         },
         references_used: aiResult?.references_used || { pool: poolFormulas.length > 0, compound_cache: compoundList.length > 0 },
         ai_enhanced: !!aiResult,
+        purpose_score: validationResult?.score ?? null,
+        purpose_violations: validationResult?.violations ?? [],
+        retried,
         filters_applied: {
           keywords: kw,
           exclude_types: excludeTypes,
