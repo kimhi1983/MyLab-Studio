@@ -153,7 +153,12 @@ async function fetchCost() {
       method: 'POST',
       body: JSON.stringify({ ingredients: props.ingredients }),
     })
-    result.value = res
+    if (res) {
+      result.value = res
+    } else {
+      // fetchJSON이 null 반환 = API 실패. api.error.value에 메시지 있음
+      error.value = api.error.value || '원가 계산 실패'
+    }
   } catch (e) {
     error.value = e.message
   } finally {

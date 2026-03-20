@@ -104,6 +104,16 @@ function authenticateToken(req, res, next) {
   }
 }
 
+// 선택적 인증 — 토큰 없어도 통과, 있으면 req.user 설정
+function optionalAuth(req, res, next) {
+  const auth = req.headers['authorization']
+  const token = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null
+  if (token) {
+    try { req.user = jwt.verify(token, JWT_SECRET) } catch { /* 만료된 토큰 무시 */ }
+  }
+  next()
+}
+
 const app = express()
 app.use(cors())
 app.use(express.json({
@@ -2898,7 +2908,7 @@ function reverseCalcPercentages(inciList, regMaxMap) {
 }
 
 // ─── 원가 분석 ────────────────────────────────────────────────────────────────
-app.post('/api/formula/cost-analysis', authenticateToken, async (req, res) => {
+app.post('/api/formula/cost-analysis', optionalAuth, async (req, res) => {
   try {
     const { ingredients = [] } = req.body
     if (!ingredients.length) return res.json({ total_cost_per_kg: 0, cost_breakdown: [], top3_expensive: [], price_grade: '미산출' })
