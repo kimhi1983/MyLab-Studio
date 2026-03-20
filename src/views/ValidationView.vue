@@ -202,6 +202,9 @@
 import { ref, computed, watch } from 'vue'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
+import { useToast } from '../composables/useToast.js'
+
+const { addToast } = useToast()
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 function getAuthHeader() {
@@ -648,7 +651,10 @@ function saveChecklist() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       body: JSON.stringify({ id: formulaId, formula_id: formulaId, items }),
-    }).catch(e => console.warn('[Checklist] 서버 동기화 실패:', e.message))
+    }).catch(e => {
+      console.warn('[Checklist] 서버 동기화 실패:', e.message)
+      addToast('체크리스트 서버 저장 실패 (로컬에는 저장됨)', 'warning')
+    })
   }
 }
 

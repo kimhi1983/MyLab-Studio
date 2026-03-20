@@ -286,6 +286,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
 import { useFormulaStore } from '../stores/formulaStore.js'
+import { useToast } from '../composables/useToast.js'
+
+const { addToast } = useToast()
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 function getAuthHeader() {
@@ -536,6 +539,7 @@ async function syncStabilityRecord(record) {
     })
   } catch (e) {
     console.warn('[Stability] 서버 동기화 실패 (localStorage에는 저장됨):', e.message)
+    addToast('안정성 데이터 서버 저장 실패 (로컬에는 저장됨)', 'warning')
   }
 }
 

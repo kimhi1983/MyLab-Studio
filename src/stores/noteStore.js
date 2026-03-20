@@ -1,6 +1,9 @@
 import { computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
 import { makeUserDataApi } from '../lib/userDataApi.js'
+import { useToast } from '../composables/useToast.js'
+
+const { addToast } = useToast()
 
 const notes = useLocalStorage('mylab:notes', [])
 const api = makeUserDataApi('notes')
@@ -68,7 +71,7 @@ export function useNoteStore() {
       updated_at: now,
     }
     notes.value = [note, ...notes.value]
-    api.save(note)
+    api.save(note).catch(err => addToast('노트 저장 실패: ' + err.message, 'warning'))
     return note
   }
 
@@ -85,13 +88,13 @@ export function useNoteStore() {
     const next = [...notes.value]
     next[idx] = updated
     notes.value = next
-    api.update(id, updated)
+    api.update(id, updated).catch(err => addToast('노트 수정 실패: ' + err.message, 'warning'))
     return updated
   }
 
   function deleteNote(id) {
     notes.value = notes.value.filter(n => n.id !== id)
-    api.remove(id)
+    api.remove(id).catch(err => addToast('노트 삭제 실패: ' + err.message, 'warning'))
   }
 
   return {

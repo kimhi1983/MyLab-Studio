@@ -23,34 +23,38 @@ export function makeUserDataApi(resource) {
 
   async function save(item) {
     if (!isAuth()) return
-    await fetch(base, {
+    const res = await fetch(base, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(item),
     })
+    if (!res.ok) throw new Error(`저장 실패 (${res.status})`)
   }
 
   async function saveBatch(items) {
     if (!isAuth() || !items.length) return
-    await fetch(`${base}/batch`, {
+    const res = await fetch(`${base}/batch`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(items),
     })
+    if (!res.ok) throw new Error(`일괄 저장 실패 (${res.status})`)
   }
 
   async function update(id, item) {
     if (!isAuth()) return
-    await fetch(`${base}/${id}`, {
+    const res = await fetch(`${base}/${id}`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify(item),
     })
+    if (!res.ok) throw new Error(`수정 실패 (${res.status})`)
   }
 
   async function remove(id) {
     if (!isAuth()) return
-    await fetch(`${base}/${id}`, { method: 'DELETE', headers: authHeaders() })
+    const res = await fetch(`${base}/${id}`, { method: 'DELETE', headers: authHeaders() })
+    if (!res.ok) throw new Error(`삭제 실패 (${res.status})`)
   }
 
   return { list, save, saveBatch, update, remove }

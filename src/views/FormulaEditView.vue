@@ -817,6 +817,17 @@ onMounted(() => {
       loadForm(f)
     }
   }
+  // 성분DB에서 "처방에 추가" 버튼으로 진입 시 성분 자동 추가
+  const addInci = route.query.addIngredient
+  if (addInci) {
+    form.formula_data.ingredients.push({
+      name: addInci,
+      inci_name: addInci,
+      percentage: 1.0,
+      function: '',
+      phase: '',
+    })
+  }
 })
 
 function loadForm(f) {

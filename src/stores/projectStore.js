@@ -2,6 +2,9 @@ import { computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
 import { useFormulaStore } from './formulaStore.js'
 import { makeUserDataApi } from '../lib/userDataApi.js'
+import { useToast } from '../composables/useToast.js'
+
+const { addToast } = useToast()
 
 const projects = useLocalStorage('mylab:projects', [])
 const api = makeUserDataApi('projects')
@@ -67,7 +70,7 @@ export function useProjectStore() {
       created_at: new Date().toISOString(),
     }
     projects.value.push(project)
-    api.save(project)
+    api.save(project).catch(err => addToast('프로젝트 저장 실패: ' + err.message, 'warning'))
     return project
   }
 
@@ -77,7 +80,7 @@ export function useProjectStore() {
       .filter(f => f.project_id === id)
       .forEach(f => updateFormula(f.id, { project_id: '' }))
     projects.value = projects.value.filter(p => p.id !== id)
-    api.remove(id)
+    api.remove(id).catch(err => addToast('프로젝트 삭제 실패: ' + err.message, 'warning'))
   }
 
   function getFormulaCount(id) {
@@ -89,7 +92,7 @@ export function useProjectStore() {
     if (idx === -1) return null
     projects.value[idx] = { ...projects.value[idx], ...data }
     projects.value = [...projects.value]
-    api.update(id, projects.value[idx])
+    api.update(id, projects.value[idx]).catch(err => addToast('프로젝트 수정 실패: ' + err.message, 'warning'))
     return projects.value[idx]
   }
 

@@ -11,6 +11,7 @@
     <main :class="isLoggedIn ? 'app-content' : 'app-content-full'">
       <router-view />
     </main>
+    <ToastNotification />
   </div>
 </template>
 
@@ -18,6 +19,7 @@
 import { useAuthStore } from './stores/authStore.js'
 import AppHeader from './components/layout/AppHeader.vue'
 import AppNavBar from './components/layout/AppNavBar.vue'
+import ToastNotification from './components/common/ToastNotification.vue'
 
 const { isLoggedIn } = useAuthStore()
 </script>

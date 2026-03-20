@@ -1,6 +1,9 @@
 import { reactive, computed } from 'vue'
 import { useLocalStorage } from '../composables/useLocalStorage.js'
 import { makeUserDataApi } from '../lib/userDataApi.js'
+import { useToast } from '../composables/useToast.js'
+
+const { addToast } = useToast()
 
 const formulas = useLocalStorage('mylab:formulas', [])
 const api = makeUserDataApi('formulas')
@@ -157,7 +160,7 @@ export function useFormulaStore() {
       version_history: [],
     }
     formulas.value.push(formula)
-    api.save(formula)
+    api.save(formula).catch(err => addToast('처방 저장 실패: ' + err.message, 'warning'))
     return formula
   }
 
@@ -167,13 +170,13 @@ export function useFormulaStore() {
     const updated = { ...formulas.value[idx], ...data, updated_at: new Date().toISOString() }
     formulas.value[idx] = updated
     formulas.value = [...formulas.value]
-    api.update(id, updated)
+    api.update(id, updated).catch(err => addToast('처방 수정 실패: ' + err.message, 'warning'))
     return updated
   }
 
   function deleteFormula(id) {
     formulas.value = formulas.value.filter(f => f.id !== id)
-    api.remove(id)
+    api.remove(id).catch(err => addToast('처방 삭제 실패: ' + err.message, 'warning'))
   }
 
   function changeStatus(id, status) {

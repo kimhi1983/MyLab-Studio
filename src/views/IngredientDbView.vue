@@ -322,6 +322,7 @@
             <!-- 푸터 -->
             <div class="ing-modal-footer">
               <span v-if="detailData.updated_at" class="footer-date mono-text">마지막 업데이트: {{ formatDate(detailData.updated_at) }}</span>
+              <button class="btn-add-to-formula" @click="addToFormula(detailData)">+ 처방에 추가</button>
             </div>
           </div>
 
@@ -350,8 +351,11 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useIngredientStore } from '../stores/ingredientStore.js'
 import { mapRegulationSource } from '../utils/regulationSource.js'
+
+const router = useRouter()
 
 const store = useIngredientStore()
 const { loading, error } = store
@@ -665,6 +669,13 @@ function formatDate(iso) {
   if (!iso) return '-'
   const d = new Date(iso)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function addToFormula(data) {
+  const inci = data.inci_name || selectedItem.value?.inci_name || ''
+  if (!inci) return
+  closeDetail()
+  router.push({ path: '/formulas/new', query: { addIngredient: inci } })
 }
 </script>
 
@@ -1810,6 +1821,19 @@ function formatDate(iso) {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.btn-add-to-formula {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.btn-add-to-formula:hover { opacity: 0.88; }
 
 /* ─── 반응형 ─── */
 @media (max-width: 600px) {
