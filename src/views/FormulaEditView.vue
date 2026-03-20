@@ -518,6 +518,9 @@
               </table>
             </div>
 
+            <!-- 예상 원가 -->
+            <CostAnalysisCard v-if="ideaResult?.ingredients?.length" :ingredients="ideaResult.ingredients" />
+
           </div>
           <div class="idea-modal-footer">
             <button class="btn btn-ghost" @click="showIdeaModal = false">취소</button>
@@ -631,6 +634,7 @@ import { useExport } from '../composables/useExport.js'
 import StatusChip from '../components/common/StatusChip.vue'
 import IngredientTable from '../components/formula/IngredientTable.vue'
 import CopyFormulaView from './CopyFormulaView.vue'
+import CostAnalysisCard from '../components/CostAnalysisCard.vue'
 import FormulaLoadingBeaker from '../components/formula/FormulaLoadingBeaker.vue'
 
 const route = useRoute()

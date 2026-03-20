@@ -228,6 +228,7 @@
             @regenerate="onGenerate"
             @save="onSaveFormula"
           />
+          <CostAnalysisCard v-if="generateResult?.ingredients?.length" :ingredients="generateResult.ingredients" />
         </div>
       </div>
     </transition>
@@ -254,6 +255,7 @@ import { useRouter } from 'vue-router'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
 import AiResultPanel from '../components/formula/AiResultPanel.vue'
+import CostAnalysisCard from '../components/CostAnalysisCard.vue'
 
 const router = useRouter()
 const { addFormula } = useFormulaStore()

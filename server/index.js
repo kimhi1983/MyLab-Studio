@@ -2771,6 +2771,144 @@ function reverseCalcPercentages(inciList, regMaxMap) {
   return percentages
 }
 
+// ─── 원가 분석 ────────────────────────────────────────────────────────────────
+app.post('/api/formula/cost-analysis', authenticateToken, async (req, res) => {
+  try {
+    const { ingredients = [] } = req.body
+    if (!ingredients.length) return res.json({ total_cost_per_kg: 0, cost_breakdown: [], top3_expensive: [], price_grade: '미산출' })
+
+    const userId = req.user?.id
+    const inciNames = ingredients.map(i => (i.inci_name || i.name || '').trim()).filter(Boolean)
+
+    // 1. 사용자 단가 조회
+    const userPrices = {}
+    if (userId && inciNames.length) {
+      const { rows: up } = await pool.query(
+        `SELECT inci_name, price_per_kg FROM user_ingredient_price WHERE user_id=$1 AND LOWER(inci_name) = ANY($2)`,
+        [userId, inciNames.map(n => n.toLowerCase())]
+      )
+      for (const r of up) userPrices[r.inci_name.toLowerCase()] = r.price_per_kg
+    }
+
+    // 2. ingredient_master 단가 조회
+    const { rows: dbPrices } = await pool.query(
+      `SELECT inci_name, price_per_kg_actual, price_per_kg_estimated
+       FROM ingredient_master WHERE LOWER(inci_name) = ANY($1)`,
+      [inciNames.map(n => n.toLowerCase())]
+    )
+    const dbMap = {}
+    for (const r of dbPrices) {
+      dbMap[r.inci_name.toLowerCase()] = { actual: r.price_per_kg_actual, estimated: r.price_per_kg_estimated }
+    }
+
+    // 3. 원가 계산
+    let totalCost = 0
+    const breakdown = ingredients.map(ing => {
+      const inci = (ing.inci_name || ing.name || '').trim()
+      const key = inci.toLowerCase()
+      const pct = parseFloat(ing.percentage) || 0
+      let pricePerKg = 50000
+      let source = 'estimated'
+
+      if (userPrices[key] != null) {
+        pricePerKg = userPrices[key]; source = '내 단가'
+      } else if (dbMap[key]?.actual != null) {
+        pricePerKg = dbMap[key].actual; source = 'actual'
+      } else if (dbMap[key]?.estimated != null) {
+        pricePerKg = dbMap[key].estimated; source = 'estimated'
+      }
+
+      const costContrib = Math.round(pricePerKg * pct / 100)
+      totalCost += costContrib
+      return { inci_name: inci, percentage: pct, price_per_kg: pricePerKg, cost_contribution: costContrib, price_source: source }
+    })
+
+    const sorted = [...breakdown].sort((a, b) => b.cost_contribution - a.cost_contribution)
+    const top3 = sorted.slice(0, 3)
+
+    let grade = '저가'
+    if (totalCost >= 200000) grade = '고가'
+    else if (totalCost >= 100000) grade = '중상'
+    else if (totalCost >= 50000) grade = '중'
+    else if (totalCost >= 20000) grade = '중저'
+
+    const myPriceCount = breakdown.filter(b => b.price_source === '내 단가').length
+
+    res.json({ total_cost_per_kg: totalCost, cost_breakdown: breakdown, top3_expensive: top3, price_grade: grade, my_price_count: myPriceCount })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 사용자 단가 UPSERT ───────────────────────────────────────────────────────
+app.put('/api/ingredients/price', authenticateToken, async (req, res) => {
+  try {
+    const { inci_name, price_per_kg, supplier, note } = req.body
+    if (!inci_name || price_per_kg == null) return res.status(400).json({ error: 'inci_name, price_per_kg 필수' })
+    await pool.query(
+      `INSERT INTO user_ingredient_price (user_id, inci_name, price_per_kg, supplier, note, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (user_id, inci_name) DO UPDATE SET price_per_kg=$3, supplier=$4, note=$5, updated_at=NOW()`,
+      [req.user.id, inci_name.trim(), parseInt(price_per_kg), supplier || null, note || null]
+    )
+    res.json({ success: true, message: '단가 저장 완료' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 사용자 단가 목록 (원가 분석용) ─────────────────────────────────────────
+app.get('/api/ingredients/prices', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '', myOnly = 'false' } = req.query
+    const offset = (parseInt(page) - 1) * parseInt(limit)
+    const userId = req.user.id
+    const searchVal = `%${search.trim()}%`
+
+    const where = search.trim()
+      ? `AND (im.inci_name ILIKE $3 OR im.korean_name ILIKE $3 OR uip.inci_name ILIKE $3)`
+      : ''
+    const myOnlyClause = myOnly === 'true' ? 'INNER JOIN' : 'LEFT JOIN'
+
+    const query = `
+      SELECT im.inci_name, im.korean_name, im.ingredient_type,
+             im.price_per_kg_estimated, im.price_per_kg_actual,
+             uip.price_per_kg AS user_price, uip.supplier, uip.note, uip.updated_at AS user_updated
+      FROM ingredient_master im
+      ${myOnlyClause} user_ingredient_price uip ON LOWER(uip.inci_name)=LOWER(im.inci_name) AND uip.user_id=$1
+      WHERE im.price_per_kg_estimated IS NOT NULL ${where}
+      ORDER BY uip.updated_at DESC NULLS LAST, im.inci_name
+      LIMIT $2 OFFSET ${offset}
+    `
+    const params = search.trim() ? [userId, parseInt(limit), searchVal] : [userId, parseInt(limit)]
+    const { rows } = await pool.query(query, params)
+
+    const countQ = `
+      SELECT COUNT(*) FROM ingredient_master im
+      ${myOnlyClause} user_ingredient_price uip ON LOWER(uip.inci_name)=LOWER(im.inci_name) AND uip.user_id=$1
+      WHERE im.price_per_kg_estimated IS NOT NULL ${where}
+    `
+    const countParams = search.trim() ? [userId, searchVal] : [userId]
+    const { rows: countRows } = await pool.query(countQ.replace('$2', '').replace('LIMIT $2 OFFSET 0',''), countParams)
+
+    const myCount = await pool.query(`SELECT COUNT(*) FROM user_ingredient_price WHERE user_id=$1`, [userId])
+    res.json({ items: rows, total: parseInt(countRows[0]?.count||0), my_count: parseInt(myCount.rows[0].count) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── 사용자 단가 삭제 ─────────────────────────────────────────────────────────
+app.delete('/api/ingredients/price/:inci_name', authenticateToken, async (req, res) => {
+  try {
+    const inciName = decodeURIComponent(req.params.inci_name)
+    await pool.query(`DELETE FROM user_ingredient_price WHERE user_id=$1 AND LOWER(inci_name)=LOWER($2)`, [req.user.id, inciName])
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 카피 처방 목록 (guide_cache_copy DB 조회) ───
 app.get('/api/copy-formulas', async (req, res) => {
   try {

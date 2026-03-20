@@ -17,6 +17,7 @@ const routes = [
   { path: '/hlb-calc', name: 'hlb-calc', component: () => import('./views/HlbCalcView.vue'), meta: { title: 'HLB 계산기', requireAuth: true } },
   { path: '/verify', name: 'verify', component: () => import('./views/VerifyView.vue'), meta: { title: '처방 검증', requireAuth: true } },
   { path: '/admin', name: 'admin', component: () => import('./views/AdminView.vue'), meta: { title: '관리자', requireAuth: true, requireAdmin: true } },
+  { path: '/cost', name: 'cost', component: () => import('./views/CostManageView.vue'), meta: { title: '원료 단가', requireAuth: true } },
 ]
 
 const router = createRouter({
