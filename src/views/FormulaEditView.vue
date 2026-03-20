@@ -104,8 +104,8 @@
 
           <!-- 전성분 자동 채우기 -->
           <div class="form-group ai-fill-group">
-            <label class="form-label">추가 요구사항 (선택)</label>
-            <input v-model="aiRequirements" class="form-input" placeholder="예: 고보습, 민감성 피부, 비건, EWG 그린">
+            <label class="form-label">추가 요구사항</label>
+            <textarea v-model="aiRequirements" class="form-input" rows="3" placeholder="예: 고보습, 민감성 피부, 비건, EWG 그린" style="resize: vertical;"></textarea>
             <button
               class="btn-ai-fill"
               :disabled="isAiFilling"
@@ -114,6 +114,10 @@
               <span v-if="isAiFilling" class="ai-spinner"></span>
               {{ isAiFilling ? aiFillStep : '스마트 처방 생성' }}
             </button>
+            <p style="font-size: 12px; color: #999; margin-top: 8px; line-height: 1.6;">
+              💡 추가 요구사항에 상세히 적을수록 더 정확한 처방이 생성됩니다.<br>
+              예시: "고보습, 민감성 피부용, EWG 그린 등급, 비건 인증 가능, 무향, 히알루론산 필수 포함, 레티놀 제외"
+            </p>
           </div>
         </div>
       </div>
