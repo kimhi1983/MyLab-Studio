@@ -22,16 +22,17 @@
         <div class="filter-group search-group">
           <input v-model="searchQuery" class="filter-input" placeholder="처방명, 제형으로 검색...">
         </div>
-        <div class="filter-group">
-          <button class="btn-ghost-sm" :class="{ active: viewMode === 'table' }" @click="viewMode = 'table'">테이블</button>
-          <button class="btn-ghost-sm" :class="{ active: viewMode === 'card' }" @click="viewMode = 'card'">카드</button>
-        </div>
       </div>
     </div>
 
-    <!-- Table View -->
-    <div v-if="viewMode === 'table'" class="panel">
-      <table class="data-table" v-if="filtered.length">
+    <!-- Table -->
+    <div class="panel">
+      <!-- 총 처방 수 -->
+      <div class="list-meta">
+        총 <strong>{{ allFiltered.length }}</strong>개 처방
+      </div>
+
+      <table class="data-table" v-if="paged.length">
         <thead>
           <tr>
             <th>ID</th>
@@ -45,7 +46,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="f in filtered" :key="f.id" @click="$router.push('/formulas/' + f.id)">
+          <tr v-for="f in paged" :key="f.id" @click="$router.push('/formulas/' + f.id)">
             <td class="cell-id">{{ f.id }}</td>
             <td class="cell-title">{{ f.title }}</td>
             <td>{{ f.product_type || '-' }}</td>
@@ -66,19 +67,21 @@
       <EmptyState v-else icon="⚗" title="처방이 없습니다" subtitle="새 처방을 작성해보세요">
         <router-link to="/formulas/new" class="btn btn-primary" style="display:inline-block;margin-top:8px">새 처방 작성</router-link>
       </EmptyState>
-    </div>
 
-    <!-- Card View -->
-    <div v-else class="card-grid">
-      <div v-for="f in filtered" :key="f.id" class="card-wrap">
-        <FormulaCard :formula="f" @click="$router.push('/formulas/' + f.id)" />
-        <button class="btn-del-card" @click.stop="confirmDelete(f)" title="삭제">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none">
-            <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 9h8l1-9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
+      <!-- 페이지네이션 -->
+      <div v-if="pageCount > 1" class="pagination">
+        <button class="pg-btn" :disabled="currentPage === 1" @click="currentPage--">←</button>
+        <template v-for="pg in pageNumbers" :key="pg">
+          <span v-if="pg === '...'" class="pg-ellipsis">…</span>
+          <button
+            v-else
+            class="pg-btn"
+            :class="{ active: pg === currentPage }"
+            @click="currentPage = pg"
+          >{{ pg }}</button>
+        </template>
+        <button class="pg-btn" :disabled="currentPage === pageCount" @click="currentPage++">→</button>
       </div>
-      <EmptyState v-if="!filtered.length" icon="⚗" title="처방이 없습니다" />
     </div>
 
     <!-- 삭제 확인 모달 -->
@@ -114,13 +117,12 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useProjectStore } from '../stores/projectStore.js'
 import { useToast } from '../composables/useToast.js'
 import StatusChip from '../components/common/StatusChip.vue'
 import EmptyState from '../components/common/EmptyState.vue'
-import FormulaCard from '../components/formula/FormulaCard.vue'
 
 const { searchFormulas, deleteFormula } = useFormulaStore()
 const { projects } = useProjectStore()
@@ -129,17 +131,51 @@ const { addToast } = useToast()
 const filterStatus = ref('')
 const filterProject = ref('')
 const searchQuery = ref('')
-const viewMode = ref('table')
 
 const deleteTarget = ref(null)
 const isDeleting = ref(false)
 
-const filtered = computed(() =>
+// ── 페이지네이션 ──
+const PAGE_SIZE = 20
+const currentPage = ref(1)
+
+const allFiltered = computed(() =>
   searchFormulas(searchQuery.value, {
     status: filterStatus.value || undefined,
     project_id: filterProject.value || undefined,
   })
 )
+
+const pageCount = computed(() => Math.ceil(allFiltered.value.length / PAGE_SIZE) || 1)
+
+const paged = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return allFiltered.value.slice(start, start + PAGE_SIZE)
+})
+
+// 필터 변경 시 1페이지로 리셋
+watch([filterStatus, filterProject, searchQuery], () => { currentPage.value = 1 })
+
+// 페이지 번호 배열 (ellipsis 포함)
+const pageNumbers = computed(() => {
+  const total = pageCount.value
+  const cur = currentPage.value
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+
+  const pages = new Set([1, total, cur])
+  for (let d = 1; d <= 2; d++) {
+    if (cur - d >= 1) pages.add(cur - d)
+    if (cur + d <= total) pages.add(cur + d)
+  }
+  const sorted = [...pages].sort((a, b) => a - b)
+
+  const result = []
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) result.push('...')
+    result.push(sorted[i])
+  }
+  return result
+})
 
 function getProjectName(id) {
   if (!id) return '-'
@@ -163,6 +199,8 @@ async function doDelete() {
     deleteFormula(deleteTarget.value.id)
     addToast('처방이 삭제되었습니다', 'success')
     deleteTarget.value = null
+    // 현재 페이지가 비게 되면 이전 페이지로
+    if (paged.value.length === 0 && currentPage.value > 1) currentPage.value--
   } catch (e) {
     addToast('삭제 실패: ' + e.message, 'error')
   } finally {
@@ -196,17 +234,6 @@ async function doDelete() {
 .search-group { flex: 1; min-width: 200px; }
 .search-group .filter-input { width: 100%; }
 
-.btn-ghost-sm {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-sub);
-  font-size: 12px;
-  cursor: pointer;
-}
-.btn-ghost-sm.active { background: var(--accent-light); color: var(--accent); border-color: var(--accent-dim); }
-
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -214,6 +241,16 @@ async function doDelete() {
   box-shadow: var(--shadow);
   overflow: hidden;
 }
+
+/* 총 처방 수 */
+.list-meta {
+  padding: 10px 16px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.list-meta strong { color: var(--text); font-weight: 600; }
+
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th {
   background: var(--bg);
@@ -229,7 +266,7 @@ async function doDelete() {
 .cell-project { font-size: 12px; color: var(--text-sub); }
 .cell-date { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
 
-/* 삭제 버튼 (테이블) */
+/* 삭제 버튼 */
 .cell-del { padding: 0 8px; }
 .btn-del {
   background: none;
@@ -245,34 +282,52 @@ async function doDelete() {
 }
 .btn-del:hover { color: #F44336; background: #FFF0EF; }
 
-/* 카드 뷰 */
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-}
-
-.card-wrap {
-  position: relative;
-}
-
-.btn-del-card {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 6px;
-  cursor: pointer;
-  color: #999;
+/* 페이지네이션 */
+.pagination {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-  z-index: 1;
+  gap: 4px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
 }
-.btn-del-card:hover { color: #F44336; border-color: #F44336; background: #FFF0EF; }
+.pg-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-sub);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pg-btn:hover:not(:disabled):not(.active) {
+  background: var(--bg);
+  border-color: var(--accent-dim);
+  color: var(--text);
+}
+.pg-btn.active {
+  background: #C8A96E;
+  color: #fff;
+  border-color: #C8A96E;
+  font-weight: 700;
+  cursor: default;
+}
+.pg-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.pg-ellipsis {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 0 2px;
+  user-select: none;
+}
 
 /* 모달 */
 .modal-overlay {
@@ -340,7 +395,4 @@ async function doDelete() {
 
 .btn { padding: 8px 16px; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
 .btn-primary { background: var(--accent); color: #fff; }
-
-@media (max-width: 1199px) { .card-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 767px) { .card-grid { grid-template-columns: 1fr; } }
 </style>
