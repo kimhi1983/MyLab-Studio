@@ -217,18 +217,130 @@
       </button>
     </div>
 
-    <!-- STEP 3: 결과 -->
+    <!-- STEP 3: 결과 — 3개 후보안 카드 -->
     <transition name="card-fade">
       <div v-if="generateResult" class="step-card step-result">
         <div class="step-badge step-badge-done">3</div>
         <div class="step-content">
-          <AiResultPanel
-            :result="generateResult"
-            :elapsed="elapsed"
-            @regenerate="onGenerate"
-            @save="onSaveFormula"
-          />
-          <CostAnalysisCard v-if="generateResult?.ingredients?.length" :ingredients="generateResult.ingredients" />
+          <div class="result-header">
+            <div>
+              <h3 class="step-title">역처방 후보안</h3>
+              <p class="step-desc">
+                시판 제품의 공개 정보를 기반으로 생성된 연구용 역설계 후보안입니다.
+                <span v-if="elapsed" class="elapsed-badge">{{ elapsed }}s</span>
+              </p>
+            </div>
+            <button class="btn-regen" @click="onGenerate" :disabled="isGenerating">
+              <svg viewBox="0 0 18 18" width="14" height="14" fill="none">
+                <path d="M1 9A8 8 0 1 0 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M1 3.5V9h5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              재생성
+            </button>
+          </div>
+
+          <!-- 분석 요약 (있는 경우) -->
+          <div v-if="generateResult.analysis?.key_purposes?.length" class="analysis-row">
+            <span class="analysis-label">핵심 목적</span>
+            <span v-for="p in generateResult.analysis.key_purposes" :key="p" class="analysis-tag">{{ p }}</span>
+            <span v-if="generateResult.analysis.detected_type" class="analysis-type">{{ generateResult.analysis.detected_type }}</span>
+          </div>
+
+          <!-- 3열 후보안 카드 -->
+          <div class="candidates-grid">
+            <div
+              v-for="(cand, idx) in generateResult.candidates"
+              :key="idx"
+              class="cand-card"
+              :class="{ 'cand-selected': selectedCandIdx === idx, 'cand-recommended': cand.recommended }"
+              @click="selectedCandIdx = idx"
+            >
+              <div v-if="cand.recommended" class="cand-rec-badge">추천</div>
+              <div class="cand-label">{{ cand.label }}</div>
+              <div class="cand-score-row">
+                <span class="cand-score" :class="scoreClass(cand.score)">{{ cand.score ?? '—' }}</span>
+                <span class="cand-score-max">/100</span>
+              </div>
+              <div class="cand-stats">
+                <div class="cand-stat">
+                  <span class="cand-stat-val">{{ cand.formula?.ingredients?.length ?? 0 }}</span>
+                  <span class="cand-stat-key">성분</span>
+                </div>
+                <div class="cand-stat-sep"></div>
+                <div class="cand-stat">
+                  <span class="cand-stat-val">{{ cand.detected_type || cand.formula?.type || '—' }}</span>
+                  <span class="cand-stat-key">제형</span>
+                </div>
+              </div>
+              <div class="cand-select-indicator">
+                <span v-if="selectedCandIdx === idx">✓ 선택됨</span>
+                <span v-else>클릭하여 보기</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 선택된 후보안 상세 -->
+          <div v-if="selectedCandIdx !== null && generateResult.candidates[selectedCandIdx]" class="cand-detail">
+            <div class="cand-detail-header">
+              <span class="cand-detail-title">{{ generateResult.candidates[selectedCandIdx].label }}</span>
+              <span v-if="generateResult.candidates[selectedCandIdx].retried" class="retried-badge">재검증 완료</span>
+            </div>
+
+            <!-- 성분표 -->
+            <div class="detail-table-wrap">
+              <table class="detail-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Phase</th>
+                    <th>원료명</th>
+                    <th>INCI Name</th>
+                    <th>wt%</th>
+                    <th>기능</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(ing, i) in generateResult.candidates[selectedCandIdx].formula?.ingredients" :key="i">
+                    <td class="td-num">{{ i + 1 }}</td>
+                    <td><span class="phase-badge">{{ ing.phase || 'A' }}</span></td>
+                    <td>{{ ing.name || '—' }}</td>
+                    <td class="td-inci">{{ ing.inci_name || '—' }}</td>
+                    <td class="td-pct">{{ ing.percentage != null ? ing.percentage : '—' }}</td>
+                    <td class="td-fn">{{ ing.function || '—' }}</td>
+                  </tr>
+                  <tr class="total-row">
+                    <td colspan="4" class="td-total-label">합계</td>
+                    <td class="td-pct">{{ calcTotal(generateResult.candidates[selectedCandIdx].formula?.ingredients) }}</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 공정 메모 -->
+            <div v-if="generateResult.candidates[selectedCandIdx].formula?.notes || generateResult.candidates[selectedCandIdx].process_text" class="process-box">
+              <div class="process-label">공정 메모</div>
+              <div class="process-text">{{ generateResult.candidates[selectedCandIdx].formula?.notes || generateResult.candidates[selectedCandIdx].process_text }}</div>
+            </div>
+
+            <!-- 원가 분석 -->
+            <CostAnalysisCard
+              v-if="generateResult.candidates[selectedCandIdx].formula?.ingredients?.length"
+              :ingredients="generateResult.candidates[selectedCandIdx].formula.ingredients"
+              style="margin-top: 16px"
+            />
+
+            <!-- 채택 버튼 -->
+            <div class="adopt-section">
+              <button class="btn-adopt" @click="onSaveFormula">
+                <svg viewBox="0 0 18 18" width="15" height="15" fill="none">
+                  <path d="M9 2v10M4 7l5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M2 14h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                이 후보안 채택 → 처방 편집
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </transition>
@@ -254,7 +366,6 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFormulaStore } from '../stores/formulaStore.js'
 import { useAPI } from '../composables/useAPI.js'
-import AiResultPanel from '../components/formula/AiResultPanel.vue'
 import CostAnalysisCard from '../components/CostAnalysisCard.vue'
 
 const router = useRouter()
@@ -294,6 +405,7 @@ const generateStep = ref('')
 const generateResult = ref(null)
 const generateError = ref('')
 const elapsed = ref(0)
+const selectedCandIdx = ref(null)
 let elapsedTimer = null
 
 // ── computed ──
@@ -375,22 +487,26 @@ async function onGenerate() {
   if (!selectedProduct.value || isGenerating.value) return
   generateError.value = ''
   generateResult.value = null
+  selectedCandIdx.value = null
   isGenerating.value = true
   generateStep.value = '전성분 분석 중...'
   elapsed.value = 0
   elapsedTimer = setInterval(() => { elapsed.value++ }, 1000)
 
   const steps = [
-    { delay: 1200, msg: '성분 DB 조회 중...' },
-    { delay: 2400, msg: '규제 적합성 검토 중...' },
-    { delay: 3600, msg: '배합비 역산 중...' },
-    { delay: 5000, msg: '안전성 검증 중...' },
+    { delay: 3000,  msg: '성분 DB 조회 중...' },
+    { delay: 8000,  msg: '규제 적합성 검토 중...' },
+    { delay: 15000, msg: '배합비 역산 중...' },
+    { delay: 30000, msg: '후보 A 처방 생성 중...' },
+    { delay: 60000, msg: '후보 B 처방 생성 중...' },
+    { delay: 90000, msg: '최적 조합 도출 중...' },
+    { delay: 110000, msg: '안전성 검증 중...' },
   ]
   let idx = 0
   function tick() {
     if (idx < steps.length && isGenerating.value) {
       const s = steps[idx++]
-      setTimeout(() => { generateStep.value = s.msg; tick() }, s.delay)
+      setTimeout(() => { if (isGenerating.value) { generateStep.value = s.msg; tick() } }, s.delay)
     }
   }
   tick()
@@ -405,9 +521,21 @@ async function onGenerate() {
       market: selectedMarket.value,
       requirements: requirements.value,
     })
-    if (res?.success && res.data) generateResult.value = res.data
-    else if (res?.ingredients) generateResult.value = res
-    else generateError.value = res?.error || '처방 생성에 실패했습니다.'
+    if (res?.success && res.data?.candidates?.length) {
+      generateResult.value = res.data
+      // 추천 후보안 자동 선택
+      const recIdx = res.data.candidates.findIndex(c => c.recommended)
+      selectedCandIdx.value = recIdx >= 0 ? recIdx : 0
+    } else if (res?.ingredients) {
+      // 구 응답 포맷 호환
+      generateResult.value = {
+        candidates: [{ label: '처방 결과', formula: { ingredients: res.ingredients, notes: res.notes }, score: null, recommended: true }],
+        analysis: null,
+      }
+      selectedCandIdx.value = 0
+    } else {
+      generateError.value = res?.error || '처방 생성에 실패했습니다.'
+    }
   } catch (e) {
     generateError.value = e.message || '네트워크 오류가 발생했습니다.'
   } finally {
@@ -418,28 +546,45 @@ async function onGenerate() {
 
 // ── 저장 ──
 function onSaveFormula() {
-  if (!generateResult.value) return
+  if (!generateResult.value || selectedCandIdx.value === null) return
   const prod = selectedProduct.value
-  const ingredients = (generateResult.value.ingredients || []).map(ing => ({
+  const cand = generateResult.value.candidates[selectedCandIdx.value]
+  const raw = cand?.formula?.ingredients || []
+  const ingredients = raw.map(ing => ({
     name: ing.name || ing.inci_name || '',
     inci_name: ing.inci_name || '',
     percentage: ing.percentage || 0,
     function: ing.function || '',
-    type: ing.type || '',
+    phase: ing.phase || 'A',
     note: '',
   }))
+  const candLabel = cand?.label ? ` [${cand.label}]` : ''
   const newFormula = addFormula({
-    title: `[카피] ${prod?.product_name || '처방'} - ${selectedMarket.value}`,
+    title: `[카피] ${prod?.product_name || '처방'} - ${selectedMarket.value}${candLabel}`,
     product_type: prod?.category || '',
     status: 'draft',
     tags: ['카피처방', selectedMarket.value],
-    memo: `원본: ${prod?.brand_name || ''} ${prod?.product_name || ''}\n시장: ${selectedMarket.value}\n${new Date().toLocaleString('ko-KR')}`,
+    memo: `원본: ${prod?.brand_name || ''} ${prod?.product_name || ''}\n시장: ${selectedMarket.value}\n후보안: ${cand?.label || ''}\n${new Date().toLocaleString('ko-KR')}`,
     formula_data: {
       ingredients,
+      notes: cand?.formula?.notes || cand?.process_text || '',
       total_percentage: ingredients.reduce((s, i) => s + (Number(i.percentage) || 0), 0),
     },
   })
   router.push('/formulas/' + newFormula.id)
+}
+
+// ── 유틸 ──
+function calcTotal(ingredients) {
+  if (!ingredients?.length) return '0.00'
+  return (ingredients.reduce((s, i) => s + (Number(i.percentage) || 0), 0)).toFixed(2)
+}
+
+function scoreClass(score) {
+  if (score == null) return ''
+  if (score >= 95) return 'score-high'
+  if (score >= 80) return 'score-mid'
+  return 'score-low'
 }
 </script>
 
@@ -1134,7 +1279,351 @@ function onSaveFormula() {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ─── Result Header ─── */
+.result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.elapsed-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+}
+
+.btn-regen {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-sub);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.btn-regen:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+.btn-regen:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── Analysis Row ─── */
+.analysis-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
+.analysis-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-sub);
+  margin-right: 4px;
+}
+
+.analysis-tag {
+  font-size: 11px;
+  padding: 2px 9px;
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.analysis-type {
+  font-size: 11px;
+  padding: 2px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+  border-radius: 10px;
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+
+/* ─── Candidates Grid ─── */
+.candidates-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.cand-card {
+  position: relative;
+  padding: 18px 16px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cand-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 12px rgba(184,147,90,0.12);
+}
+
+.cand-card.cand-selected {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  box-shadow: 0 0 0 3px rgba(184,147,90,0.15);
+}
+
+.cand-card.cand-recommended {
+  border-color: #C8A96E;
+  border-width: 2px;
+}
+
+.cand-rec-badge {
+  position: absolute;
+  top: -1px;
+  right: 12px;
+  background: #C8A96E;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 0 0 8px 8px;
+  letter-spacing: 0.5px;
+}
+
+.cand-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  margin-top: 6px;
+}
+
+.cand-score-row {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.cand-score {
+  font-size: 28px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.cand-score.score-high { color: #2e7d32; }
+.cand-score.score-mid  { color: #B8935A; }
+.cand-score.score-low  { color: #c62828; }
+
+.cand-score-max {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.cand-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.cand-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+
+.cand-stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cand-stat-key {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.cand-stat-sep {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+}
+
+.cand-select-indicator {
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.cand-card.cand-selected .cand-select-indicator {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ─── Candidate Detail ─── */
+.cand-detail {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.cand-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.cand-detail-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.retried-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+/* ─── Detail Table ─── */
+.detail-table-wrap {
+  overflow-x: auto;
+}
+
+.detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.detail-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-sub);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.detail-table tr:last-child td { border-bottom: none; }
+.detail-table tr:hover td { background: var(--bg); }
+
+.td-num { color: var(--text-dim); font-size: 11px; text-align: center; width: 28px; }
+.td-inci { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-sub); }
+.td-pct { text-align: right; font-family: var(--font-mono); font-weight: 600; }
+.td-fn { font-size: 11px; color: var(--text-sub); }
+.td-total-label { text-align: right; font-weight: 600; color: var(--text-sub); }
+
+.phase-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.total-row td {
+  background: var(--accent-light) !important;
+  font-weight: 700;
+}
+
+/* ─── Process Box ─── */
+.process-box {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.process-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  margin-bottom: 6px;
+}
+
+.process-text {
+  font-size: 12.5px;
+  color: var(--text-sub);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+/* ─── Adopt Button ─── */
+.adopt-section {
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  background: var(--surface);
+}
+
+.btn-adopt {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 24px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  box-shadow: 0 2px 10px rgba(184,147,90,0.25);
+}
+
+.btn-adopt:hover { background: #a87d4a; transform: translateY(-1px); }
+.btn-adopt:active { transform: scale(0.98); }
+
 /* ─── Responsive ─── */
+@media (max-width: 900px) {
+  .candidates-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 @media (max-width: 600px) {
   .step-card { flex-direction: column; gap: 12px; }
   .step-badge { align-self: flex-start; }
@@ -1143,5 +1632,7 @@ function onSaveFormula() {
   .market-btns { flex-direction: column; }
   .market-btn { min-width: unset; }
   .btn-generate { width: 100%; min-width: unset; }
+  .candidates-grid { grid-template-columns: 1fr; }
+  .result-header { flex-direction: column; }
 }
 </style>
