@@ -47,6 +47,14 @@
             <rect x="-80" y="10" width="320" height="210" fill="url(#water-sheen)" />
           </g>
         </g>
+
+        <!-- ─── 공기방울 ─── -->
+        <!-- cx: 비커 내부 좌우(55~148), cy: 하단 근처 -->
+        <circle class="bubble b1" cx="72"  cy="208" r="3"   fill="#D4ECFC" />
+        <circle class="bubble b2" cx="110" cy="210" r="5"   fill="white"   />
+        <circle class="bubble b3" cx="90"  cy="206" r="2"   fill="#D4ECFC" />
+        <circle class="bubble b4" cx="133" cy="209" r="4"   fill="white"   />
+        <circle class="bubble b5" cx="60"  cy="211" r="3.5" fill="#D4ECFC" />
       </g>
 
       <!-- ─── 비커 외곽선 (물 위에 그려서 테두리가 선명하게) ─── -->
@@ -175,6 +183,25 @@ const stepLabel = computed(() => LABELS[props.step - 1] ?? '')
   from { transform: translateX(0); }
   to   { transform: translateX(-40px); }
 }
+
+/* ─── 공기방울 ─── */
+.bubble {
+  opacity: 0;
+  animation: bubble-rise linear infinite;
+}
+
+@keyframes bubble-rise {
+  0%   { transform: translateY(0);      opacity: 0;   }
+  10%  { opacity: 0.5; }
+  80%  { opacity: 0.35; }
+  100% { transform: translateY(-165px); opacity: 0;   }
+}
+
+.b1 { animation-duration: 2.2s; animation-delay: 0s;    opacity: 0; }
+.b2 { animation-duration: 2.8s; animation-delay: 0.7s;  opacity: 0; }
+.b3 { animation-duration: 1.7s; animation-delay: 1.3s;  opacity: 0; }
+.b4 { animation-duration: 3.0s; animation-delay: 0.3s;  opacity: 0; }
+.b5 { animation-duration: 2.4s; animation-delay: 1.8s;  opacity: 0; }
 
 /* ─── % 텍스트 ─── */
 .pct-text {
