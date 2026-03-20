@@ -1072,6 +1072,9 @@ app.get('/api/products/list', async (req, res) => {
   try {
     const { page = 1, limit = 12, search = '', category = '', country = '', sort = 'latest', source = '' } = req.query
     const offset = (parseInt(page) - 1) * parseInt(limit)
+    if (search.trim() && req.user?.id) {
+      logActivity(req.user.id, req.user.name, 'search_product', search.trim(), req.headers['x-forwarded-for'] || req.ip)
+    }
 
     const where = []
     const params = []
@@ -3255,6 +3258,9 @@ app.get('/api/guide-formulas/:id', async (req, res) => {
 app.post('/api/copy-formula', async (req, res) => {
   try {
     const { productId, productName, targetMarket = 'KR', requirements = '' } = req.body
+    if (req.user?.id) {
+      logActivity(req.user.id, req.user.name, 'copy_formula', productName || productId, req.headers['x-forwarded-for'] || req.ip)
+    }
 
     // ── productId 제공 시: 병렬 Pro 파이프라인 ──
     if (productId) {
@@ -5007,6 +5013,34 @@ app.get('/api/requests/my', authenticateToken, async (req, res) => {
   }
 })
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── 활동 로그 ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function initActivityLogDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_activity_log (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      user_name VARCHAR(100),
+      action VARCHAR(50) NOT NULL,
+      detail TEXT,
+      ip_address VARCHAR(50),
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_activity_user   ON user_activity_log(user_id)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_activity_action ON user_activity_log(action)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_activity_date   ON user_activity_log(created_at)`)
+}
+
+function logActivity(userId, userName, action, detail, ip) {
+  pool.query(
+    `INSERT INTO user_activity_log (user_id, user_name, action, detail, ip_address) VALUES ($1,$2,$3,$4,$5)`,
+    [userId, userName || null, action, detail || null, ip || null]
+  ).catch(() => {}) // 로그 실패는 무시
+}
+
 // GET /api/requests/unread-count — 미처리 건수 (관리자, status='접수')
 app.get('/api/requests/unread-count', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -5177,6 +5211,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (!valid) return res.status(401).json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' })
 
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id])
+    logActivity(user.id, user.name, 'login', user.email, req.headers['x-forwarded-for'] || req.ip)
     const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN })
     res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } })
   } catch (err) {
@@ -5277,6 +5312,102 @@ app.put('/api/admin/users/:id/password', authenticateToken, requireAdmin, async 
   }
 })
 
+// GET /api/admin/stats — 사용자 활동 통계
+app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    // 1. 사용자별 통계
+    const { rows: userStats } = await pool.query(`
+      SELECT
+        u.id, u.name AS user_name, u.email,
+        COUNT(CASE WHEN a.action = 'login'            THEN 1 END) AS login_count,
+        COUNT(CASE WHEN a.action = 'generate_formula' THEN 1 END) AS generate_count,
+        COUNT(CASE WHEN a.action = 'save_formula'     THEN 1 END) AS save_count,
+        COUNT(CASE WHEN a.action = 'copy_formula'     THEN 1 END) AS copy_count,
+        COUNT(CASE WHEN a.action = 'search_ingredient'THEN 1 END) AS search_ingredient_count,
+        MAX(CASE WHEN a.action = 'login' THEN a.created_at END)   AS last_login,
+        (SELECT COUNT(*) FROM user_formulas uf WHERE uf.user_id = u.id)  AS formula_count
+      FROM users u
+      LEFT JOIN user_activity_log a ON a.user_id = u.id
+      GROUP BY u.id, u.name, u.email
+      ORDER BY login_count DESC
+    `)
+
+    // most_used 계산
+    const statsWithMostUsed = userStats.map(u => {
+      const actions = [
+        { label: '로그인',    count: Number(u.login_count) },
+        { label: '처방생성',  count: Number(u.generate_count) },
+        { label: '처방저장',  count: Number(u.save_count) },
+        { label: '카피처방',  count: Number(u.copy_count) },
+        { label: '성분검색',  count: Number(u.search_ingredient_count) },
+      ]
+      const mostUsed = actions.sort((a, b) => b.count - a.count).filter(a => a.count > 0)[0]?.label || '–'
+      return { ...u, most_used: mostUsed, login_count: Number(u.login_count) }
+    })
+
+    // 2. 일별 추이 (최근 30일)
+    const { rows: dailyTrend } = await pool.query(`
+      SELECT
+        TO_CHAR(gs.day, 'YYYY-MM-DD') AS date,
+        COUNT(CASE WHEN a.action = 'login'            THEN 1 END) AS logins,
+        COUNT(CASE WHEN a.action = 'generate_formula' THEN 1 END) AS formulas
+      FROM generate_series(
+        NOW()::date - INTERVAL '29 days',
+        NOW()::date,
+        '1 day'::interval
+      ) AS gs(day)
+      LEFT JOIN user_activity_log a
+        ON DATE_TRUNC('day', a.created_at) = gs.day
+      GROUP BY gs.day
+      ORDER BY gs.day ASC
+    `)
+
+    // 3. 액션 요약
+    const { rows: actionSummary } = await pool.query(`
+      SELECT action, COUNT(*) AS cnt
+      FROM user_activity_log
+      GROUP BY action
+    `)
+    const actionMap = {}
+    for (const r of actionSummary) actionMap[r.action] = Number(r.cnt)
+
+    // 4. 비활성 사용자 (7일 이상 미접속)
+    const { rows: inactiveUsers } = await pool.query(`
+      SELECT name,
+        EXTRACT(DAY FROM NOW() - last_login)::int AS days_since_login
+      FROM users
+      WHERE last_login IS NOT NULL
+        AND last_login < NOW() - INTERVAL '7 days'
+      ORDER BY last_login ASC
+    `)
+
+    // 5. 오늘 접속 / 이번 주 처방 생성
+    const { rows: todayLogins } = await pool.query(`
+      SELECT COUNT(DISTINCT user_id) AS cnt
+      FROM user_activity_log
+      WHERE action = 'login' AND created_at >= NOW()::date
+    `)
+    const { rows: weekFormulas } = await pool.query(`
+      SELECT COUNT(*) AS cnt
+      FROM user_activity_log
+      WHERE action IN ('generate_formula','save_formula')
+        AND created_at >= DATE_TRUNC('week', NOW())
+    `)
+
+    res.json({
+      user_stats: statsWithMostUsed,
+      daily_trend: dailyTrend.map(r => ({ date: r.date, logins: Number(r.logins), formulas: Number(r.formulas) })),
+      action_summary: actionMap,
+      inactive_users: inactiveUsers,
+      today_logins: Number(todayLogins[0]?.cnt || 0),
+      week_formulas: Number(weekFormulas[0]?.cnt || 0),
+    })
+  } catch (err) {
+    console.error('[admin/stats]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 관리자 계정 초기 설정 (서버 .env의 ADMIN_EMAIL로 자동 승격) ───
 async function initAdminAccount() {
   const adminEmail = process.env.ADMIN_EMAIL
@@ -5309,6 +5440,9 @@ function makeUserDataRouter(tableName) {
          ON CONFLICT (id) DO UPDATE SET data = $3, updated_at = NOW()`,
         [id, req.user.id, JSON.stringify({ ...item, id })]
       )
+      if (tableName === 'formulas') {
+        logActivity(req.user.id, req.user.name, 'save_formula', item.title || id, req.headers['x-forwarded-for'] || req.ip)
+      }
       res.json({ ok: true, id })
     } catch (err) { res.status(500).json({ error: err.message }) }
   })
@@ -5672,6 +5806,9 @@ app.get('/api/ingredients/db', async (req, res) => {
     const { page = 1, limit = 50, type, search } = req.query
     const lim = Math.min(parseInt(limit) || 50, 200)
     const off = (Math.max(parseInt(page) || 1, 1) - 1) * lim
+    if (search && req.user?.id) {
+      logActivity(req.user.id, req.user.name, 'search_ingredient', search, req.headers['x-forwarded-for'] || req.ip)
+    }
 
     let where = [
       `im.inci_name NOT LIKE '%#REF%'`,
@@ -6592,6 +6729,11 @@ app.post('/api/formula/generate-idea', async (req, res) => {
     const formula_name = Buffer.from(req.body.formula_name  || '', 'utf8').toString('utf8')
     const requirements = Buffer.from(req.body.requirements  || '', 'utf8').toString('utf8')
     const kw = (formula_name + ' ' + requirements).toLowerCase()
+
+    // 활동 로그
+    if (req.user?.id) {
+      logActivity(req.user.id, req.user.name, 'generate_formula', formula_name || product_type_raw, req.headers['x-forwarded-for'] || req.ip)
+    }
 
     // 1. 키워드 필터 파싱
     const excludeTypes = []
@@ -7755,6 +7897,12 @@ if (existsSync(DIST_DIR)) {
     console.log('[Requests] DB 초기화 완료')
   } catch (err) {
     console.error('[Requests] DB 초기화 실패:', err.message)
+  }
+  try {
+    await initActivityLogDB()
+    console.log('[ActivityLog] DB 초기화 완료')
+  } catch (err) {
+    console.error('[ActivityLog] DB 초기화 실패:', err.message)
   }
   const server = app.listen(PORT, () => {
     console.log(`[MyLab API] Running on http://localhost:${PORT}`)

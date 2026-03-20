@@ -21,6 +21,7 @@
         요청 관리<template v-if="pendingCount > 0"> ({{ pendingCount }})</template>
         <span v-if="pendingCount > 0" class="tab-badge">{{ pendingCount }}</span>
       </button>
+      <button class="tab-btn" :class="{ active: activeTab === 'stats' }" @click="onTabStats">활동 통계</button>
     </div>
 
     <!-- ══════════ 사용자 관리 탭 ══════════ -->
@@ -213,6 +214,91 @@
           </tbody>
         </table>
       </div>
+    </template>
+
+    <!-- ══════════ 활동 통계 탭 ══════════ -->
+    <template v-if="activeTab === 'stats'">
+      <div v-if="statsLoading" class="state-msg">불러오는 중…</div>
+      <template v-else>
+        <!-- 요약 카드 -->
+        <div class="stat-row">
+          <div class="stat-card">
+            <div class="stat-num">{{ stats.today_logins ?? 0 }}</div>
+            <div class="stat-label">오늘 접속</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num">{{ stats.week_formulas ?? 0 }}</div>
+            <div class="stat-label">이번 주 처방 생성</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num">{{ stats.action_summary?.login ?? 0 }}</div>
+            <div class="stat-label">총 로그인</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num">{{ stats.inactive_users?.length ?? 0 }}</div>
+            <div class="stat-label">비활성 사용자</div>
+          </div>
+        </div>
+
+        <!-- 일별 접속/처방 추이 (CSS 바 차트) -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <span class="chart-title">일별 접속 / 처방 생성 추이 (최근 30일)</span>
+            <div class="chart-legend">
+              <span class="legend-dot login-dot"></span><span>접속</span>
+              <span class="legend-dot formula-dot"></span><span>처방</span>
+            </div>
+          </div>
+          <div class="bar-chart">
+            <div
+              v-for="d in stats.daily_trend"
+              :key="d.date"
+              class="bar-col"
+              :title="`${d.date}\n접속: ${d.logins}  처방: ${d.formulas}`"
+            >
+              <div class="bar-stack">
+                <div class="bar-seg formula-bar" :style="{ height: barHeight(d.formulas) }"></div>
+                <div class="bar-seg login-bar"   :style="{ height: barHeight(d.logins) }"></div>
+              </div>
+              <div class="bar-label">{{ d.date.slice(5) }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 사용자별 상세 테이블 -->
+        <div class="table-wrap">
+          <table class="req-table">
+            <thead>
+              <tr>
+                <th>이름</th>
+                <th>이메일</th>
+                <th>로그인</th>
+                <th>처방생성</th>
+                <th>처방저장</th>
+                <th>카피처방</th>
+                <th>성분검색</th>
+                <th>처방 수</th>
+                <th>마지막 접속</th>
+                <th>주 사용 기능</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="u in stats.user_stats" :key="u.id">
+                <td><strong>{{ u.user_name }}</strong></td>
+                <td class="email-cell">{{ u.email }}</td>
+                <td class="num-cell">{{ u.login_count }}</td>
+                <td class="num-cell">{{ u.generate_count }}</td>
+                <td class="num-cell">{{ u.save_count }}</td>
+                <td class="num-cell">{{ u.copy_count }}</td>
+                <td class="num-cell">{{ u.search_ingredient_count }}</td>
+                <td class="num-cell">{{ u.formula_count }}</td>
+                <td class="date-cell">{{ u.last_login ? fmtDate(u.last_login) : '–' }}</td>
+                <td><span class="most-used-badge">{{ u.most_used }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
     </template>
 
     <!-- 비밀번호 초기화 모달 -->
@@ -495,6 +581,33 @@ function statusClass(s) {
   return map[s] || 'st-receipt'
 }
 
+// ── 활동 통계 ──
+const stats = ref({})
+const statsLoading = ref(false)
+
+async function fetchStats() {
+  statsLoading.value = true
+  try {
+    const res = await fetch(`${API}/api/admin/stats`, { headers: getAuthHeader() })
+    if (res.ok) stats.value = await res.json()
+  } catch {}
+  finally { statsLoading.value = false }
+}
+
+function onTabStats() {
+  activeTab.value = 'stats'
+  if (!stats.value.user_stats) fetchStats()
+}
+
+const chartMax = computed(() => {
+  const trend = stats.value.daily_trend || []
+  return Math.max(...trend.map(d => d.logins + d.formulas), 1)
+})
+
+function barHeight(val) {
+  return Math.round((val / chartMax.value) * 80) + 'px'
+}
+
 onMounted(() => {
   fetchUsers()
   fetchPendingCount()
@@ -683,6 +796,50 @@ onMounted(() => {
 .btn-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-delete-confirm { padding: 8px 18px; background: var(--red); color: #fff; border: none; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .btn-delete-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* 바 차트 */
+.chart-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 20px;
+}
+.chart-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.chart-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.chart-legend { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--text-dim); }
+.legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+.login-dot   { background: var(--accent); }
+.formula-dot { background: var(--blue); }
+.bar-chart {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 100px; overflow-x: auto; padding-bottom: 20px;
+  position: relative;
+}
+.bar-col {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 22px; flex: 1; cursor: default;
+}
+.bar-stack {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: flex-end; width: 100%; height: 80px;
+  gap: 1px;
+}
+.bar-seg {
+  width: 100%; min-height: 2px; border-radius: 2px 2px 0 0;
+  transition: height 0.3s ease;
+}
+.login-bar   { background: var(--accent); opacity: 0.85; }
+.formula-bar { background: var(--blue);   opacity: 0.75; }
+.bar-label {
+  font-size: 8px; color: var(--text-dim); margin-top: 3px;
+  white-space: nowrap; transform: rotate(-40deg); transform-origin: center;
+}
+.most-used-badge {
+  display: inline-block; padding: 2px 8px;
+  background: var(--accent-light); color: var(--accent);
+  border-radius: 10px; font-size: 11px; font-weight: 600;
+}
 
 @media (max-width: 900px) {
   .stat-row { grid-template-columns: repeat(2, 1fr); }
