@@ -2898,6 +2898,63 @@ app.get('/api/ingredients/prices', authenticateToken, async (req, res) => {
   }
 })
 
+// ─── 성분 배치 정보 조회 (EWG + 규제 요약) ───────────────────────────────────
+app.post('/api/ingredients/batch-info', async (req, res) => {
+  try {
+    const { inci_names } = req.body
+    if (!Array.isArray(inci_names) || inci_names.length === 0) return res.json({})
+    const lowerNames = inci_names.map(n => String(n || '').toLowerCase()).filter(Boolean)
+    if (!lowerNames.length) return res.json({})
+    const placeholders = lowerNames.map((_, i) => `$${i + 1}`).join(', ')
+
+    const [ewgRes, regRes] = await Promise.all([
+      pool.query(
+        `SELECT inci_name, ewg_score FROM ingredient_master WHERE LOWER(inci_name) IN (${placeholders})`,
+        lowerNames
+      ),
+      pool.query(
+        `SELECT inci_name, source, max_concentration FROM regulation_cache
+         WHERE LOWER(inci_name) IN (${placeholders}) AND max_concentration IS NOT NULL
+           AND source NOT IN ('coching_legacy','gemini_kb','gem2_kb')`,
+        lowerNames
+      ),
+    ])
+
+    const result = {}
+    for (const orig of inci_names) {
+      if (!orig) continue
+      const lower = orig.toLowerCase()
+      const ewgRow = ewgRes.rows.find(r => r.inci_name.toLowerCase() === lower)
+      result[orig] = { ewg: ewgRow?.ewg_score ?? null, reg_kr: null, reg_eu: null }
+    }
+
+    for (const row of regRes.rows) {
+      const lower = row.inci_name.toLowerCase()
+      const origKey = inci_names.find(n => n && n.toLowerCase() === lower)
+      if (!origKey) continue
+      const maxNum = parseFloat(row.max_concentration)
+      if (isNaN(maxNum)) continue
+      if (row.source === 'GEMINI_KR' || row.source === 'MFDS_SEED') {
+        if (result[origKey].reg_kr === null || maxNum < result[origKey].reg_kr) result[origKey].reg_kr = maxNum
+      } else if (row.source === 'GEMINI_EU') {
+        if (result[origKey].reg_eu === null || maxNum < result[origKey].reg_eu) result[origKey].reg_eu = maxNum
+      }
+    }
+
+    for (const key of Object.keys(result)) {
+      const { reg_kr, reg_eu } = result[key]
+      const parts = []
+      if (reg_kr !== null) parts.push(`KR ${reg_kr}%`)
+      if (reg_eu !== null) parts.push(`EU ${reg_eu}%`)
+      result[key].reg_summary = parts.join(' | ')
+    }
+
+    res.json(result)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── 사용자 단가 삭제 ─────────────────────────────────────────────────────────
 app.delete('/api/ingredients/price/:inci_name', authenticateToken, async (req, res) => {
   try {

@@ -14,6 +14,8 @@
           <th>INCI</th>
           <th style="width:80px">%(wt)</th>
           <th>기능</th>
+          <th style="width:44px">EWG</th>
+          <th style="width:120px">규제</th>
           <th v-if="editable" style="width:40px"></th>
         </tr>
       </thead>
@@ -102,12 +104,28 @@
             <input v-if="editable" v-model="ing.function" class="cell-input" placeholder="기능">
             <span v-else>{{ ing.function }}</span>
           </td>
+          <td class="cell-ewg">
+            <span v-if="batchInfo[ing.inci_name]?.ewg != null"
+              class="ewg-badge"
+              :class="ewgBadgeClass(batchInfo[ing.inci_name].ewg)">
+              {{ batchInfo[ing.inci_name].ewg }}
+            </span>
+            <span v-else class="cell-dash">—</span>
+          </td>
+          <td class="cell-reg" @click="ing.inci_name && $emit('show-ingredient-detail', ing.inci_name)">
+            <template v-if="batchInfo[ing.inci_name]?.reg_summary">
+              <span :class="isRegViolation(ing) ? 'reg-violation' : 'reg-ok'">
+                <span v-if="isRegViolation(ing)">⚠️ </span>{{ batchInfo[ing.inci_name].reg_summary }}
+              </span>
+            </template>
+            <span v-else class="cell-dash">—</span>
+          </td>
           <td v-if="editable">
             <button class="btn-del" @click="removeRow(idx)">×</button>
           </td>
         </tr>
         <tr v-if="ingredients.length === 0">
-          <td :colspan="editable ? 7 : 6" class="empty-row">원료를 추가해주세요</td>
+          <td :colspan="editable ? 9 : 8" class="empty-row">원료를 추가해주세요</td>
         </tr>
       </tbody>
       <tfoot v-if="ingredients.length">
@@ -119,7 +137,7 @@
           </td>
           <td colspan="2" style="font-size:11px; color:var(--text-sub)">Phase {{ ps.phase }} 소계</td>
           <td class="cell-pct" style="font-size:11px; font-weight:600">{{ ps.total.toFixed(1) }}</td>
-          <td :colspan="editable ? 2 : 1"></td>
+          <td :colspan="editable ? 4 : 3"></td>
         </tr>
         <!-- 합계 -->
         <tr class="total-row">
@@ -129,7 +147,7 @@
           <td class="cell-pct total-pct" :class="{ over: totalPct > 100.5, under: totalPct < 99.5 }">
             {{ totalPct.toFixed(1) }}
           </td>
-          <td :colspan="editable ? 2 : 1"></td>
+          <td :colspan="editable ? 4 : 3"></td>
         </tr>
       </tfoot>
     </table>
@@ -208,7 +226,7 @@ const props = defineProps({
   ingredients: { type: Array, default: () => [] },
   editable: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:ingredients'])
+const emit = defineEmits(['update:ingredients', 'show-ingredient-detail'])
 
 const PHASES = ['A', 'B', 'C', 'D']
 
@@ -275,6 +293,44 @@ function ewgClass(score) {
   if (score <= 2) return 'ewg-low'
   if (score <= 6) return 'ewg-mid'
   return 'ewg-high'
+}
+
+function ewgBadgeClass(score) {
+  if (score <= 2) return 'ewg-badge-low'
+  if (score <= 6) return 'ewg-badge-mid'
+  return 'ewg-badge-high'
+}
+
+// ─── EWG + 규제 배치 조회 ───
+const batchInfo = ref({}) // { [inci_name]: { ewg, reg_kr, reg_eu, reg_summary } }
+let batchTimer = null
+
+function isRegViolation(ing) {
+  const info = batchInfo.value[ing.inci_name]
+  if (!info) return false
+  const pct = Number(ing.percentage) || 0
+  if (info.reg_kr !== null && pct > info.reg_kr) return true
+  if (info.reg_eu !== null && pct > info.reg_eu) return true
+  return false
+}
+
+watch(() => props.ingredients.map(i => i.inci_name).join('|'), () => {
+  clearTimeout(batchTimer)
+  batchTimer = setTimeout(fetchBatchInfo, 600)
+}, { immediate: true })
+
+async function fetchBatchInfo() {
+  const names = props.ingredients.map(i => i.inci_name).filter(n => n && n.length > 1)
+  if (names.length === 0) { batchInfo.value = {}; return }
+  try {
+    const data = await api.fetchJSON('/api/ingredients/batch-info', {
+      method: 'POST',
+      body: JSON.stringify({ inci_names: names }),
+    })
+    batchInfo.value = data || {}
+  } catch {
+    // silent fail
+  }
 }
 
 // ─── 실시간 호환성 + 규제 검사 ───
@@ -576,6 +632,36 @@ function onPhaseChange() {
 .ewg-low { background: rgba(58,144,104,0.12); color: var(--green, #3a9068); }
 .ewg-mid { background: rgba(184,147,90,0.12); color: var(--amber, #b8935a); }
 .ewg-high { background: rgba(196,78,78,0.12); color: var(--red, #c44e4e); }
+
+/* EWG 뱃지 */
+.cell-ewg { text-align: center; }
+.ewg-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 500;
+}
+.ewg-badge-low  { background: #E8F5E9; color: #2E7D32; }
+.ewg-badge-mid  { background: #FFF3E0; color: #E65100; }
+.ewg-badge-high { background: #FFEBEE; color: #C62828; }
+
+/* 규제 컬럼 */
+.cell-reg {
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+.cell-reg:hover { text-decoration: underline; }
+.reg-ok { color: #999; }
+.reg-violation { color: #F44336; font-weight: 500; }
+.cell-dash { color: var(--text-dim); font-size: 11px; }
 
 /* 실시간 경고 패널 */
 .alert-panel {

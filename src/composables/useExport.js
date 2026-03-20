@@ -1,130 +1,46 @@
+import * as XLSX from 'xlsx'
+
 /**
  * useExport — 처방 내보내기 (Excel / PDF 인쇄)
  */
 export function useExport() {
   /**
-   * Excel 내보내기 (xlsx 형식, 한글 지원)
-   * XML Spreadsheet 2003 형식 사용 — 외부 라이브러리 불필요
-   * @param {Object} formula - formulaStore의 formula 객체
+   * Excel 내보내기 (.xlsx, SheetJS)
+   * @param {Object} formula - formula 객체 (title, product_type, status, memo, formula_data)
    */
   function exportFormulaExcel(formula) {
     const ingredients = formula.formula_data?.ingredients || []
     const total = ingredients.reduce((s, i) => s + (Number(i.percentage) || 0), 0)
 
-    // XML Spreadsheet 2003 형식으로 생성
-    const rows = ingredients.map((ing, idx) => `
-      <Row>
-        <Cell><Data ss:Type="Number">${idx + 1}</Data></Cell>
-        <Cell><Data ss:Type="String">${escXml(ing.inci || ing.name || '')}</Data></Cell>
-        <Cell><Data ss:Type="String">${escXml(ing.name || '')}</Data></Cell>
-        <Cell><Data ss:Type="String">${escXml(ing.phase || '')}</Data></Cell>
-        <Cell><Data ss:Type="String">${escXml(ing.function || '')}</Data></Cell>
-        <Cell ss:StyleID="Num"><Data ss:Type="Number">${ing.percentage != null ? ing.percentage : ''}</Data></Cell>
-        <Cell><Data ss:Type="String">${escXml(ing.note || '')}</Data></Cell>
-      </Row>`).join('')
+    // 헤더 행
+    const header = ['#', 'Phase', '원료명 (한글)', 'INCI Name', 'wt%', '기능']
+    const rows = ingredients.map((ing, idx) => [
+      idx + 1,
+      ing.phase || '',
+      ing.name || '',
+      ing.inci_name || '',
+      ing.percentage != null ? Number(ing.percentage) : '',
+      ing.function || '',
+    ])
+    // 합계 행
+    rows.push(['', '', '', '합계', Math.round(total * 100) / 100, ''])
+    // 빈 행 + 메타
+    rows.push([])
+    rows.push(['처방명', formula.title || ''])
+    rows.push(['제품 유형', formula.product_type || ''])
+    rows.push(['상태', labelStatus(formula.status)])
+    rows.push(['메모', formula.memo || ''])
+    if (formula.created_at) rows.push(['작성일', formatDateShort(formula.created_at)])
 
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
-  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-  <Styles>
-    <Style ss:ID="Default" ss:Name="Normal">
-      <Font ss:FontName="맑은 고딕" ss:Size="10"/>
-    </Style>
-    <Style ss:ID="Header">
-      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/>
-      <Interior ss:Color="#B8935A" ss:Pattern="Solid"/>
-      <Alignment ss:Horizontal="Center"/>
-    </Style>
-    <Style ss:ID="Num">
-      <NumberFormat ss:Format="0.00"/>
-      <Alignment ss:Horizontal="Right"/>
-    </Style>
-    <Style ss:ID="Total">
-      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1"/>
-      <Interior ss:Color="#F0E8D8" ss:Pattern="Solid"/>
-      <Borders>
-        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#B8935A"/>
-      </Borders>
-    </Style>
-    <Style ss:ID="TotalNum">
-      <Font ss:FontName="맑은 고딕" ss:Size="10" ss:Bold="1" ss:Color="#B8935A"/>
-      <Interior ss:Color="#F0E8D8" ss:Pattern="Solid"/>
-      <NumberFormat ss:Format="0.00"/>
-      <Alignment ss:Horizontal="Right"/>
-      <Borders>
-        <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#B8935A"/>
-      </Borders>
-    </Style>
-    <Style ss:ID="Info">
-      <Font ss:FontName="맑은 고딕" ss:Size="9" ss:Color="#6B6560"/>
-    </Style>
-    <Style ss:ID="InfoBold">
-      <Font ss:FontName="맑은 고딕" ss:Size="9" ss:Bold="1"/>
-    </Style>
-  </Styles>
-  <Worksheet ss:Name="처방서">
-    <Table ss:DefaultColumnWidth="80">
-      <Column ss:Width="35"/>
-      <Column ss:Width="200"/>
-      <Column ss:Width="140"/>
-      <Column ss:Width="50"/>
-      <Column ss:Width="150"/>
-      <Column ss:Width="60"/>
-      <Column ss:Width="100"/>
-      <Row ss:StyleID="Header">
-        <Cell><Data ss:Type="String">#</Data></Cell>
-        <Cell><Data ss:Type="String">INCI Name</Data></Cell>
-        <Cell><Data ss:Type="String">한글명</Data></Cell>
-        <Cell><Data ss:Type="String">Phase</Data></Cell>
-        <Cell><Data ss:Type="String">기능</Data></Cell>
-        <Cell><Data ss:Type="String">wt%</Data></Cell>
-        <Cell><Data ss:Type="String">비고</Data></Cell>
-      </Row>
-      ${rows}
-      <Row>
-        <Cell ss:StyleID="Total" ss:MergeAcross="4"><Data ss:Type="String">합계</Data></Cell>
-        <Cell ss:StyleID="TotalNum"><Data ss:Type="Number">${Math.round(total * 100) / 100}</Data></Cell>
-        <Cell ss:StyleID="Total"><Data ss:Type="String"></Data></Cell>
-      </Row>
-      <Row></Row>
-      <Row>
-        <Cell ss:StyleID="InfoBold"><Data ss:Type="String">처방명</Data></Cell>
-        <Cell ss:StyleID="Info" ss:MergeAcross="2"><Data ss:Type="String">${escXml(formula.title || '')}</Data></Cell>
-      </Row>
-      <Row>
-        <Cell ss:StyleID="InfoBold"><Data ss:Type="String">제품 유형</Data></Cell>
-        <Cell ss:StyleID="Info" ss:MergeAcross="2"><Data ss:Type="String">${escXml(formula.product_type || '')}</Data></Cell>
-      </Row>
-      <Row>
-        <Cell ss:StyleID="InfoBold"><Data ss:Type="String">상태</Data></Cell>
-        <Cell ss:StyleID="Info" ss:MergeAcross="2"><Data ss:Type="String">${escXml(labelStatus(formula.status))}</Data></Cell>
-      </Row>
-      <Row>
-        <Cell ss:StyleID="InfoBold"><Data ss:Type="String">메모</Data></Cell>
-        <Cell ss:StyleID="Info" ss:MergeAcross="4"><Data ss:Type="String">${escXml(formula.memo || '')}</Data></Cell>
-      </Row>
-      <Row>
-        <Cell ss:StyleID="InfoBold"><Data ss:Type="String">작성일</Data></Cell>
-        <Cell ss:StyleID="Info"><Data ss:Type="String">${formula.created_at ? formatDateShort(formula.created_at) : ''}</Data></Cell>
-      </Row>
-      <Row>
-        <Cell ss:StyleID="InfoBold"><Data ss:Type="String">수정일</Data></Cell>
-        <Cell ss:StyleID="Info"><Data ss:Type="String">${formula.updated_at ? formatDateShort(formula.updated_at) : ''}</Data></Cell>
-      </Row>
-    </Table>
-  </Worksheet>
-</Workbook>`
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows])
+    // 컬럼 너비
+    ws['!cols'] = [{ wch: 4 }, { wch: 6 }, { wch: 22 }, { wch: 30 }, { wch: 8 }, { wch: 20 }]
 
-    const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${sanitizeFilename(formula.title || 'formula')}_${dateSuffix()}.xls`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    setTimeout(() => URL.revokeObjectURL(url), 5000)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '처방서')
+
+    const filename = `${sanitizeFilename(formula.title || '처방')}_배합표_${dateSuffix()}.xlsx`
+    XLSX.writeFile(wb, filename)
   }
 
   /**

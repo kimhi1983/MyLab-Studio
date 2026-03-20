@@ -200,8 +200,12 @@
     <!-- Ingredient Table -->
     <div style="margin-top: 4px">
       <IngredientTable :ingredients="form.formula_data.ingredients" :editable="true"
-        @update:ingredients="onIngredientsUpdate" />
+        @update:ingredients="onIngredientsUpdate"
+        @show-ingredient-detail="onShowIngDetail" />
     </div>
+
+    <!-- 예상 원가 -->
+    <CostAnalysisCard v-if="form.formula_data.ingredients.length >= 1" :ingredients="form.formula_data.ingredients" style="margin-top: 16px" />
 
     <!-- pH 예측 + 방부제 효력 -->
     <div v-if="form.formula_data.ingredients.length >= 2" class="panel" style="margin-top: 16px">
@@ -232,38 +236,6 @@
             <div class="preserv-info">
               <span class="preserv-name">{{ p.name }} (유효 pH {{ p.phRange }})</span>
               <span class="preserv-msg">{{ p.message }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 유사 제품 검색 -->
-    <div v-if="form.formula_data.ingredients.length >= 2" class="panel" style="margin-top: 16px">
-      <div class="panel-header">
-        <span class="section-label">SIMILAR PRODUCTS</span>
-        <span class="section-title">유사 제품 검색</span>
-        <button class="btn-search-similar" @click="onSearchSimilar" :disabled="isSearchingSimilar">
-          {{ isSearchingSimilar ? '검색 중...' : '유사 제품 찾기' }}
-        </button>
-      </div>
-      <div class="similar-body">
-        <div v-if="!similarProducts.length && !isSearchingSimilar" class="similar-empty">
-          현재 처방의 INCI 성분을 기준으로 DB에서 유사 제품을 검색합니다.
-        </div>
-        <div v-if="similarProducts.length" class="similar-list">
-          <div v-for="(prod, idx) in similarProducts" :key="prod.id || idx" class="similar-item">
-            <div class="similar-rank">{{ idx + 1 }}</div>
-            <div class="similar-info">
-              <span class="similar-name">{{ prod.product_name || prod.name }}</span>
-              <span class="similar-brand" v-if="prod.brand">{{ prod.brand }}</span>
-              <span class="similar-category" v-if="prod.category">{{ prod.category }}</span>
-            </div>
-            <div class="similar-match">
-              <span class="similar-match-count">{{ prod.matchCount || prod.match_count || 0 }}개 일치</span>
-              <span class="similar-match-bar">
-                <span class="similar-match-fill" :style="{ width: similarMatchPct(prod) + '%' }"></span>
-              </span>
             </div>
           </div>
         </div>
@@ -603,12 +575,37 @@
     <!-- Actions -->
     <div class="form-actions">
       <router-link to="/formulas" class="btn btn-ghost">취소</router-link>
-      <button class="btn btn-primary" @click="onSave">{{ isNew ? '초안으로 저장' : '저장' }}</button>
+      <button class="btn btn-primary"
+        :class="{ 'btn-save-done': saveState === 'done', 'btn-save-error': saveState === 'error' }"
+        :disabled="saveState === 'saving'"
+        @click="onSave">
+        {{ saveState === 'done' ? '저장 완료 ✓' : saveState === 'error' ? '저장 실패' : isNew ? '초안으로 저장' : '저장' }}
+      </button>
     </div>
 
     </template>
     <!-- /기존 새 처방/편집 UI -->
   </div>
+
+  <!-- 성분 상세 팝업 (규제 클릭 시) -->
+  <Teleport to="body">
+    <div v-if="ingDetailInci" class="ing-detail-overlay" @click.self="ingDetailInci = ''">
+      <div class="ing-detail-modal">
+        <div class="ing-detail-header">
+          <span class="ing-detail-title">{{ ingDetailInci }}</span>
+          <button class="ing-detail-close" @click="ingDetailInci = ''">×</button>
+        </div>
+        <div class="ing-detail-body" v-if="ingDetailInfo">
+          <div class="ing-detail-row" v-if="ingDetailInfo.korean_name"><span class="ing-d-label">한글명</span><span>{{ ingDetailInfo.korean_name }}</span></div>
+          <div class="ing-detail-row" v-if="ingDetailInfo.ewg_score != null"><span class="ing-d-label">EWG</span><span>{{ ingDetailInfo.ewg_score }}</span></div>
+          <div class="ing-detail-row" v-if="ingDetailInfo.ingredient_type"><span class="ing-d-label">유형</span><span>{{ ingDetailInfo.ingredient_type }}</span></div>
+          <div class="ing-detail-row" v-if="ingDetailInfo.max_concentration"><span class="ing-d-label">최대농도</span><span>{{ ingDetailInfo.max_concentration }}</span></div>
+          <div class="ing-detail-row" v-if="ingDetailInfo.description"><span class="ing-d-label">설명</span><span class="ing-d-desc">{{ ingDetailInfo.description }}</span></div>
+        </div>
+        <div class="ing-detail-body" v-else><span style="color:#999;font-size:13px">상세 정보를 불러오는 중...</span></div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- ─── 비커 로딩 오버레이 ─── -->
   <Teleport to="body">
@@ -873,21 +870,38 @@ function addTag() {
   }
 }
 
+const saveState = ref('idle') // 'idle' | 'saving' | 'done' | 'error'
+
 function onSave() {
   if (!form.title.trim()) {
     alert('처방명을 입력하세요')
     return
   }
   form.formula_data.total_percentage = form.formula_data.ingredients.reduce((s, i) => s + (Number(i.percentage) || 0), 0)
-
-  if (isNew.value) {
-    const created = addFormula({ ...form })
-    router.push('/formulas/' + created.id)
-  } else {
-    const updated = updateFormula(route.params.id, { ...form })
-    if (updated) formula.value = updated
-    router.push('/formulas')
+  saveState.value = 'saving'
+  try {
+    if (isNew.value) {
+      const created = addFormula({ ...form })
+      router.push('/formulas/' + created.id)
+    } else {
+      const updated = updateFormula(route.params.id, { ...form })
+      if (updated) formula.value = updated
+      saveState.value = 'done'
+      setTimeout(() => { saveState.value = 'idle' }, 2000)
+    }
+  } catch {
+    saveState.value = 'error'
+    setTimeout(() => { saveState.value = 'idle' }, 2000)
   }
+}
+
+// 성분 상세 모달 (규제 클릭)
+const ingDetailInci = ref('')
+const ingDetailInfo = ref(null)
+async function onShowIngDetail(inciName) {
+  ingDetailInci.value = inciName
+  const res = await api.fetchJSON(`/api/ingredients/db?q=${encodeURIComponent(inciName)}&limit=1`)
+  ingDetailInfo.value = res?.items?.[0] || null
 }
 
 function onDelete() {
@@ -927,13 +941,11 @@ function formatDate(iso) {
 }
 
 function onExportExcel() {
-  if (!formula.value?.id) return
-  exportFormulaExcel(formula.value)
+  exportFormulaExcel({ ...form, id: formula.value?.id || route.params.id })
 }
 
 function onExportPdf() {
-  if (!formula.value?.id) return
-  exportFormulaPdf(formula.value)
+  window.print()
 }
 
 function getProcessByType(productType) {
@@ -1217,39 +1229,6 @@ const phRangeStyle = computed(() => {
   const width = ((max - min) / 14) * 100
   return { left: left + '%', width: Math.max(width, 2) + '%' }
 })
-
-// ───────────────────────────────────────────────
-// 유사 제품 검색
-// ───────────────────────────────────────────────
-const isSearchingSimilar = ref(false)
-const similarProducts = ref([])
-
-async function onSearchSimilar() {
-  const ings = form.formula_data.ingredients
-  if (ings.length < 2) return
-  isSearchingSimilar.value = true
-  try {
-    const inciNames = ings.map(i => i.inci_name || i.name).filter(Boolean)
-    const res = await api.searchSimilarProducts(inciNames, 10)
-    if (res?.success && res.data) {
-      similarProducts.value = res.data
-    } else {
-      similarProducts.value = []
-    }
-  } catch (e) {
-    console.error('[SimilarProducts]', e)
-    similarProducts.value = []
-  } finally {
-    isSearchingSimilar.value = false
-  }
-}
-
-function similarMatchPct(prod) {
-  const totalIngs = form.formula_data.ingredients.length
-  if (!totalIngs) return 0
-  const matchCount = prod.matchCount || prod.match_count || 0
-  return Math.min((matchCount / totalIngs) * 100, 100)
-}
 
 // ───────────────────────────────────────────────
 // 배치 스케일러
@@ -2336,52 +2315,6 @@ async function onAiFill() {
 .preserv-name { font-weight: 600; color: var(--text); display: block; }
 .preserv-msg  { color: var(--text-sub); font-size: 11px; }
 
-/* ── 유사 제품 검색 ── */
-.btn-search-similar {
-  margin-left: auto;
-  padding: 4px 12px;
-  border: 1px solid var(--border-mid, var(--border));
-  border-radius: 4px;
-  background: transparent;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.btn-search-similar:hover { background: var(--bg); }
-.btn-search-similar:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.similar-body { padding: 16px 20px; }
-.similar-empty { color: var(--text-dim); font-size: 12px; }
-.similar-list { display: flex; flex-direction: column; gap: 8px; }
-.similar-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: var(--bg);
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
-.similar-rank {
-  width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--surface);
-  font-size: 11px; font-weight: 700;
-  flex-shrink: 0;
-}
-.similar-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.similar-name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.similar-brand { font-size: 11px; color: var(--text-sub); }
-.similar-category { font-size: 10px; color: var(--text-dim); }
-.similar-match { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; min-width: 80px; }
-.similar-match-count { font-size: 11px; font-weight: 600; color: var(--accent); font-family: var(--font-mono); }
-.similar-match-bar { width: 60px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.similar-match-fill { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
-
 /* ── 배치 스케일러 ── */
 .batch-body { padding: 16px 20px; }
 .batch-inputs { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
@@ -2646,4 +2579,41 @@ async function onAiFill() {
 .spec-ing-name { flex: 1; color: var(--text); }
 .spec-ing-pct { font-family: var(--font-mono); font-weight: 600; color: var(--text-sub); min-width: 44px; text-align: right; }
 .spec-ing-new { font-size: 9px; font-weight: 700; color: var(--green); background: rgba(58,144,104,0.12); padding: 1px 5px; border-radius: 3px; }
+
+/* 저장 버튼 피드백 */
+.btn-save-done { background: #4CAF50 !important; border-color: #4CAF50 !important; }
+.btn-save-error { background: #F44336 !important; border-color: #F44336 !important; }
+
+/* 성분 상세 팝업 */
+.ing-detail-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 9500;
+  display: flex; align-items: center; justify-content: center;
+}
+.ing-detail-modal {
+  background: var(--surface, #fff); border-radius: 12px;
+  width: 420px; max-width: 92vw;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.ing-detail-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 12px; border-bottom: 1px solid #E8E0D4;
+}
+.ing-detail-title { font-size: 14px; font-weight: 700; color: var(--text, #222); }
+.ing-detail-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #999; }
+.ing-detail-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+.ing-detail-row { display: flex; gap: 12px; font-size: 13px; }
+.ing-d-label { min-width: 60px; font-weight: 600; color: #888; flex-shrink: 0; }
+.ing-d-desc { color: #555; line-height: 1.5; white-space: pre-wrap; }
+
+/* @media print */
+@media print {
+  .app-sidebar, .app-header, .page-top, .title-actions,
+  .btn, .form-actions, .create-tab-header, .panel-header button,
+  .btn-batch-calc, .btn-save-version, .btn-export, .btn-danger,
+  .ing-detail-overlay, .beaker-overlay { display: none !important; }
+
+  .formula-edit-page { padding: 0 !important; }
+  .panel { page-break-inside: avoid; }
+  .ingredient-table-wrap { page-break-inside: avoid; }
+}
 </style>
