@@ -7,10 +7,10 @@
           <path d="M 44 57 L 44 207 Q 44 214 51 214 L 149 214 Q 156 214 156 207 L 156 57 Z" />
         </clipPath>
 
-        <!-- 물 그라디언트 (골드/베이지 계열) -->
+        <!-- 물 그라디언트 (푸른색 계열) -->
         <linearGradient id="water-gradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#e8d07a" stop-opacity="0.92" />
-          <stop offset="100%" stop-color="#b8920a" stop-opacity="0.78" />
+          <stop offset="0%" stop-color="#A8D8EA" stop-opacity="0.92" />
+          <stop offset="100%" stop-color="#4A90D9" stop-opacity="0.85" />
         </linearGradient>
 
         <!-- 물 반짝임 오버레이 -->
@@ -208,7 +208,7 @@ const stepLabel = computed(() => LABELS[props.step - 1] ?? '')
   font-size: 26px;
   font-weight: 800;
   font-family: var(--font-mono, 'Courier New', monospace);
-  fill: #7a5810;
+  fill: #1a4f7a;
   paint-order: stroke;
   stroke: rgba(255, 255, 255, 0.6);
   stroke-width: 4px;
@@ -218,7 +218,7 @@ const stepLabel = computed(() => LABELS[props.step - 1] ?? '')
 .step-label {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-sub, #8a7050);
+  color: var(--text-sub, #4a7a9b);
   letter-spacing: 0.2px;
   min-height: 18px;
   transition: opacity 0.4s;
