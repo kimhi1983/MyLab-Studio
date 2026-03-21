@@ -32,13 +32,38 @@
           </div>
         </div>
 
-        <!-- 초기 상태 안내 -->
-        <div v-if="!searchQuery && !selectedProduct" class="search-hint">
-          브랜드명 또는 제품명을 입력하세요
-        </div>
+        <!-- 초기 상태: 인기 제품 6개 -->
+        <template v-if="!searchQuery && !selectedProduct">
+          <div class="search-hint-row">
+            <span class="search-hint-text">브랜드명 또는 제품명을 입력하세요</span>
+          </div>
+          <div v-if="popularProducts.length > 0" class="popular-label">인기 제품</div>
+          <div v-if="popularProducts.length > 0" class="search-results-grid">
+            <div
+              v-for="prod in popularProducts"
+              :key="prod.id"
+              class="result-card"
+              @click="onSelectProduct(prod)"
+            >
+              <div class="rc-img-wrap">
+                <img v-if="prod.image_url" :src="prod.image_url" :alt="prod.product_name" class="rc-img" @error="$event.target.style.display='none'">
+                <div v-else class="rc-img-placeholder"><span>{{ categoryEmoji(prod.category) }}</span></div>
+              </div>
+              <div class="rc-body">
+                <div class="rc-brand">{{ prod.brand_name }}</div>
+                <div class="rc-name">{{ prod.product_name }}</div>
+                <div class="rc-meta">
+                  <span v-if="prod.category" class="rc-tag-cat">{{ prod.category }}</span>
+                  <span v-if="prod.country_of_origin" class="rc-tag-country">{{ prod.country_of_origin }}</span>
+                </div>
+                <div v-if="prod.ingredient_count > 0" class="rc-count">전성분 {{ prod.ingredient_count }}개</div>
+              </div>
+            </div>
+          </div>
+        </template>
 
         <!-- 검색 로딩 -->
-        <div v-if="isSearching" class="search-loading">
+        <div v-if="isSearching && searchResults.length === 0" class="search-loading">
           <span class="spinner-sm"></span>
           <span>검색 중...</span>
         </div>
@@ -49,36 +74,40 @@
         </div>
 
         <!-- 검색 결과 카드 그리드 -->
-        <div v-else-if="searchResults.length > 0 && !selectedProduct" class="search-results-grid">
-          <div
-            v-for="prod in searchResults"
-            :key="prod.id"
-            class="result-card"
-            @click="onSelectProduct(prod)"
-          >
-            <div class="rc-img-wrap">
-              <img
-                v-if="prod.image_url"
-                :src="prod.image_url"
-                :alt="prod.product_name"
-                class="rc-img"
-                @error="$event.target.style.display='none'"
-              >
-              <div v-else class="rc-img-placeholder">
-                <span>{{ categoryEmoji(prod.category) }}</span>
+        <template v-if="searchResults.length > 0 && !selectedProduct">
+          <div class="result-meta-row">
+            <span class="result-count">총 {{ searchTotal }}개 제품</span>
+          </div>
+          <div class="search-results-grid">
+            <div
+              v-for="prod in searchResults"
+              :key="prod.id"
+              class="result-card"
+              @click="onSelectProduct(prod)"
+            >
+              <div class="rc-img-wrap">
+                <img v-if="prod.image_url" :src="prod.image_url" :alt="prod.product_name" class="rc-img" @error="$event.target.style.display='none'">
+                <div v-else class="rc-img-placeholder"><span>{{ categoryEmoji(prod.category) }}</span></div>
               </div>
-            </div>
-            <div class="rc-body">
-              <div class="rc-brand">{{ prod.brand_name }}</div>
-              <div class="rc-name">{{ prod.product_name }}</div>
-              <div class="rc-meta">
-                <span v-if="prod.category" class="rc-tag-cat">{{ prod.category }}</span>
-                <span v-if="prod.country_of_origin" class="rc-tag-country">{{ prod.country_of_origin }}</span>
+              <div class="rc-body">
+                <div class="rc-brand">{{ prod.brand_name }}</div>
+                <div class="rc-name">{{ prod.product_name }}</div>
+                <div class="rc-meta">
+                  <span v-if="prod.category" class="rc-tag-cat">{{ prod.category }}</span>
+                  <span v-if="prod.country_of_origin" class="rc-tag-country">{{ prod.country_of_origin }}</span>
+                </div>
+                <div v-if="prod.ingredient_count > 0" class="rc-count">전성분 {{ prod.ingredient_count }}개</div>
               </div>
-              <div v-if="prod.ingredient_count > 0" class="rc-count">전성분 {{ prod.ingredient_count }}개</div>
             </div>
           </div>
-        </div>
+          <!-- 더 보기 -->
+          <div v-if="searchResults.length < searchTotal" class="load-more-wrap">
+            <button class="btn-load-more" :disabled="isSearching" @click="loadMore">
+              <span v-if="isSearching" class="spinner-sm"></span>
+              <span>더 보기 ({{ searchTotal - searchResults.length }}개 더)</span>
+            </button>
+          </div>
+        </template>
 
         <!-- 선택된 제품 카드 -->
         <transition name="card-fade">
@@ -381,9 +410,14 @@ const api = useAPI()
 const searchInputRef = ref(null)
 const searchQuery = ref('')
 const searchResults = ref([])
+const searchTotal = ref(0)
+const searchPage = ref(1)
 const isSearching = ref(false)
 const searchFocused = ref(false)
 let searchTimer = null
+
+// ── 인기 제품 ──
+const popularProducts = ref([])
 
 // ── 선택 ──
 const selectedProduct = ref(null)
@@ -449,11 +483,32 @@ function onSearchInput() {
 async function doSearch() {
   if (searchQuery.value.length < 2) return
   isSearching.value = true
+  searchPage.value = 1
   try {
-    const res = await api.fetchJSON(`/api/products/list?search=${encodeURIComponent(searchQuery.value)}&limit=12`)
+    const res = await api.fetchJSON(`/api/products/list?search=${encodeURIComponent(searchQuery.value)}&limit=12&page=1`)
     searchResults.value = res?.items || []
-  } catch { searchResults.value = [] }
+    searchTotal.value = res?.total || 0
+  } catch { searchResults.value = []; searchTotal.value = 0 }
   finally { isSearching.value = false }
+}
+
+async function loadMore() {
+  if (isSearching.value) return
+  isSearching.value = true
+  searchPage.value++
+  try {
+    const res = await api.fetchJSON(`/api/products/list?search=${encodeURIComponent(searchQuery.value)}&limit=12&page=${searchPage.value}`)
+    searchResults.value = [...searchResults.value, ...(res?.items || [])]
+    searchTotal.value = res?.total || searchTotal.value
+  } catch {}
+  finally { isSearching.value = false }
+}
+
+async function fetchPopularProducts() {
+  try {
+    const res = await api.fetchJSON(`/api/products/list?limit=6&sort=latest`)
+    popularProducts.value = res?.items || []
+  } catch {}
 }
 
 async function onSelectProduct(prod) {
@@ -478,6 +533,8 @@ function clearProduct() {
   selectedProduct.value = null
   searchQuery.value = ''
   searchResults.value = []
+  searchTotal.value = 0
+  searchPage.value = 1
   generateResult.value = null
   generateError.value = ''
   ingredientsExpanded.value = false
@@ -488,7 +545,10 @@ function clearProduct() {
 // ?productId=xxx 쿼리로 진입 시 자동 선택
 onMounted(async () => {
   const pid = route.query.productId
-  if (!pid) return
+  if (!pid) {
+    fetchPopularProducts()
+    return
+  }
   loadingProduct.value = true
   try {
     const detail = await api.fetchJSON(`/api/products/${pid}/detail`)
@@ -728,12 +788,62 @@ function scoreClass(score) {
 .search-clear:hover { color: var(--text); background: var(--bg); }
 
 /* ─── Search States ─── */
-.search-hint {
+.search-hint-row {
+  display: flex;
+  align-items: center;
+  padding: 16px 0 8px;
+}
+.search-hint-text {
   font-size: 13px;
   color: var(--text-dim);
-  text-align: center;
-  padding: 28px 0 12px;
 }
+
+.popular-label {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+
+.result-meta-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.result-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.load-more-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+.btn-load-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 24px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-sub);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.btn-load-more:hover:not(:disabled) {
+  border-color: #C8A96E;
+  color: #C8A96E;
+  background: var(--accent-light);
+}
+.btn-load-more:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .search-loading {
   display: flex;
