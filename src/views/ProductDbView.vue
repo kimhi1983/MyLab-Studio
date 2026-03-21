@@ -207,7 +207,7 @@
         <div class="modal-footer">
           <button class="btn-close-modal" @click="detail = null">닫기</button>
           <button class="btn-copy-formula" @click="goCopyFormula(detailProductId)">
-            이 제품으로 카피 처방 →
+            이 제품으로 벤치마크 →
           </button>
         </div>
 

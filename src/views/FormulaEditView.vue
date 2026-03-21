@@ -66,7 +66,7 @@
         직접 작성
       </button>
       <button class="create-tab-btn" :class="{ active: activeCreateTab === 'copy' }" @click="activeCreateTab = 'copy'">
-        카피 처방
+        벤치마크
       </button>
     </div>
 

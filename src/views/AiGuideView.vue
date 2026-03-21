@@ -12,7 +12,7 @@
         class="tab-btn"
         :class="{ active: activeTab === 'copy' }"
         @click="activeTab = 'copy'"
-      >카피 처방</button>
+      >벤치마크</button>
     </div>
 
     <!-- ─── 가이드 처방 탭 ─── -->

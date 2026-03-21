@@ -172,7 +172,7 @@
                 :disabled="!selectedProduct.full_ingredients && !manualIngredients.trim()"
                 @click="showStep2 = true"
               >
-                이 제품으로 카피 처방 진행
+                이 제품으로 벤치마크 진행
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
                   <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -245,7 +245,7 @@
           <svg viewBox="0 0 20 20" width="18" height="18" fill="none">
             <path d="M10 2l2.5 5.5L18 10l-5.5 2.5L10 18l-2.5-5.5L2 10l5.5-2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           </svg>
-          <span>카피 처방 생성하기</span>
+          <span>벤치마크 처방 생성하기</span>
         </template>
       </button>
     </div>
@@ -643,7 +643,7 @@ function onSaveFormula() {
     title: `[카피] ${prod?.product_name || '처방'} - ${selectedMarket.value}${candLabel}`,
     product_type: prod?.category || '',
     status: 'draft',
-    tags: ['카피처방', selectedMarket.value],
+    tags: ['벤치마크', selectedMarket.value],
     memo: `원본: ${prod?.brand_name || ''} ${prod?.product_name || ''}\n시장: ${selectedMarket.value}\n후보안: ${cand?.label || ''}\n${new Date().toLocaleString('ko-KR')}`,
     formula_data: {
       ingredients,

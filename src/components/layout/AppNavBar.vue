@@ -52,7 +52,7 @@ onUnmounted(() => clearInterval(pollTimer))
 const navItems = computed(() => [
   { to: '/', label: '대시보드', exact: true },
   { to: '/formulas', label: '처방 목록', exact: false },
-  { to: '/formulas/new', label: '+ 생성', exact: true },
+  { to: '/formulas/new', label: '처방 생성', exact: true },
   { to: '/projects', label: '프로젝트', exact: true },
   { sep: true },
   { to: '/ingredients', label: '성분 DB', exact: true },
